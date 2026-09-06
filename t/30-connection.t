@@ -8,32 +8,39 @@ use Linux::Event::Loop;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
 use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Response;
 
 {
     package T::HTTPConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
-    use Linux::Event::Net::HTTP::Response;
 
-    sub on_request ($self, $request) {
+    sub on_request ($self, $request, $response) {
         push @{$self->data->{targets}}, $request->target;
+        push @{$self->data->{responses}}, $response;
+        push @{$self->data->{paired}},
+            $response->request == $request
+            && $response->connection == $self ? 1 : 0;
 
-        my $body = $request->target eq '/one' ? "one\n" : "two\n";
-        my $response = Linux::Event::Net::HTTP::Response->new(
-            status => 200,
-            headers => [
-                [ 'Content-Type', 'text/plain' ],
-            ],
-        );
-        $self->respond($response, $body);
+        $response->status(200);
+        $response->header('Content-Type', 'text/plain');
+
+        if ($request->target eq '/one') {
+            $response->header('Content-Length', 4);
+            push @{$self->data->{write_status}}, $response->write('on');
+            $response->end("e\n");
+        } else {
+            $response->end("two\n");
+        }
     }
 }
 
 my $loop = Linux::Event::Loop->new;
 my $state = {
-    targets  => [],
-    response => '',
-    eof      => 0,
+    targets      => [],
+    responses    => [],
+    paired       => [],
+    write_status => [],
+    response     => '',
+    eof          => 0,
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
@@ -80,6 +87,19 @@ is_deeply(
     [ '/one', '/two' ],
     'one accepted HTTP connection dispatches pipelined requests in order',
 );
+is_deeply(
+    $state->{paired},
+    [ 1, 1 ],
+    'each request receives a Response bound to the same transaction',
+);
+ok($state->{write_status}[0], 'Response write exposes Stream backpressure status');
+ok(
+    $state->{responses}[0]->is_ended && $state->{responses}[1]->is_ended,
+    'each Response is ended when its transaction completes',
+);
+my $mutation_ok = eval { $state->{responses}[0]->status(201); 1 };
+ok(!$mutation_ok, 'completed Response metadata is immutable');
+like($@, qr/cannot change|already ended/, 'completed metadata rejection is clear');
 ok($state->{eof}, 'Connection close request drains responses then ends stream');
 
 my $wire = $state->{response};
@@ -89,36 +109,33 @@ is(scalar @status, 2, 'two HTTP responses were serialized on one connection');
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 4\r\n\r\none\n/s,
-    'first response has automatic Content-Length and body',
+    'fixed-length Response write/end emits first body without buffering it whole',
 );
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntwo\n\z/s,
-    'second response advertises close and drains final body',
+    'Response end adds Content-Length and drains close response',
 );
 
 {
     package T::DeferredHTTPConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
     use Linux::Event::Kernel::Timer;
-    use Linux::Event::Net::HTTP::Response;
 
-    sub on_request ($self, $request) {
-        $self->data->{connection} = $self;
+    sub on_request ($self, $request, $response) {
         $self->data->{request} = $request;
+        $self->data->{bound_response} = $response;
 
         Linux::Event::Kernel::Timer->new(
             loop  => $self->loop,
             after => 0.02,
-            data  => $self,
+            data  => $response,
             on_timer => sub ($timer) {
-                my $connection = $timer->data;
+                my $response = $timer->data;
+                my $connection = $response->connection;
                 $connection->data->{paused_before_response}
                     = $connection->is_read_paused ? 1 : 0;
-                my $response = Linux::Event::Net::HTTP::Response->new(
-                    status => 200,
-                );
-                $connection->respond($response, "later\n");
+                $response->end("later\n");
             },
         );
         return;
@@ -167,17 +184,26 @@ $loop->run;
 
 ok(
     $deferred->{paused_before_response},
-    'Connection pauses reads while an application response is pending',
+    'Connection pauses reads while its bound Response is pending',
 );
 is(
     $deferred->{request}->target,
     '/later',
     'deferred callback retains stable Request object',
 );
+is(
+    $deferred->{bound_response}->request,
+    $deferred->{request},
+    'deferred Response retains its paired Request',
+);
+ok(
+    $deferred->{bound_response}->is_ended,
+    'deferred Response records transaction completion',
+);
 like(
     $deferred->{response},
     qr/Content-Length: 6\r\nConnection: close\r\n\r\nlater\n\z/s,
-    'respond can complete a request from a later event',
+    'Response can complete its request from a later event',
 );
 
 done_testing;
