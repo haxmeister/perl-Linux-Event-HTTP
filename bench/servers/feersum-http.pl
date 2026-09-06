@@ -10,7 +10,7 @@ my $response_bytes = $ENV{BENCH_RESPONSE_BYTES} // 32;
 my $payload = 'x' x $response_bytes;
 
 my $runner = Feersum::Runner->new(
-    listen              => "127.0.0.1:$port",
+    listen              => ["127.0.0.1:$port"],
     pre_fork            => 0,
     keepalive           => 1,
     max_connection_reqs => 0,
