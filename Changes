@@ -4,3 +4,8 @@ Revision history for Linux-Event-Net-HTTP
     - Initial distribution scaffold.
     - Establish HTTP protocol, transport, and message-layer boundaries.
     - Reserve Server, Connection, Request, and Response public namespaces.
+    - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
+    - Add strict obs-fold rejection and explicit header-count limits above pico.
+    - Add native Request state with lazy method, target, and header materialization.
+    - Preserve original header spelling, duplicate values, and legal underscore names.
+    - Add parser benchmarks, provenance documentation, and distribution integrity tests.
