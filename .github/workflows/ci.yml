@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - experiment/picohttpparser
   pull_request:
   workflow_dispatch:
 
