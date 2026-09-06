@@ -20,6 +20,7 @@ t/10-pico-parser.t
 t/11-native-request.t
 t/12-http1-framing.t
 t/20-response.t
+t/30-connection.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c

@@ -65,9 +65,23 @@ field-name tokens and control characters that could permit response splitting.
 The serializer also refuses ambiguous framing fields, including multiple
 Content-Length fields and Transfer-Encoding combined with Content-Length.
 
-The serializer only emits the response head. Request/response body streaming
-and transport backpressure remain responsibilities of the connection protocol
-layer and Linux::Event transport respectively.
+## HTTP/1 connection
+
+`Linux::Event::Net::HTTP::Connection` is itself a
+`Linux::Event::IO::Sock::Stream` subclass. Its cached `on_data` callback is the
+HTTP protocol engine, so there is no wrapper object between Linux::Event byte
+I/O and HTTP request parsing. Linux::Event continues to own transport, TLS,
+write queuing, backpressure, and deadlines.
+
+Validated no-body requests are dispatched through `on_request`. `respond`
+serializes the response head, queues a scalar byte body, applies HTTP
+persistence rules, and permits the next already-buffered request to run only
+after the current response has been committed. If an application responds from
+a later event, Connection pauses reads until that response is supplied.
+
+The current connection deliberately refuses positive Content-Length and
+chunked request bodies with 501. Request-body streaming is the next state-machine
+milestone rather than an implicit whole-body accumulation feature.
 
 ## Implementation order
 
@@ -77,11 +91,11 @@ Completed foundation:
 2. Native lazy Request representation.
 3. HTTP/1 request message-framing validation and persistence policy.
 4. Native HTTP/1 response-head serialization.
+5. HTTP Connection bound directly to Linux::Event stream transport.
+6. Ordered sequential keep-alive and pipelined request dispatch.
 
 Next protocol work:
 
-5. Bind one HTTP connection to Linux::Event stream transport.
-6. Sequential keep-alive requests.
 7. Streaming request and response bodies.
 8. Chunked transfer coding.
 9. Server/listener convenience layer.

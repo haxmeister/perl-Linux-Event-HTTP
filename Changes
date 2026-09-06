@@ -11,4 +11,6 @@ Revision history for Linux-Event-Net-HTTP
     - Validate HTTP/1 Host, Content-Length, Transfer-Encoding, body framing, and persistence.
     - Reject ambiguous TE/CL framing and unsupported request transfer codings.
     - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
+    - Bind HTTP Connection directly to Linux::Event::IO::Sock::Stream.
+    - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
