@@ -19,5 +19,7 @@ Revision history for Linux-Event-Net-HTTP
     - Decode chunked request bodies natively with picohttpparser while preserving pipeline bytes.
     - Add on_request_end transaction completion and body draining when no consumer is installed.
     - Support HTTP/1.1 Expect: 100-continue and reject unsupported expectations with 417.
+    - Add automatic HTTP/1.1 chunked response streaming when Content-Length is unknown.
+    - Fall back to close-delimited streaming for unknown-length HTTP/1.0 responses.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
