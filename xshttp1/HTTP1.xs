@@ -16,6 +16,49 @@ validate_limits(STRLEN buffer_len, UV last_len, UV max_headers)
         croak("max_headers must be between 1 and %d", LE_HTTP1_MAX_HEADERS);
 }
 
+static int
+parse_request_strict(
+    const char *buf,
+    size_t buffer_len,
+    const char **method,
+    size_t *method_len,
+    const char **path,
+    size_t *path_len,
+    int *minor_version,
+    struct phr_header *headers,
+    size_t *num_headers,
+    size_t last_len
+)
+{
+    int consumed = phr_parse_request(
+        buf,
+        buffer_len,
+        method,
+        method_len,
+        path,
+        path_len,
+        minor_version,
+        headers,
+        num_headers,
+        last_len
+    );
+    size_t i;
+
+    if (consumed <= 0)
+        return consumed;
+
+    /* RFC 9112 requires recipients to reject or replace obs-fold.  The
+     * Linux::Event HTTP layer chooses rejection rather than silently
+     * normalizing ambiguous input.  pico marks continuation lines by
+     * returning a header entry with name == NULL. */
+    for (i = 0; i < *num_headers; ++i) {
+        if (headers[i].name == NULL)
+            return -1;
+    }
+
+    return consumed;
+}
+
 MODULE = Linux::Event::Net::HTTP::_Parser::HTTP1    PACKAGE = Linux::Event::Net::HTTP::_Parser::HTTP1
 PROTOTYPES: DISABLE
 
@@ -49,7 +92,7 @@ probe_request(CLASS, buffer, last_len = 0, max_headers = 100)
     buf = SvPVbyte(buffer, buffer_len);
     validate_limits(buffer_len, last_len, max_headers);
     num_headers = (size_t)max_headers;
-    RETVAL = phr_parse_request(
+    RETVAL = parse_request_strict(
         buf,
         (size_t)buffer_len,
         &method,
@@ -90,7 +133,7 @@ parse_request_offsets(CLASS, buffer, last_len = 0, max_headers = 100)
     buf = SvPVbyte(buffer, buffer_len);
     validate_limits(buffer_len, last_len, max_headers);
     num_headers = (size_t)max_headers;
-    consumed = phr_parse_request(
+    consumed = parse_request_strict(
         buf,
         (size_t)buffer_len,
         &method,
@@ -119,10 +162,7 @@ parse_request_offsets(CLASS, buffer, last_len = 0, max_headers = 100)
     header_list = newAV();
     for (i = 0; i < num_headers; ++i) {
         row = newAV();
-        if (headers[i].name == NULL)
-            av_push(row, newSViv(-1));
-        else
-            av_push(row, newSVuv((UV)(headers[i].name - buf)));
+        av_push(row, newSVuv((UV)(headers[i].name - buf)));
         av_push(row, newSVuv((UV)headers[i].name_len));
         av_push(row, newSVuv((UV)(headers[i].value - buf)));
         av_push(row, newSVuv((UV)headers[i].value_len));
