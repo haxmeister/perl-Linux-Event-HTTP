@@ -25,7 +25,7 @@ use Linux::Event::Net::HTTP::Connection;
         $self->data->{bodies}{$request->target} .= $bytes;
     }
 
-    sub on_body_end ($self, $request, $response) {
+    sub on_request_end ($self, $request, $response) {
         push @{$self->data->{ends}}, $request->target;
     }
 }
@@ -92,7 +92,7 @@ is_deeply($state->{requests}, [ '/early', '/next' ],
 is($state->{bodies}{'/early'}, 'data',
     'request body continues streaming after its response has ended');
 is_deeply($state->{ends}, [ '/early', '/next' ],
-    'on_body_end runs even when responses end first, including close response');
+    'on_request_end runs even when responses end first, including close response');
 like($state->{response}, qr/early\n.*?next\n\z/s,
     'response-first transaction preserves response ordering');
 
@@ -104,7 +104,7 @@ like($state->{response}, qr/early\n.*?next\n\z/s,
         $self->data->{requests}++;
     }
 
-    sub on_body_end ($self, $request, $response) {
+    sub on_request_end ($self, $request, $response) {
         $self->data->{ends}++;
     }
 }
@@ -162,7 +162,7 @@ $client = Linux::Event::IO::Sock::Stream->connect(
 $loop->run;
 
 is($bad->{requests}, 1, 'request head is dispatched before malformed body is encountered');
-is($bad->{ends}, 0, 'malformed chunked body never reaches on_body_end');
+is($bad->{ends}, 0, 'malformed chunked body never reaches on_request_end');
 like($bad->{response}, qr/\AHTTP\/1\.1 400 Bad Request\r\n/,
     'malformed chunk framing receives 400 when response has not started');
 
