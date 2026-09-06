@@ -14,6 +14,9 @@ use Time::HiRes qw(time sleep);
 
 $SIG{PIPE} = 'IGNORE';
 
+my $go_binary = "/tmp/le-http-bench-go-$$";
+END { unlink $go_binary if -e $go_binary }
+
 my %server = (
     linuxevent => {
         label => 'Linux::Event::Net::HTTP',
@@ -42,8 +45,12 @@ my %server = (
     },
     go => {
         label => 'Go net/http',
-        command => ['go', 'run', "$Bin/servers/go-http.go"],
+        command => [$go_binary],
         available => sub { command_ok('go', 'version') },
+        prepare => sub {
+            system 'go', 'build', '-o', $go_binary, "$Bin/servers/go-http.go";
+            die "failed to build Go benchmark server\n" if $? != 0;
+        },
     },
     aiohttp => {
         label => 'Python aiohttp',
@@ -119,6 +126,10 @@ if (@skipped && $strict) {
     die "unavailable benchmark servers: " . join(', ', @skipped) . "\n";
 }
 die "no requested benchmark servers are available\n" if !@available;
+
+for my $name (@available) {
+    $server{$name}{prepare}->() if $server{$name}{prepare};
+}
 
 my $request_wire = make_request($request_body_bytes);
 my @records;
@@ -257,7 +268,8 @@ sub start_server ($name, $port) {
         $ENV{BENCH_RESPONSE_BYTES} = $response_bytes;
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
-        exec @{$server{$name}{command}} or POSIX::_exit(127);
+        exec @{$server{$name}{command}};
+        POSIX::_exit(127);
     }
     return ($pid, $stdout_path, $stderr_path);
 }
@@ -482,7 +494,8 @@ sub command_ok (@command) {
     if ($pid == 0) {
         open STDOUT, '>', '/dev/null';
         open STDERR, '>', '/dev/null';
-        exec @command or POSIX::_exit(127);
+        exec @command;
+        POSIX::_exit(127);
     }
     waitpid($pid, 0);
     return $? == 0;
