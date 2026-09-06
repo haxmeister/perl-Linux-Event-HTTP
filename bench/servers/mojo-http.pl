@@ -22,4 +22,8 @@ my $daemon = Mojo::Server::Daemon->new(
     app    => $app,
     listen => ["http://127.0.0.1:$port"],
 );
+$daemon->max_clients(10_000);
+$daemon->max_requests(1_000_000);
+$daemon->keep_alive_timeout(0);
+$daemon->silent(1);
 $daemon->run;
