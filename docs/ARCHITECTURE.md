@@ -161,6 +161,40 @@ boundary and the Response has ended. If the request finishes first, reads pause
 while the application retains the Response. If the Response finishes first,
 the connection continues consuming the current request before advancing.
 
+## HTTP Server convenience
+
+`Linux::Event::Net::HTTP::Server` is a control-plane convenience around
+`Linux::Event::IO::Sock::Listener`; it is not another protocol or transport
+engine. The layering remains:
+
+```text
+HTTP::Server
+    -> Linux::Event::IO::Sock::Listener
+        -> HTTP::Connection
+            -> Request + Response
+```
+
+The simple callback form retains one callback CV per supplied HTTP callback and
+reuses those same CVs for every accepted Connection. A fixed private acceptance
+adapter injects the retained callbacks into the configured Connection
+constructor. The adapter creates no closure per accepted connection and adds no
+Server method dispatch to the steady-state request/body callback path.
+
+The configured `connection_class` defaults to `HTTP::Connection` and may name a
+subclass. Constructor callbacks supplied to Server retain the same precedence as
+direct Connection construction: they override same-named class methods for the
+accepted instance. Application `data` is restored before the real Connection is
+constructed, so the private Server acceptance state never leaks through
+`$conn->data`.
+
+Listener socket source and acceptance tuning remain owned by Linux::Event.
+Server delegates host/port/Unix/adopted-listener construction and methods such
+as `port`, `pause`, `resume`, and `close` rather than duplicating them.
+
+TLS integration remains a later milestone. When that work lands, TLS policy
+continues to belong to the accepted Connection/Stream class rather than Server
+reimplementing transport security.
+
 ## Implementation order
 
 Completed foundation:
@@ -178,10 +212,10 @@ Completed foundation:
 10. HTTP/1.1 Expect: 100-continue handling.
 11. Automatic HTTP/1.1 chunked response streaming with HTTP/1.0 close-delimited
     fallback.
+12. HTTP Server/listener convenience layer with retained Connection callbacks.
 
 Next protocol work:
 
-12. Server/listener convenience layer.
 13. TLS integration.
 14. Upgrade handoff.
 15. End-to-end benchmarks and profiling.
