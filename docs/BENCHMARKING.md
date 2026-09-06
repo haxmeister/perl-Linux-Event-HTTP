@@ -61,6 +61,71 @@ and server process CPU microseconds per request. `--json=PATH` writes the full
 configuration, environment, per-repeat records, medians, and Linux::Event loop
 statistics.
 
+## Cross-server comparison harness
+
+A second harness drives multiple HTTP servers with the same raw client code and
+the same wire workload:
+
+```sh
+perl -Mblib bench/run-http-comparison.pl
+```
+
+The initial comparison set is:
+
+- Linux::Event::Net::HTTP;
+- Mojolicious using Mojo::Server::Daemon;
+- Twiggy/AnyEvent;
+- Node.js built-in `http` server;
+- Python aiohttp.
+
+All comparison servers run as one process and one event-loop thread. The harness
+starts a fresh server for each repeat, uses persistent loopback TCP connections,
+rotates server order between repeats, and applies the same connection count,
+pipeline depth, request body, response body, warmup, response parser, and latency
+measurement to every server.
+
+That contract is intentional. A prefork server such as Starman should be
+compared separately because multiple worker processes answer a different
+capacity-scaling question.
+
+Competitors are optional locally. Missing runtimes or modules are skipped unless
+`--strict` is supplied. A complete local setup needs Mojolicious and Twiggy in
+Perl, Node.js, and Python aiohttp.
+
+Examples:
+
+```sh
+# Default five-way comparison
+perl -Mblib bench/run-http-comparison.pl \
+  --requests=50000 --warmup=5000 --connections=100 --repeats=5
+
+# Compare only Perl evented servers
+perl -Mblib bench/run-http-comparison.pl \
+  --servers=linuxevent,mojo,twiggy \
+  --requests=50000 --connections=100 --repeats=5
+
+# Request-body workload
+perl -Mblib bench/run-http-comparison.pl \
+  --request-body-bytes=4096 --response-bytes=32
+
+# Pipelining workload
+perl -Mblib bench/run-http-comparison.pl \
+  --pipeline=16
+
+# Machine-readable report
+perl -Mblib bench/run-http-comparison.pl \
+  --json=bench/results/http-comparison.json
+```
+
+Comparison output reports per-repeat and median requests/second plus
+p50/p95/p99/max client-visible latency. Runtime and framework versions are
+included in JSON output when available.
+
+The comparison is a protocol-stack comparison, not an attempt to make each
+framework perform an identical amount of application-layer work. Each adapter
+uses the smallest normal server API that still consumes the complete request
+body and produces the same fixed Content-Length response.
+
 ## Profiling
 
 Normal benchmark runs leave Linux::Event native nanosecond timing disabled so
@@ -82,27 +147,30 @@ runs only with other profiling runs.
 
 ```sh
 perl -Mblib bench/run-http-end-to-end.pl --smoke
+perl -Mblib bench/run-http-comparison.pl --smoke
 ```
 
 Smoke mode uses a tiny workload and exists only to verify that the harness can
-start the server, maintain persistent connections, pipeline requests, parse
-responses, collect latency, and receive final server statistics. GitHub-hosted
-runner throughput must not be used as a release performance claim.
+start servers, maintain persistent connections, pipeline requests, parse
+responses, and collect latency. GitHub-hosted runner throughput must not be used
+as a release performance claim.
 
 ## Measurement discipline
 
 For publishable numbers:
 
 - use a stable local machine or dedicated runner;
-- record CPU model, kernel, Perl version, Linux::Event version, and HTTP version;
+- record CPU model, kernel, runtime and framework versions;
 - pin or otherwise control CPU placement when comparing small differences;
 - run multiple repeats and report medians;
 - keep request/response sizes, connection count, and pipeline depth identical;
+- compare one-process servers with one-process servers unless worker scaling is
+  the subject of the test;
 - compare non-profiled runs with non-profiled runs;
 - avoid running unrelated CPU- or network-heavy work at the same time;
 - retain the JSON report with the benchmark conclusion.
 
 A single parser microbenchmark number is not a server throughput number, and a
 single end-to-end throughput number does not identify where CPU time is spent.
-Use the parser benchmark, the end-to-end harness, and Linux::Event profiling as
-three separate views of the stack.
+Use the parser benchmark, the end-to-end harness, the comparison harness, and
+Linux::Event profiling as separate views of the stack.
