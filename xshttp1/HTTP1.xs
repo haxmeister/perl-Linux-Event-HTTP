@@ -547,7 +547,7 @@ croak_semantic_error(int status, const char *detail)
 }
 
 static le_http_request_state *
-request_state_from_object(SV *self)
+request_state_from_object(pTHX_ SV *self)
 {
     SV *inner;
     le_http_request_state *state;
@@ -564,7 +564,7 @@ request_state_from_object(SV *self)
 }
 
 static SV *
-request_slice_sv(le_http_request_state *state, size_t offset, size_t length)
+request_slice_sv(pTHX_ le_http_request_state *state, size_t offset, size_t length)
 {
     size_t buffer_len = (size_t)state->consumed;
 
@@ -576,6 +576,7 @@ request_slice_sv(le_http_request_state *state, size_t offset, size_t length)
 
 static SV *
 new_request_object(
+    pTHX_
     const char *buf,
     int consumed,
     int minor_version,
@@ -807,6 +808,7 @@ parse_request(CLASS, buffer, last_len = 0, max_headers = 100)
         croak_semantic_error(semantic_status, detail);
 
     RETVAL = new_request_object(
+        aTHX_
         buf,
         consumed,
         minor_version,
@@ -909,8 +911,8 @@ method(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
-    RETVAL = request_slice_sv(state, state->method_offset, state->method_length);
+    state = request_state_from_object(aTHX_ self);
+    RETVAL = request_slice_sv(aTHX_ state, state->method_offset, state->method_length);
   OUTPUT:
     RETVAL
 
@@ -920,8 +922,8 @@ target(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
-    RETVAL = request_slice_sv(state, state->target_offset, state->target_length);
+    state = request_state_from_object(aTHX_ self);
+    RETVAL = request_slice_sv(aTHX_ state, state->target_offset, state->target_length);
   OUTPUT:
     RETVAL
 
@@ -931,7 +933,7 @@ http_version(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     RETVAL = newSVpvf("1.%d", state->minor_version);
   OUTPUT:
     RETVAL
@@ -942,7 +944,7 @@ body_mode(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     if (state->body_mode == LE_HTTP_BODY_CONTENT_LENGTH)
         RETVAL = "content-length";
     else if (state->body_mode == LE_HTTP_BODY_CHUNKED)
@@ -958,7 +960,7 @@ content_length(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     if (!state->has_content_length)
         XSRETURN_UNDEF;
     RETVAL = newSVuv(state->content_length);
@@ -971,7 +973,7 @@ keep_alive(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     RETVAL = state->keep_alive ? 1 : 0;
   OUTPUT:
     RETVAL
@@ -982,7 +984,7 @@ header_count(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     RETVAL = (UV)state->num_headers;
   OUTPUT:
     RETVAL
@@ -995,11 +997,11 @@ header_name(self, index)
     le_http_request_state *state;
     le_http_header_slice *header;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     if (index >= (UV)state->num_headers)
         croak("header index out of range");
     header = &state->headers[index];
-    RETVAL = request_slice_sv(state, header->name_offset, header->name_length);
+    RETVAL = request_slice_sv(aTHX_ state, header->name_offset, header->name_length);
   OUTPUT:
     RETVAL
 
@@ -1011,11 +1013,11 @@ header_value(self, index)
     le_http_request_state *state;
     le_http_header_slice *header;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     if (index >= (UV)state->num_headers)
         croak("header index out of range");
     header = &state->headers[index];
-    RETVAL = request_slice_sv(state, header->value_offset, header->value_length);
+    RETVAL = request_slice_sv(aTHX_ state, header->value_offset, header->value_length);
   OUTPUT:
     RETVAL
 
@@ -1029,7 +1031,7 @@ header(self, name)
     const char *wanted;
     size_t i;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     wanted = SvPVbyte(name, name_len);
 
     for (i = 0; i < state->num_headers; ++i) {
@@ -1040,7 +1042,7 @@ header(self, name)
                 wanted,
                 (size_t)name_len
             )) {
-            RETVAL = request_slice_sv(state, header->value_offset, header->value_length);
+            RETVAL = request_slice_sv(aTHX_ state, header->value_offset, header->value_length);
             goto header_found;
         }
     }
@@ -1061,7 +1063,7 @@ header_values(self, name)
     const char *wanted;
     size_t i;
   PPCODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     wanted = SvPVbyte(name, name_len);
 
     for (i = 0; i < state->num_headers; ++i) {
@@ -1073,6 +1075,7 @@ header_values(self, name)
                 (size_t)name_len
             )) {
             XPUSHs(sv_2mortal(request_slice_sv(
+                aTHX_
                 state,
                 header->value_offset,
                 header->value_length
@@ -1086,7 +1089,7 @@ _consumed(self)
   PREINIT:
     le_http_request_state *state;
   CODE:
-    state = request_state_from_object(self);
+    state = request_state_from_object(aTHX_ self);
     RETVAL = (IV)state->consumed;
   OUTPUT:
     RETVAL
