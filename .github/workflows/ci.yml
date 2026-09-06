@@ -56,3 +56,49 @@ jobs:
       - name: HTTP end-to-end diagnostic benchmark
         if: github.event_name == 'workflow_dispatch' && matrix.perl == '5'
         run: perl -Mblib bench/run-http-end-to-end.pl --requests=20000 --warmup=2000 --connections=100 --repeats=3
+
+  comparison:
+    name: Cross-server diagnostic comparison
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
+        with:
+          perl-version: '5'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev python3-venv
+
+      - name: Install HTTP benchmark competitors
+        run: |
+          cpanm --notest --installdeps .
+          cpanm --notest Mojolicious Twiggy
+          python3 -m venv .venv
+          .venv/bin/pip install aiohttp
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build Linux::Event::Net::HTTP
+        run: |
+          perl Makefile.PL
+          make
+
+      - name: Cross-server smoke
+        run: perl -Mblib bench/run-http-comparison.pl --smoke --strict
+
+      - name: Cross-server directional benchmark
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --strict \
+            --requests=10000 \
+            --warmup=1000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=32 \
+            --repeats=3
