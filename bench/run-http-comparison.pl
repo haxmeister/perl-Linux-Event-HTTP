@@ -268,7 +268,7 @@ sub start_server ($name, $port) {
         $ENV{BENCH_RESPONSE_BYTES} = $response_bytes;
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
-        exec @{$server{$name}{command}};
+        child_exec(@{$server{$name}{command}});
         POSIX::_exit(127);
     }
     return ($pid, $stdout_path, $stderr_path);
@@ -488,13 +488,17 @@ sub rotated_servers ($repeat, @list) {
     return (@list[$offset .. $#list], @list[0 .. $offset - 1]);
 }
 
+sub child_exec (@command) {
+    exec @command;
+}
+
 sub command_ok (@command) {
     my $pid = fork();
     return 0 if !defined $pid;
     if ($pid == 0) {
         open STDOUT, '>', '/dev/null';
         open STDERR, '>', '/dev/null';
-        exec @command;
+        child_exec(@command);
         POSIX::_exit(127);
     }
     waitpid($pid, 0);
