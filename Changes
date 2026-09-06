@@ -29,5 +29,9 @@ Revision history for Linux-Event-Net-HTTP
       HTTP Connection subclass, including server-handshake validation and HTTP/1.1 ALPN.
     - Verify TLS readiness precedes HTTP dispatch and expose negotiated ALPN, protocol,
       and cipher through the ordinary Connection transport accessors.
+    - Add Response->upgrade for validated HTTP/1.1 101 handoff to another compatible
+      Linux::Event stream-socket protocol while preserving live transport state.
+    - Preserve same-read post-HTTP bytes across Upgrade, keep the normal request-end
+      callback lifecycle, and queue the 101 response before target-protocol output.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
