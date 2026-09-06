@@ -13,12 +13,14 @@ use Linux::Event::TLS ();
 use Linux::Event::Net::HTTP::Connection;
 use Linux::Event::Net::HTTP::Server;
 
-my $openssl;
-for my $dir (File::Spec->path) {
-    my $candidate = File::Spec->catfile($dir, 'openssl');
-    if (-x $candidate) {
-        $openssl = $candidate;
-        last;
+my $openssl = -x '/usr/bin/openssl' ? '/usr/bin/openssl' : undef;
+if (!defined $openssl) {
+    for my $dir (File::Spec->path) {
+        my $candidate = File::Spec->catfile($dir, 'openssl');
+        if (-x $candidate) {
+            $openssl = $candidate;
+            last;
+        }
     }
 }
 plan skip_all => 'openssl command is required for TLS integration test'
