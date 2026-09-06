@@ -261,7 +261,21 @@ sub _consume_request_body ($self) {
 
 sub _finalize_transaction ($self) {
     return if $self->{_http_closing} || $self->is_closed;
+
+    my $request_state = $self->{_http_request_state};
+    my $close_after = $request_state
+        && $request_state->{close_after_response} ? 1 : 0;
+
     $self->_clear_transaction;
+
+    if ($close_after) {
+        $self->{_http_input} = '';
+        $self->{_http_closing} = 1;
+        $self->pause_read if !$self->is_read_paused;
+        $self->end;
+        return;
+    }
+
     $self->resume_read if $self->is_read_paused;
     $self->_drive_http1
         if !$self->{_http_driving} && !$self->{_http_dispatching};
@@ -522,6 +536,14 @@ sub _complete_response ($self, $response, $wire, $close_after) {
     $response->_mark_ended;
     $self->{_http_response_state} = undef;
 
+    my $request_state = $self->{_http_request_state};
+    if ($close_after && $request_state && !$request_state->{body_done}) {
+        $request_state->{close_after_response} = 1;
+        my $accepted = length($wire) ? $self->write($wire) : 1;
+        $self->resume_read if $self->is_read_paused;
+        return $accepted;
+    }
+
     if ($close_after) {
         $self->_clear_transaction;
         $self->{_http_closing} = 1;
@@ -532,7 +554,6 @@ sub _complete_response ($self, $response, $wire, $close_after) {
     }
 
     my $accepted = length($wire) ? $self->write($wire) : 1;
-    my $request_state = $self->{_http_request_state};
     if ($request_state && $request_state->{body_done}) {
         $self->_finalize_transaction;
     } else {
@@ -736,6 +757,8 @@ The first C<write> commits the HTTP response head, after which status and
 headers are immutable. C<write> returns Linux::Event Stream backpressure status.
 C<end> marks the response half complete. A persistent connection advances to
 the next request only after both the request body and response are complete.
+When a response requires connection close, the final half-close is likewise
+deferred until the current request body boundary is consumed.
 
 HEAD responses suppress body bytes while retaining the representation length
 used for automatic Content-Length. Status 204 and 304 reject supplied body
