@@ -79,7 +79,7 @@ jobs:
       - name: Install HTTP benchmark competitors
         run: |
           cpanm --notest --installdeps .
-          cpanm --notest Mojolicious Twiggy
+          cpanm --notest Mojolicious
           python3 -m venv .venv
           .venv/bin/pip install aiohttp
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
@@ -90,11 +90,16 @@ jobs:
           make
 
       - name: Cross-server smoke
-        run: perl -Mblib bench/run-http-comparison.pl --smoke --strict
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent,mojo,node,aiohttp \
+            --smoke \
+            --strict
 
       - name: Cross-server directional benchmark
         run: |
           perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent,mojo,node,aiohttp \
             --strict \
             --requests=10000 \
             --warmup=1000 \
