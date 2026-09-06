@@ -18,27 +18,39 @@ the protocol engine:
 package HelloHTTP;
 use parent 'Linux::Event::Net::HTTP::Connection';
 
-sub on_request ($connection, $request, $response) {
-    $response->status(200);
-    $response->header('Content-Type', 'text/plain');
-    $response->end("hello\n");
+sub on_request ($self, $req, $res) {
+    $res->status(200);
+    $res->header('Content-Type', 'text/plain');
+    $res->end("hello\n");
 }
 ```
 
 Applications use the Response object but do not construct it or pass it back to
-the Connection. A response may also be retained and completed from a later
-event.
+the Connection. Response is the writable handle for that transaction and may be
+retained and completed from a later event.
 
-Request bodies are streaming-first. Fixed-length and chunked bodies are
+Streaming response output uses the same `write`/`end` shape. HTTP/1.1 adds
+chunked transfer coding automatically when no Content-Length was declared:
+
+```perl
+sub on_request ($self, $req, $res) {
+    $res->header('Content-Type', 'text/plain');
+    $res->write("one\n");
+    $res->write("two\n");
+    $res->end("three\n");
+}
+```
+
+Request bodies are also streaming-first. Fixed-length and chunked bodies are
 delivered without whole-request accumulation:
 
 ```perl
-sub on_body ($connection, $request, $response, $bytes) {
+sub on_body ($self, $req, $res, $bytes) {
     process_bytes($bytes);
 }
 
-sub on_request_end ($connection, $request, $response) {
-    $response->end("done\n");
+sub on_request_end ($self, $req, $res) {
+    $res->end("done\n");
 }
 ```
 
