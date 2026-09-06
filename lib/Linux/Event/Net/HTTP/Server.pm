@@ -28,6 +28,7 @@ sub _load_connection_class ($class) {
     croak 'new(): connection_class cannot name the private Server adapter'
         if $class eq $ADAPTER;
 
+    $class->_validate_accepted_configuration;
     return $class;
 }
 
@@ -204,8 +205,9 @@ direct Connection construction, they override same-named class methods for
 accepted instances.
 
 The configured class continues to own C<stream_options>, socket policy, and
-other Connection subclass policy. Server does not copy those settings into its
-own object.
+other Connection subclass policy. Server validates that accepted-connection
+policy when it is constructed, then leaves the policy on the Connection class
+rather than copying settings into the Server object.
 
 =head1 LISTENER OPTIONS
 
