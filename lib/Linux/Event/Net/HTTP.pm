@@ -31,7 +31,18 @@ request and response concepts separate from HTTP/1-specific wire details.
 See F<docs/ARCHITECTURE.md> for the current design constraints and development
 plan.
 
+=head1 SECURITY
+
+Security vulnerabilities should not be reported through the public issue
+tracker. See F<SECURITY.md> for private reporting instructions.
+
+=head1 AUTHOR
+
+Joshua S. Day E<lt>hax@cpan.orgE<gt>
+
 =head1 LICENSE
+
+Copyright (C) 2026 Joshua S. Day.
 
 This library is free software; you may redistribute it and/or modify it under
 the same terms as Perl 5 itself.
