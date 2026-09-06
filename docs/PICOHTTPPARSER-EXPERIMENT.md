@@ -18,9 +18,32 @@ The distribution must never download picohttpparser while configuring, building,
 
 `Linux::Event::Net::HTTP::_Parser::HTTP1` is private. The experiment does not establish a public parser API.
 
-The XS wrapper uses picohttpparser to identify the request method, request target, HTTP/1 minor version, and header name/value spans. Successful parsing returns offsets and lengths into the original Perl input scalar rather than copying those strings during parsing.
+The XS wrapper uses picohttpparser to identify the request method, request target, HTTP/1 minor version, and header name/value spans.
 
-`probe_request` exposes the lowest-overhead parse path for benchmarking and connection-state experiments. `parse_request_offsets` measures the additional Perl allocation cost of exposing parsed spans.
+`probe_request` exposes the lowest-overhead parse path for benchmarking and connection-state experiments. `parse_request_offsets` remains an experimental benchmark path that exposes offsets as Perl arrays so its allocation cost can be compared directly.
+
+The application-facing path is `parse_request`, which creates a `Linux::Event::Net::HTTP::Request` backed by native state. The native state stores method, target, and header offsets plus one private copy of the parsed request-head bytes. It does not eagerly create a Perl scalar for every parsed field.
+
+`Request` materializes method, target, header names, and header values only when the application asks for them. Header-name lookup is performed against the native slices with ASCII case-insensitive comparison before a value is materialized.
+
+The request object owns stable request-head bytes, so later mutation or reuse of the connection input buffer cannot invalidate an application-visible request.
+
+## Public request semantics
+
+The request API intentionally avoids HTTP/1 parser details. Current accessors are:
+
+- `method`
+- `target`
+- `http_version`
+- `header`
+- `header_values`
+- `header_count`
+- `header_name`
+- `header_value`
+
+The same application-facing shape can therefore remain useful if later HTTP/2 or HTTP/3 implementations use completely different native wire-protocol state.
+
+Header lookup is ASCII case-insensitive, as required for HTTP field names, but legal field-name characters are not rewritten. For example, `X_Foo` and `X-Foo` remain distinct field names.
 
 ## Strict HTTP policy
 
@@ -40,6 +63,7 @@ Keep picohttpparser if it provides all of the following:
 4. Meaningfully lower parsing cost than a Perl-level implementation.
 5. A thin enough XS boundary that Linux::Event can retain control over request objects, limits, body handling, keep-alive, pipelining, and upgrade behavior.
 6. No need to fork or materially modify the vendored parser for normal HTTP/1 operation.
+7. A native request representation that preserves pico's low parsing cost without forcing eager Perl materialization.
 
 If adopted, the public documentation should credit picohttpparser and state that the source is vendored so installations are self-contained.
 
@@ -51,10 +75,12 @@ After building the distribution:
 perl -Mblib bench/pico-parser.pl
 ```
 
-The benchmark separates three costs:
+The benchmark separates these costs:
 
 - `pico_probe`: pico parsing without constructing parsed Perl structures.
 - `pico_offsets`: parsing plus Perl arrays containing offsets and lengths.
-- `pico_materialize`: offset parsing plus materializing method, target, header names, and values as Perl strings.
+- `native_state`: parsing plus the native `Request` representation.
+- `native_common_access`: native request creation plus materializing method, target, and one common header.
+- `pico_materialize_all`: offset parsing plus materializing method, target, every header name, and every header value as Perl strings.
 
-This separation is intended to show whether the significant cost is pico itself or the Perl representation chosen above it.
+This separation shows whether significant cost comes from pico itself or from the representation chosen above it.
