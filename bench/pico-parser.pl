@@ -53,7 +53,17 @@ for my $header_count (4, 16, 64) {
                 my $parsed = $parser->parse_request_offsets($request, 0, 100);
                 $sink += $parsed->[0];
             },
-            pico_materialize => sub {
+            native_state => sub {
+                my $native = $parser->parse_request($request, 0, 100);
+                $sink += $native->_consumed;
+            },
+            native_common_access => sub {
+                my $native = $parser->parse_request($request, 0, 100);
+                $sink += length $native->method;
+                $sink += length $native->target;
+                $sink += length($native->header('Host') // '');
+            },
+            pico_materialize_all => sub {
                 my $parsed = $parser->parse_request_offsets($request, 0, 100);
                 $sink += length substr($request, $parsed->[2], $parsed->[3]);
                 $sink += length substr($request, $parsed->[4], $parsed->[5]);
