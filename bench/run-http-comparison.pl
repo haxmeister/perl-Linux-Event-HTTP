@@ -58,7 +58,7 @@ my $pipeline = 1;
 my $request_body_bytes = 0;
 my $response_bytes = 32;
 my $repeats = 5;
-my $timeout = 20;
+my $timeout = 120;
 my $strict = 0;
 my $smoke = 0;
 my $json_path;
@@ -251,8 +251,7 @@ sub start_server ($name, $port) {
         $ENV{BENCH_RESPONSE_BYTES} = $response_bytes;
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
-        exec @{$server{$name}{command}};
-        POSIX::_exit(127);
+        exec @{$server{$name}{command}} or POSIX::_exit(127);
     }
     return ($pid, $stdout_path, $stderr_path);
 }
@@ -477,8 +476,7 @@ sub command_ok (@command) {
     if ($pid == 0) {
         open STDOUT, '>', '/dev/null';
         open STDERR, '>', '/dev/null';
-        exec @command;
-        POSIX::_exit(127);
+        exec @command or POSIX::_exit(127);
     }
     waitpid($pid, 0);
     return $? == 0;
@@ -507,7 +505,7 @@ usage: bench/run-http-comparison.pl [options]
   --request-body-bytes=N   fixed request body bytes (default 0)
   --response-bytes=N       fixed response body bytes (default 32)
   --repeats=N              rotated benchmark repeats (default 5)
-  --timeout=SECONDS        server/client phase timeout (default 20)
+  --timeout=SECONDS        server/client phase timeout (default 120)
   --strict                 fail instead of skipping unavailable competitors
   --json=PATH              write machine-readable report
   --smoke                  tiny keep-alive correctness workload
