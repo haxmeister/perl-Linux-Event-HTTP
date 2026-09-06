@@ -10,18 +10,30 @@ use Scalar::Util qw(refaddr);
 use utf8 ();
 
 use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
+use Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked ();
 use Linux::Event::Net::HTTP::Response;
 
 our $VERSION = '0.001';
 
 my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+my $CHUNKED = 'Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked';
 my $MAX_REQUEST_HEAD = 65_536;
 my $MAX_HEADERS = 100;
 my %CLASS_HANDLER;
 
-sub _class_handler ($class) {
-    return $CLASS_HANDLER{$class} if exists $CLASS_HANDLER{$class};
-    return $CLASS_HANDLER{$class} = $class->can('on_request');
+sub _class_handler ($class, $name) {
+    my $key = "$class\0$name";
+    return $CLASS_HANDLER{$key} if exists $CLASS_HANDLER{$key};
+    return $CLASS_HANDLER{$key} = $class->can($name);
+}
+
+sub _take_http_handler ($class, $name, $option) {
+    if (exists $option->{$name}) {
+        my $handler = delete $option->{$name};
+        croak "new(): $name must be a coderef" if ref($handler) ne 'CODE';
+        return $handler;
+    }
+    return _class_handler($class, $name);
 }
 
 sub new ($class, %option) {
@@ -31,19 +43,21 @@ sub new ($class, %option) {
         if exists($option{on_message}) || exists($option{on_messages});
 
     my $loop = delete $option{loop};
-    my $handler = delete $option{on_request};
-    croak 'new(): on_request must be a coderef'
-        if defined($handler) && ref($handler) ne 'CODE';
+    my $on_request = _take_http_handler($class, 'on_request', \%option);
+    my $on_body = _take_http_handler($class, 'on_body', \%option);
+    my $on_body_end = _take_http_handler($class, 'on_body_end', \%option);
 
-    $handler //= _class_handler($class);
     croak 'new(): HTTP Connection requires on_request callback or method'
-        if !$handler;
+        if !$on_request;
 
     my $self = $class->SUPER::new(%option);
-    $self->{_http_on_request} = $handler;
+    $self->{_http_on_request} = $on_request;
+    $self->{_http_on_body} = $on_body;
+    $self->{_http_on_body_end} = $on_body_end;
     $self->{_http_input} = '';
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
+    $self->{_http_request_state} = undef;
     $self->{_http_response_state} = undef;
     $self->{_http_driving} = 0;
     $self->{_http_dispatching} = 0;
@@ -64,16 +78,228 @@ sub on_data ($self, $bytes) {
     return;
 }
 
+sub _new_request_state ($request) {
+    my $mode = $request->body_mode;
+    my $state = {
+        mode      => $mode,
+        body_done => 0,
+    };
+
+    if ($mode eq 'content-length') {
+        $state->{remaining} = $request->content_length // 0;
+    } elsif ($mode eq 'chunked') {
+        $state->{decoder} = $CHUNKED->new;
+    }
+
+    return $state;
+}
+
+sub _body_pending ($state) {
+    return 0 if $state->{body_done};
+    return 0 if $state->{mode} eq 'none';
+    return $state->{remaining} > 0 if $state->{mode} eq 'content-length';
+    return 1;
+}
+
+sub _expect_continue ($request) {
+    my @values = $request->header_values('Expect');
+    return 0 if !@values;
+    return -1 if $request->http_version ne '1.1';
+
+    my $count = 0;
+    for my $value (@values) {
+        for my $member (split /,/, $value, -1) {
+            $member =~ s/\A[ \t]+//;
+            $member =~ s/[ \t]+\z//;
+            return -1 if $member eq '' || lc($member) ne '100-continue';
+            ++$count;
+        }
+    }
+
+    return $count ? 1 : -1;
+}
+
+sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
+    return 1 if !$handler;
+
+    my $ok;
+    {
+        local $self->{_http_dispatching} = 1;
+        $ok = eval {
+            $handler->($self, $request, $response, @extra);
+            1;
+        };
+    }
+
+    return 1 if $ok;
+    $self->_fail_active_transaction(500, $request, $response);
+    return 0;
+}
+
+sub _clear_transaction ($self) {
+    $self->{_http_active_request} = undef;
+    $self->{_http_active_response} = undef;
+    $self->{_http_request_state} = undef;
+    $self->{_http_response_state} = undef;
+    return;
+}
+
+sub _abort_started_response ($self, $response) {
+    return if $self->{_http_closing} || $self->is_closed;
+
+    $response->_mark_ended if $response && !$response->is_ended;
+    $self->_clear_transaction;
+    $self->{_http_input} = '';
+    $self->{_http_closing} = 1;
+    $self->pause_read if !$self->is_read_paused;
+    $self->end;
+    return;
+}
+
+sub _fail_active_transaction ($self, $status, $request, $response) {
+    return if $self->{_http_closing} || $self->is_closed;
+
+    if ($response && $response->is_started) {
+        $self->_abort_started_response($response);
+    } else {
+        $self->_protocol_error($status, $request->http_version);
+    }
+    return;
+}
+
+sub _finish_request_body ($self) {
+    my $request = $self->{_http_active_request} or return;
+    my $response = $self->{_http_active_response} or return;
+    my $state = $self->{_http_request_state} or return;
+    return if $state->{body_done};
+
+    $state->{body_done} = 1;
+    delete $state->{decoder};
+    delete $state->{remaining};
+
+    return if !$self->_invoke_http_callback(
+        $self->{_http_on_body_end}, $request, $response,
+    );
+    return if $self->{_http_closing} || $self->is_closed;
+    return if !$self->{_http_active_request};
+
+    if ($response->is_ended) {
+        $self->_finalize_transaction;
+    } else {
+        $self->pause_read if !$self->is_read_paused;
+    }
+    return;
+}
+
+sub _consume_request_body ($self) {
+    my $request = $self->{_http_active_request} or return 0;
+    my $response = $self->{_http_active_response} or return 0;
+    my $state = $self->{_http_request_state} or return 0;
+    return 0 if $state->{body_done};
+
+    if ($state->{mode} eq 'content-length') {
+        if (($state->{remaining} // 0) == 0) {
+            $self->_finish_request_body;
+            return 1;
+        }
+        return 0 if !length($self->{_http_input});
+
+        my $available = length($self->{_http_input});
+        my $take = $available < $state->{remaining}
+            ? $available : $state->{remaining};
+
+        my $chunk;
+        if ($self->{_http_on_body}) {
+            $chunk = substr($self->{_http_input}, 0, $take, '');
+        } else {
+            substr($self->{_http_input}, 0, $take, '');
+        }
+        $state->{remaining} -= $take;
+
+        if (defined($chunk) && length($chunk)) {
+            return 1 if !$self->_invoke_http_callback(
+                $self->{_http_on_body}, $request, $response, $chunk,
+            );
+            return 1 if $self->{_http_closing} || $self->is_closed;
+            return 1 if !$self->{_http_active_request};
+        }
+
+        $self->_finish_request_body if $state->{remaining} == 0;
+        return 1;
+    }
+
+    if ($state->{mode} eq 'chunked') {
+        return 0 if !length($self->{_http_input});
+
+        my ($done, $decoded);
+        my $ok = eval {
+            ($done, $decoded) = $state->{decoder}->feed(
+                $self->{_http_input}, $self->{_http_on_body} ? 1 : 0,
+            );
+            1;
+        };
+        if (!$ok) {
+            $self->_fail_active_transaction(400, $request, $response);
+            return 1;
+        }
+
+        if (defined($decoded) && length($decoded)) {
+            return 1 if !$self->_invoke_http_callback(
+                $self->{_http_on_body}, $request, $response, $decoded,
+            );
+            return 1 if $self->{_http_closing} || $self->is_closed;
+            return 1 if !$self->{_http_active_request};
+        }
+
+        $self->_finish_request_body if $done;
+        return 1;
+    }
+
+    $self->_finish_request_body;
+    return 1;
+}
+
+sub _finalize_transaction ($self) {
+    return if $self->{_http_closing} || $self->is_closed;
+    $self->_clear_transaction;
+    $self->resume_read if $self->is_read_paused;
+    $self->_drive_http1
+        if !$self->{_http_driving} && !$self->{_http_dispatching};
+    return;
+}
+
 sub _drive_http1 ($self) {
     return if $self->{_http_driving} || $self->{_http_closing}
         || $self->is_closed;
 
     local $self->{_http_driving} = 1;
 
-    while (!$self->{_http_active_request}
-        && length($self->{_http_input})
-        && !$self->{_http_closing}
-        && !$self->is_closed) {
+    while (!$self->{_http_closing} && !$self->is_closed) {
+        if (my $request = $self->{_http_active_request}) {
+            my $response = $self->{_http_active_response};
+            my $state = $self->{_http_request_state};
+
+            if (!$state->{body_done}) {
+                if (!_body_pending($state)) {
+                    $self->_finish_request_body;
+                    next;
+                }
+
+                last if !length($self->{_http_input});
+                $self->_consume_request_body;
+                next;
+            }
+
+            if ($response && $response->is_ended) {
+                $self->_finalize_transaction;
+                next;
+            }
+
+            $self->pause_read if $response && !$self->is_read_paused;
+            last;
+        }
+
+        last if !length($self->{_http_input});
 
         my $request;
         my $parsed = eval {
@@ -105,59 +331,35 @@ sub _drive_http1 ($self) {
 
         substr($self->{_http_input}, 0, $consumed, '');
 
-        if ($request->body_mode eq 'chunked'
-            || ($request->body_mode eq 'content-length'
-                && ($request->content_length // 0) > 0)) {
-            # Request body streaming is the next protocol milestone. Refuse it
-            # rather than consuming bytes with semantics we do not yet expose.
-            $self->_protocol_error(501, $request->http_version);
+        my $expect = _expect_continue($request);
+        if ($expect < 0) {
+            $self->_protocol_error(417, $request->http_version);
             last;
         }
 
         my $response
             = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
+        my $request_state = _new_request_state($request);
 
         $self->{_http_active_request} = $request;
         $self->{_http_active_response} = $response;
+        $self->{_http_request_state} = $request_state;
         $self->{_http_response_state} = undef;
-        $self->{_http_dispatching} = 1;
 
-        my $handled = eval {
-            $self->{_http_on_request}->($self, $request, $response);
-            1;
-        };
-        my $failure = $@;
-        $self->{_http_dispatching} = 0;
-
-        if (!$handled) {
-            if ($self->{_http_active_response}) {
-                if ($self->{_http_active_response}->is_started) {
-                    # A response head may already be on the wire, so a second
-                    # HTTP response cannot be substituted safely.
-                    $self->{_http_active_response}->_mark_ended;
-                    $self->{_http_active_request} = undef;
-                    $self->{_http_active_response} = undef;
-                    $self->{_http_response_state} = undef;
-                    $self->{_http_input} = '';
-                    $self->{_http_closing} = 1;
-                    $self->pause_read if !$self->is_read_paused;
-                    $self->end;
-                } else {
-                    $self->_protocol_error(500, $request->http_version);
-                }
-            } elsif (!$self->{_http_closing} && !$self->is_closed) {
-                $self->pause_read;
-                $self->end;
-                $self->{_http_closing} = 1;
-            }
-            last;
+        if ($expect && _body_pending($request_state)) {
+            $self->write("HTTP/1.1 100 Continue\r\n\r\n");
         }
 
-        if ($self->{_http_active_response}) {
-            # A callback may intentionally finish later. Stop accepting more
-            # request bytes until Response->end completes this transaction.
-            $self->pause_read if !$self->is_read_paused;
+        if (!$self->_invoke_http_callback(
+            $self->{_http_on_request}, $request, $response,
+        )) {
             last;
+        }
+        last if $self->{_http_closing} || $self->is_closed;
+        next if !$self->{_http_active_request};
+
+        if (!_body_pending($request_state)) {
+            $self->_finish_request_body;
         }
     }
 
@@ -256,10 +458,10 @@ sub _response_start ($self, $response, $bytes, $final) {
 
     return (
         {
-            expected       => $expected,
-            sent           => 0,
-            suppress_body  => $head_request || $body_forbidden ? 1 : 0,
-            close_after    => $close_after ? 1 : 0,
+            expected      => $expected,
+            sent          => 0,
+            suppress_body => $head_request || $body_forbidden ? 1 : 0,
+            close_after   => $close_after ? 1 : 0,
         },
         $head,
     );
@@ -318,11 +520,10 @@ sub _write_response ($self, $response, $body, $final) {
 
 sub _complete_response ($self, $response, $wire, $close_after) {
     $response->_mark_ended;
-    $self->{_http_active_request} = undef;
-    $self->{_http_active_response} = undef;
     $self->{_http_response_state} = undef;
 
     if ($close_after) {
+        $self->_clear_transaction;
         $self->{_http_closing} = 1;
         $self->{_http_input} = '';
         $self->pause_read if !$self->is_read_paused;
@@ -331,8 +532,12 @@ sub _complete_response ($self, $response, $wire, $close_after) {
     }
 
     my $accepted = length($wire) ? $self->write($wire) : 1;
-    $self->resume_read if $self->is_read_paused;
-    $self->_drive_http1 if !$self->{_http_dispatching};
+    my $request_state = $self->{_http_request_state};
+    if ($request_state && $request_state->{body_done}) {
+        $self->_finalize_transaction;
+    } else {
+        $self->resume_read if $self->is_read_paused;
+    }
     return $accepted;
 }
 
@@ -362,11 +567,9 @@ sub _protocol_error ($self, $status, $version = '1.1') {
 
     my $head = $response->_serialize_head($version);
     if (my $active = $self->{_http_active_response}) {
-        $active->_mark_ended;
+        $active->_mark_ended if !$active->is_ended;
     }
-    $self->{_http_active_request} = undef;
-    $self->{_http_active_response} = undef;
-    $self->{_http_response_state} = undef;
+    $self->_clear_transaction;
     $self->{_http_input} = '';
     $self->{_http_closing} = 1;
     $self->pause_read if !$self->is_read_paused;
@@ -392,13 +595,20 @@ Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
 
 =head1 SYNOPSIS
 
-    package HelloHTTP;
+    package UploadHTTP;
     use parent 'Linux::Event::Net::HTTP::Connection';
 
     sub on_request ($self, $request, $response) {
-        $response->status(200);
+        $self->data->{body} = '';
         $response->header('Content-Type', 'text/plain');
-        $response->end("hello\n");
+    }
+
+    sub on_body ($self, $request, $response, $bytes) {
+        $self->data->{body} .= $bytes;
+    }
+
+    sub on_body_end ($self, $request, $response) {
+        $response->end("received " . length($self->data->{body}) . " bytes\n");
     }
 
     package main;
@@ -408,7 +618,7 @@ Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
     my $loop = Linux::Event::Loop->new;
     my $listener = Linux::Event::IO::Sock::Listener->new(
         loop         => $loop,
-        stream_class => 'HelloHTTP',
+        stream_class => 'UploadHTTP',
         host         => '127.0.0.1',
         port         => 8080,
     );
@@ -420,33 +630,35 @@ Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
 C<Linux::Event::Net::HTTP::Connection> is a
 L<Linux::Event::IO::Sock::Stream> subclass. Linux::Event continues to own the
 socket, TLS transport, readiness, ordered-byte reads and writes, buffering, and
-backpressure. Connection owns the HTTP/1 request boundary, request sequencing,
-response serialization, and persistence policy.
+backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
+request sequencing, response serialization, and persistence policy.
 
-C<on_data> is the cached Linux::Event Stream callback for the protocol engine;
-an application supplies C<on_request> instead. A named C<on_request> method is
-resolved when each connection is constructed, not for every request. Direct
-construction can alternatively supply C<on_request =E<gt> sub {...}>. The
-future Server convenience layer will retain one constructor callback for all
-accepted connections so lexical scope does not require one closure per accept.
+C<on_data> is the cached Linux::Event Stream callback for the protocol engine.
+Applications use C<on_request>, optional C<on_body>, and optional C<on_body_end>
+instead. Named methods are resolved and cached by connection class. Direct
+construction may supply the same names as constructor callbacks when lexical
+application scope is preferable.
 
 Every successfully dispatched Request is paired with one
-L<Linux::Event::Net::HTTP::Response> created by Connection. Applications mutate
-and finish that object directly; they do not construct a Response or pass it
-back to Connection.
+L<Linux::Event::Net::HTTP::Response> created by Connection. The same Request and
+Response objects are passed to all callbacks for that transaction.
 
-=head1 CURRENT BODY SUPPORT
+=head1 REQUEST BODY STREAMING
 
-This connection milestone dispatches requests with no message body or an
-explicit C<Content-Length: 0>. A positive Content-Length or chunked request is
-answered with 501 and the connection is closed. This is deliberate: request
-body streaming is the next protocol state rather than an implicit whole-body
-buffer.
+Request bodies are streaming-first. Connection never accumulates an entire
+request body merely to dispatch it. C<Content-Length> bodies are delivered as
+bytes become available. C<Transfer-Encoding: chunked> is decoded with the
+vendored picohttpparser chunked decoder before application delivery.
 
-C<< $response->end($bytes) >> supports ordinary scalar response bodies and
-automatically supplies Content-Length. Fixed-length response streaming is also
-available by setting Content-Length before the first C<write>. Automatic
-chunked response streaming is the next transfer-coding milestone.
+Chunk extensions are accepted by pico. Trailer sections are consumed as part of
+the chunked framing boundary but are not yet exposed as Request fields. The next
+pipelined request remains in the connection input buffer and is parsed only
+after the current request body and response have both completed.
+
+If C<on_body> is absent, request body bytes are drained and discarded without
+being accumulated. C<on_body_end>, when present, still runs when the complete
+request has been consumed. It also runs for requests with no body or
+C<Content-Length: 0>, immediately after C<on_request> returns.
 
 =head1 CALLBACKS
 
@@ -456,20 +668,53 @@ chunked response streaming is the next transfer-coding milestone.
         ...
     }
 
-Receives one validated L<Linux::Event::Net::HTTP::Request> and its bound
-L<Linux::Event::Net::HTTP::Response>. The callback may call C<end> immediately
-or retain the Response and finish it from a later event. If it returns while
-the Response remains active, Connection pauses application reads so later
-pipelined requests cannot overtake the current transaction.
+Runs once after a validated request head has been parsed. A body-bearing request
+may continue delivering C<on_body> calls after this callback. The Response may
+be written immediately or retained for completion after the body or another
+event.
 
-A direct/adopted connection may instead use a constructor callback:
+=head2 on_body
+
+    sub on_body ($connection, $request, $response, $bytes) {
+        ...
+    }
+
+Receives decoded request-body byte strings. Fixed-length bytes are delivered
+without whole-body accumulation. Chunked framing bytes are never exposed to the
+application.
+
+=head2 on_body_end
+
+    sub on_body_end ($connection, $request, $response) {
+        $response->end("ok\n");
+    }
+
+Runs once when the complete request body boundary has been reached. If the
+Response has already ended, the transaction becomes eligible for the next
+pipelined request. If the Response is still active, Connection pauses reads so
+a later request cannot overtake it.
+
+A direct/adopted connection may use constructor callbacks instead:
 
     my $connection = Linux::Event::Net::HTTP::Connection->new(
         fh => $connected_socket,
         on_request => sub ($connection, $request, $response) {
-            $response->end("hello\n");
+            ...
+        },
+        on_body => sub ($connection, $request, $response, $bytes) {
+            ...
+        },
+        on_body_end => sub ($connection, $request, $response) {
+            $response->end("done\n");
         },
     );
+
+=head1 EXPECT: 100-CONTINUE
+
+For an HTTP/1.1 request with a body and C<Expect: 100-continue>, Connection
+emits C<100 Continue> after validating the request head so clients waiting to
+send the body can proceed. Unsupported expectations are answered with 417 and
+the connection is closed.
 
 =head1 RESPONSE FLOW
 
@@ -480,7 +725,8 @@ completion:
     $response->header('Content-Type', 'text/plain');
     $response->end("hello\n");
 
-For fixed-length streaming, declare the final length before output starts:
+For fixed-length response streaming, declare the final length before output
+starts:
 
     $response->header('Content-Length', 12);
     my $accepted = $response->write("hello ");
@@ -488,22 +734,19 @@ For fixed-length streaming, declare the final length before output starts:
 
 The first C<write> commits the HTTP response head, after which status and
 headers are immutable. C<write> returns Linux::Event Stream backpressure status.
-C<end> completes the transaction and allows the next buffered request to run.
+C<end> marks the response half complete. A persistent connection advances to
+the next request only after both the request body and response are complete.
 
 HEAD responses suppress body bytes while retaining the representation length
 used for automatic Content-Length. Status 204 and 304 reject supplied body
-bytes. Informational responses and Transfer-Encoding require later protocol
-APIs.
-
-If the request or response requires connection close, Response C<end> uses
-L<Linux::Event::IO::Sock::Stream/end> internally so queued output drains before
-the write side is ended.
+bytes. Automatic chunked response streaming remains a later protocol milestone.
 
 =head1 LIMITS
 
 The current connection request-head limit is 65,536 bytes and the parser header
-count limit is 100 fields. These will become explicit HTTP protocol tuning
-policy before the first release.
+count limit is 100 fields. Request bodies are streamed and therefore do not
+inherit the request-head memory limit. Explicit body-size policy will be part of
+HTTP protocol tuning rather than implicit accumulation.
 
 =head1 SEE ALSO
 
