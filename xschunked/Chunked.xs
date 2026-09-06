@@ -6,7 +6,7 @@
 #include "../vendor/picohttpparser/picohttpparser.c"
 
 static struct phr_chunked_decoder *
-decoder_from_object(SV *self)
+decoder_from_object(pTHX_ SV *self)
 {
     SV *inner;
     struct phr_chunked_decoder *decoder;
@@ -56,7 +56,7 @@ feed(self, buffer, emit = 1)
     size_t leftover;
     SV *decoded = NULL;
   PPCODE:
-    decoder = decoder_from_object(self);
+    decoder = decoder_from_object(aTHX_ self);
 
     if (SvREADONLY(buffer))
         croak("chunked decoder input buffer must be writable");
