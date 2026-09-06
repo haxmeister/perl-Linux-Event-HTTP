@@ -4,6 +4,8 @@ use strict;
 use warnings;
 
 use Errno qw(EINTR);
+use File::Basename qw(dirname);
+use File::Path qw(make_path);
 use FindBin qw($Bin);
 use Getopt::Long qw(GetOptions);
 use IO::Select;
@@ -207,6 +209,8 @@ if (defined $json_path) {
         summary => \@summary,
         records => \@records,
     };
+    my $dir = dirname($json_path);
+    make_path($dir) if $dir ne '.' && !-d $dir;
     open my $fh, '>', $json_path or die "open $json_path: $!\n";
     print {$fh} JSON::PP->new->canonical->pretty->encode($report);
     close $fh or die "close $json_path: $!\n";
@@ -506,10 +510,27 @@ sub command_ok (@command) {
 }
 
 sub capture (@command) {
-    open my $fh, '-|', @command or return undef;
+    pipe(my $read, my $write) or return undef;
+    my $pid = fork();
+    if (!defined $pid) {
+        close $read;
+        close $write;
+        return undef;
+    }
+    if ($pid == 0) {
+        close $read;
+        open STDOUT, '>&', $write or POSIX::_exit(126);
+        open STDERR, '>', '/dev/null';
+        close $write;
+        child_exec(@command);
+        POSIX::_exit(127);
+    }
+
+    close $write;
     local $/;
-    my $text = <$fh> // '';
-    close $fh;
+    my $text = <$read> // '';
+    close $read;
+    waitpid($pid, 0);
     return undef if $? != 0;
     $text =~ s/\A\s+//;
     $text =~ s/\s+\z//;
