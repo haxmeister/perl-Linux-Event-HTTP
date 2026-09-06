@@ -7,6 +7,24 @@ if ($^O ne 'linux') {
     exit 0;
 }
 
+my @public_modules = qw(
+    Linux::Event::Net::HTTP
+    Linux::Event::Net::HTTP::Connection
+    Linux::Event::Net::HTTP::Request
+    Linux::Event::Net::HTTP::Response
+    Linux::Event::Net::HTTP::Server
+);
+
+my $distribution_version = MM->parse_version('lib/Linux/Event/Net/HTTP.pm');
+my %provides = map {
+    my $file = "lib/$_.pm";
+    $file =~ s{::}{/}g;
+    $_ => {
+        file    => $file,
+        version => $distribution_version,
+    };
+} @public_modules;
+
 WriteMakefile(
     NAME             => 'Linux::Event::Net::HTTP',
     VERSION_FROM     => 'lib/Linux/Event/Net/HTTP.pm',
@@ -27,6 +45,7 @@ WriteMakefile(
         'meta-spec' => {
             version => 2,
         },
+        provides => \%provides,
         resources => {
             homepage   => 'https://github.com/haxmeister/perl-Linux-Event-Net-HTTP',
             bugtracker => {
