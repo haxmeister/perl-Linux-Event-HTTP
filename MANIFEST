@@ -7,7 +7,9 @@ MANIFEST
 README.md
 SECURITY.md
 bench/pico-parser.pl
+bench/run-http-end-to-end.pl
 docs/ARCHITECTURE.md
+docs/BENCHMARKING.md
 docs/PICOHTTPPARSER-EXPERIMENT.md
 lib/Linux/Event/Net/HTTP.pm
 lib/Linux/Event/Net/HTTP/Connection.pm
