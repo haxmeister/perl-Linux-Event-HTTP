@@ -45,4 +45,8 @@ jobs:
 
       - name: Pico parser benchmark
         if: github.ref == 'refs/heads/experiment/picohttpparser' && matrix.perl == '5'
-        run: perl -Mblib bench/pico-parser.pl --iterations=100000
+        run: perl -Mblib bench/pico-parser.pl --seconds=1
+
+      - name: Distribution integrity
+        if: matrix.perl == '5'
+        run: make disttest
