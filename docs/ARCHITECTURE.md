@@ -263,6 +263,26 @@ This is the intended integration boundary for a separate
 and frame semantics belong there; HTTP owns only the validated 101 transaction
 and protocol handoff.
 
+## Measurement tooling
+
+Parser microbenchmarks and full HTTP transaction benchmarks are intentionally
+separate. `bench/pico-parser.pl` isolates request-head parsing and Request
+representation costs. `bench/run-http-end-to-end.pl` runs the HTTP server in a
+forked process and drives it from a separate client process over loopback TCP,
+covering the combined transport, parsing, Request/Response, callback,
+serialization, persistence, and client-visible round-trip path.
+
+The end-to-end harness supports persistent connections, HTTP/1.1 pipelining,
+request-body and response-body size variations, latency percentiles, JSON
+reports, server process CPU accounting, Linux::Event loop statistics, and an
+explicit profiling mode. Ordinary benchmark runs leave native nanosecond timing
+disabled; profiling runs enable it deliberately and are compared only with
+other profiling runs.
+
+Shared CI runs execute only a tiny smoke workload to protect the benchmark
+contract. GitHub-hosted runner throughput is not a performance claim. Reusable
+measurement rules and example commands are documented in `docs/BENCHMARKING.md`.
+
 ## Implementation order
 
 Completed foundation:
@@ -284,10 +304,7 @@ Completed foundation:
 13. TLS transport integration through declarative Connection policy and
     HTTP/1.1 ALPN coverage.
 14. Atomic HTTP/1.1 Upgrade handoff through Linux::Event protocol transition.
-
-Next protocol work:
-
-15. End-to-end benchmarks and profiling.
+15. Reproducible end-to-end HTTP benchmark and Linux::Event profiling harness.
 
 Routing, middleware, sessions, templates, PSGI/PAGI adapters, compression,
 WebSocket, HTTP/2, and HTTP clients are intentionally outside the initial
