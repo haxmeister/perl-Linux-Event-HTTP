@@ -3,25 +3,21 @@ use v5.36;
 use strict;
 use warnings;
 
-use EV ();
-use Feersum;
-use IO::Socket::INET;
+use Feersum::Runner;
 
 my $port = $ENV{BENCH_PORT} // die "BENCH_PORT is required\n";
 my $response_bytes = $ENV{BENCH_RESPONSE_BYTES} // 32;
 my $payload = 'x' x $response_bytes;
 
-my $listener = IO::Socket::INET->new(
-    LocalAddr => '127.0.0.1',
-    LocalPort => 0 + $port,
-    Proto     => 'tcp',
-    Listen    => 1024,
-    ReuseAddr => 1,
-) or die "listen 127.0.0.1:$port: $!\n";
+my $runner = Feersum::Runner->new(
+    listen              => "127.0.0.1:$port",
+    pre_fork            => 0,
+    keepalive           => 1,
+    max_connection_reqs => 0,
+    quiet               => 1,
+);
 
-my $engine = Feersum->endjinn;
-$engine->use_socket($listener);
-$engine->request_handler(sub ($request) {
+$runner->run(sub ($request) {
     $request->send_response(
         200,
         ['Content-Type' => 'application/octet-stream'],
@@ -29,5 +25,3 @@ $engine->request_handler(sub ($request) {
     );
     return;
 });
-
-EV::run;
