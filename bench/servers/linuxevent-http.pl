@@ -15,6 +15,10 @@ my $payload = 'x' x $response_bytes;
     package Linux::Event::Net::HTTP::Bench::CompareConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
 
+    sub on_request ($self, $request, $response) {
+        return;
+    }
+
     sub on_request_end ($self, $request, $response) {
         $response->end($self->data->{payload});
         return;
