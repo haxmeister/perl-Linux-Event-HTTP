@@ -45,7 +45,7 @@ sub new ($class, %option) {
     my $loop = delete $option{loop};
     my $on_request = _take_http_handler($class, 'on_request', \%option);
     my $on_body = _take_http_handler($class, 'on_body', \%option);
-    my $on_body_end = _take_http_handler($class, 'on_body_end', \%option);
+    my $on_request_end = _take_http_handler($class, 'on_request_end', \%option);
 
     croak 'new(): HTTP Connection requires on_request callback or method'
         if !$on_request;
@@ -53,7 +53,7 @@ sub new ($class, %option) {
     my $self = $class->SUPER::new(%option);
     $self->{_http_on_request} = $on_request;
     $self->{_http_on_body} = $on_body;
-    $self->{_http_on_body_end} = $on_body_end;
+    $self->{_http_on_request_end} = $on_request_end;
     $self->{_http_input} = '';
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
@@ -178,7 +178,7 @@ sub _finish_request_body ($self) {
     delete $state->{remaining};
 
     return if !$self->_invoke_http_callback(
-        $self->{_http_on_body_end}, $request, $response,
+        $self->{_http_on_request_end}, $request, $response,
     );
     return if $self->{_http_closing} || $self->is_closed;
     return if !$self->{_http_active_request};
@@ -628,7 +628,7 @@ Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
         $self->data->{body} .= $bytes;
     }
 
-    sub on_body_end ($self, $request, $response) {
+    sub on_request_end ($self, $request, $response) {
         $response->end("received " . length($self->data->{body}) . " bytes\n");
     }
 
@@ -655,10 +655,10 @@ backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
 request sequencing, response serialization, and persistence policy.
 
 C<on_data> is the cached Linux::Event Stream callback for the protocol engine.
-Applications use C<on_request>, optional C<on_body>, and optional C<on_body_end>
-instead. Named methods are resolved and cached by connection class. Direct
-construction may supply the same names as constructor callbacks when lexical
-application scope is preferable.
+Applications use C<on_request>, optional C<on_body>, and optional
+C<on_request_end> instead. Named methods are resolved and cached by connection
+class. Direct construction may supply the same names as constructor callbacks
+when lexical application scope is preferable.
 
 Every successfully dispatched Request is paired with one
 L<Linux::Event::Net::HTTP::Response> created by Connection. The same Request and
@@ -674,10 +674,10 @@ vendored picohttpparser chunked decoder before application delivery.
 Chunk extensions are accepted by pico. Trailer sections are consumed as part of
 the chunked framing boundary but are not yet exposed as Request fields. The next
 pipelined request remains in the connection input buffer and is parsed only
-after the current request body and response have both completed.
+after the current request input and response have both completed.
 
 If C<on_body> is absent, request body bytes are drained and discarded without
-being accumulated. C<on_body_end>, when present, still runs when the complete
+being accumulated. C<on_request_end>, when present, still runs when the complete
 request has been consumed. It also runs for requests with no body or
 C<Content-Length: 0>, immediately after C<on_request> returns.
 
@@ -704,16 +704,17 @@ Receives decoded request-body byte strings. Fixed-length bytes are delivered
 without whole-body accumulation. Chunked framing bytes are never exposed to the
 application.
 
-=head2 on_body_end
+=head2 on_request_end
 
-    sub on_body_end ($connection, $request, $response) {
+    sub on_request_end ($connection, $request, $response) {
         $response->end("ok\n");
     }
 
-Runs once when the complete request body boundary has been reached. If the
-Response has already ended, the transaction becomes eligible for the next
-pipelined request. If the Response is still active, Connection pauses reads so
-a later request cannot overtake it.
+Runs once when the complete request input boundary has been reached. This
+includes bodyless requests, where it runs immediately after C<on_request>
+returns. If the Response has already ended, the transaction becomes eligible
+for the next pipelined request. If the Response is still active, Connection
+pauses reads so a later request cannot overtake it.
 
 A direct/adopted connection may use constructor callbacks instead:
 
@@ -725,7 +726,7 @@ A direct/adopted connection may use constructor callbacks instead:
         on_body => sub ($connection, $request, $response, $bytes) {
             ...
         },
-        on_body_end => sub ($connection, $request, $response) {
+        on_request_end => sub ($connection, $request, $response) {
             $response->end("done\n");
         },
     );
@@ -756,9 +757,9 @@ starts:
 The first C<write> commits the HTTP response head, after which status and
 headers are immutable. C<write> returns Linux::Event Stream backpressure status.
 C<end> marks the response half complete. A persistent connection advances to
-the next request only after both the request body and response are complete.
+the next request only after both the request input and response are complete.
 When a response requires connection close, the final half-close is likewise
-deferred until the current request body boundary is consumed.
+deferred until the current request input boundary is consumed.
 
 HEAD responses suppress body bytes while retaining the representation length
 used for automatic Content-Length. Status 204 and 304 reject supplied body
