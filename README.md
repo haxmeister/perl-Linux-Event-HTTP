@@ -37,13 +37,15 @@ sub on_body ($connection, $request, $response, $bytes) {
     process_bytes($bytes);
 }
 
-sub on_body_end ($connection, $request, $response) {
+sub on_request_end ($connection, $request, $response) {
     $response->end("done\n");
 }
 ```
 
 If no `on_body` callback is installed, the protocol engine drains the body so
 framing and keep-alive remain correct without building an unused body scalar.
+`on_request_end` runs once when the complete request input boundary has been
+consumed, including for requests with no body.
 
 HTTP/1 request-head parsing and chunked request decoding use
 [picohttpparser](https://github.com/h2o/picohttpparser), vendored directly in
