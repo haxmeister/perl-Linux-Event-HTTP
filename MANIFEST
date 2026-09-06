@@ -1,9 +1,11 @@
 .gitignore
 Changes
+CONTRIBUTING.md
 LICENSE
 Makefile.PL
 MANIFEST
 README.md
+SECURITY.md
 docs/ARCHITECTURE.md
 lib/Linux/Event/Net/HTTP.pm
 lib/Linux/Event/Net/HTTP/Connection.pm
