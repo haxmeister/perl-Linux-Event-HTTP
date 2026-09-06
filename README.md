@@ -91,6 +91,28 @@ automatically. `on_ready` fires after the TLS handshake, and HTTP parsing sees
 only decrypted application bytes. The Connection can inspect negotiated
 `selected_alpn`, `tls_protocol`, and `tls_cipher` through Linux::Event.
 
+HTTP Upgrade hands the same live stream socket to another Linux::Event protocol
+class. HTTP performs the switching response and transport handoff; the target
+protocol remains a separate distribution or application class:
+
+```perl
+sub on_request ($self, $req, $res) {
+    return $res->end("not an upgrade\n")
+        if ($req->header('Upgrade') // '') ne 'my-protocol';
+
+    $res->header('Upgrade', 'my-protocol');
+    $res->upgrade('MyProtocolConnection');
+}
+```
+
+`upgrade()` sends a validated HTTP/1.1 `101 Switching Protocols` response and
+uses Linux::Event `transition_to()` after the HTTP request lifecycle has
+finished. The target retains the same socket, TLS transport, output queue,
+backpressure, deadlines, and application data. Bytes already read after the HTTP
+request head are preserved and become the target protocol's first input. This
+is the boundary intended for a separate `Linux::Event::Net::WebSocket`
+distribution.
+
 Applications use the Response object but do not construct it or pass it back to
 the Connection. Response is the writable handle for that transaction and may be
 retained and completed from a later event.
