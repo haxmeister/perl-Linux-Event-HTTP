@@ -63,45 +63,56 @@ statistics.
 
 ## Cross-server comparison harness
 
-A second harness drives multiple HTTP servers with the same raw client code and
-the same wire workload:
+A second harness drives multiple HTTP servers with the same raw Perl client code
+and the same wire workload:
 
 ```sh
 perl -Mblib bench/run-http-comparison.pl
 ```
 
-The initial comparison set is:
+The primary comparison set is:
 
 - Linux::Event::Net::HTTP;
+- Feersum using its native HTTP interface;
 - Mojolicious using Mojo::Server::Daemon;
-- Twiggy/AnyEvent;
 - Node.js built-in `http` server;
+- Go `net/http`;
 - Python aiohttp.
 
-All comparison servers run as one process and one event-loop thread. The harness
-starts a fresh server for each repeat, uses persistent loopback TCP connections,
-rotates server order between repeats, and applies the same connection count,
-pipeline depth, request body, response body, warmup, response parser, and latency
-measurement to every server.
+Twiggy/AnyEvent remains available with `--servers=twiggy`, but is not in the
+primary set because current Twiggy closes the long-lived benchmark connections
+before the requested keep-alive workload completes.
+
+All primary comparison servers run as one process with one application execution
+slot. The Go adapter sets `GOMAXPROCS=1`; the Go runtime may still create helper
+OS threads, so this constraint means one slot for executing Go code rather than
+literally one runtime thread. The Go server is compiled once before measurement
+and the resulting binary is executed directly for every repeat.
+
+The harness starts a fresh server for each repeat, uses persistent loopback TCP
+connections, rotates server order between repeats, and applies the same
+connection count, pipeline depth, request body, response body, warmup, response
+parser, and latency measurement to every server.
 
 That contract is intentional. A prefork server such as Starman should be
 compared separately because multiple worker processes answer a different
 capacity-scaling question.
 
 Competitors are optional locally. Missing runtimes or modules are skipped unless
-`--strict` is supplied. A complete local setup needs Mojolicious and Twiggy in
-Perl, Node.js, and Python aiohttp.
+`--strict` is supplied. A complete primary setup needs Mojolicious and Feersum
+in Perl, Node.js, a Go toolchain, and Python aiohttp. Twiggy is needed only when
+it is selected explicitly.
 
 Examples:
 
 ```sh
-# Default five-way comparison
+# Default six-way comparison
 perl -Mblib bench/run-http-comparison.pl \
   --requests=50000 --warmup=5000 --connections=100 --repeats=5
 
-# Compare only Perl evented servers
+# Compare the primary Perl servers
 perl -Mblib bench/run-http-comparison.pl \
-  --servers=linuxevent,mojo,twiggy \
+  --servers=linuxevent,feersum,mojo \
   --requests=50000 --connections=100 --repeats=5
 
 # Request-body workload
@@ -123,8 +134,8 @@ included in JSON output when available.
 
 The comparison is a protocol-stack comparison, not an attempt to make each
 framework perform an identical amount of application-layer work. Each adapter
-uses the smallest normal server API that still consumes the complete request
-body and produces the same fixed Content-Length response.
+uses the smallest normal server API that still receives the complete request
+body before producing the same fixed Content-Length response payload.
 
 ## Profiling
 
