@@ -154,9 +154,11 @@ not depend on the upstream repository or any network fetch.
 Linux::Event::Net::HTTP keeps parsed request metadata in native state and
 materializes Perl strings only when application code asks for them.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design constraints and
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design constraints,
+[docs/BENCHMARKING.md](docs/BENCHMARKING.md) for the end-to-end benchmark and
+profiling contract, and
 [docs/PICOHTTPPARSER-EXPERIMENT.md](docs/PICOHTTPPARSER-EXPERIMENT.md) for parser
-provenance, design details, and benchmark results.
+provenance, design details, and parser microbenchmark results.
 
 ## Contributing
 
