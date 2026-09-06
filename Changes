@@ -25,5 +25,9 @@ Revision history for Linux-Event-Net-HTTP
       application data propagation, and configurable HTTP Connection subclasses.
     - Preserve constructor-callback override semantics through Server acceptance without
       allocating per-connection wrapper closures or adding per-request Server dispatch.
+    - Integrate HTTPS through Linux::Event declarative TLS policy on the configured
+      HTTP Connection subclass, including server-handshake validation and HTTP/1.1 ALPN.
+    - Verify TLS readiness precedes HTTP dispatch and expose negotiated ALPN, protocol,
+      and cipher through the ordinary Connection transport accessors.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
