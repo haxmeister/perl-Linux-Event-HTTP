@@ -15,7 +15,6 @@ typedef struct {
 } le_http_header_slice;
 
 typedef struct {
-    SV *buffer;
     int consumed;
     int minor_version;
     size_t method_offset;
@@ -24,6 +23,7 @@ typedef struct {
     size_t target_length;
     size_t num_headers;
     le_http_header_slice *headers;
+    char *bytes;
 } le_http_request_state;
 
 static void
@@ -121,18 +121,16 @@ request_state_from_object(SV *self)
 static SV *
 request_slice_sv(le_http_request_state *state, size_t offset, size_t length)
 {
-    STRLEN buffer_len;
-    const char *buf = SvPVbyte(state->buffer, buffer_len);
+    size_t buffer_len = (size_t)state->consumed;
 
-    if (offset > (size_t)buffer_len || length > (size_t)buffer_len - offset)
+    if (offset > buffer_len || length > buffer_len - offset)
         croak("corrupt HTTP request slice");
 
-    return newSVpvn(buf + offset, length);
+    return newSVpvn(state->bytes + offset, length);
 }
 
 static SV *
 new_request_object(
-    SV *buffer,
     const char *buf,
     int consumed,
     int minor_version,
@@ -145,13 +143,24 @@ new_request_object(
 )
 {
     le_http_request_state *state;
+    le_http_header_slice *slices;
+    unsigned char *allocation;
     SV *object;
+    size_t slice_bytes;
+    size_t total_bytes;
+    size_t max_size = (size_t)-1;
     size_t i;
 
-    (void)buffer;
+    slice_bytes = num_headers * sizeof(le_http_header_slice);
+    if ((size_t)consumed > max_size - sizeof(le_http_request_state) - slice_bytes)
+        croak("HTTP request head is too large to retain");
 
-    Newxz(state, 1, le_http_request_state);
-    state->buffer = newSVpvn(buf, (STRLEN)consumed);
+    total_bytes = sizeof(le_http_request_state) + slice_bytes + (size_t)consumed;
+    Newxz(allocation, total_bytes, unsigned char);
+
+    state = (le_http_request_state *)allocation;
+    slices = (le_http_header_slice *)(allocation + sizeof(le_http_request_state));
+
     state->consumed = consumed;
     state->minor_version = minor_version;
     state->method_offset = (size_t)(method - buf);
@@ -159,15 +168,16 @@ new_request_object(
     state->target_offset = (size_t)(path - buf);
     state->target_length = path_len;
     state->num_headers = num_headers;
+    state->headers = slices;
+    state->bytes = (char *)(allocation + sizeof(le_http_request_state) + slice_bytes);
 
-    if (num_headers != 0) {
-        Newxz(state->headers, num_headers, le_http_header_slice);
-        for (i = 0; i < num_headers; ++i) {
-            state->headers[i].name_offset = (size_t)(headers[i].name - buf);
-            state->headers[i].name_length = headers[i].name_len;
-            state->headers[i].value_offset = (size_t)(headers[i].value - buf);
-            state->headers[i].value_length = headers[i].value_len;
-        }
+    Copy(buf, state->bytes, (size_t)consumed, char);
+
+    for (i = 0; i < num_headers; ++i) {
+        slices[i].name_offset = (size_t)(headers[i].name - buf);
+        slices[i].name_length = headers[i].name_len;
+        slices[i].value_offset = (size_t)(headers[i].value - buf);
+        slices[i].value_length = headers[i].value_len;
     }
 
     object = newSV(0);
@@ -269,7 +279,6 @@ parse_request(CLASS, buffer, last_len = 0, max_headers = 100)
         croak("malformed HTTP/1 request");
 
     RETVAL = new_request_object(
-        buffer,
         buf,
         consumed,
         minor_version,
@@ -434,20 +443,17 @@ header(self, name)
     SV *name
   PREINIT:
     le_http_request_state *state;
-    STRLEN buffer_len;
     STRLEN name_len;
-    const char *buf;
     const char *wanted;
     size_t i;
   CODE:
     state = request_state_from_object(self);
-    buf = SvPVbyte(state->buffer, buffer_len);
     wanted = SvPVbyte(name, name_len);
 
     for (i = 0; i < state->num_headers; ++i) {
         le_http_header_slice *header = &state->headers[i];
         if (ascii_equal_ci(
-                buf + header->name_offset,
+                state->bytes + header->name_offset,
                 header->name_length,
                 wanted,
                 (size_t)name_len
@@ -469,20 +475,17 @@ header_values(self, name)
     SV *name
   PREINIT:
     le_http_request_state *state;
-    STRLEN buffer_len;
     STRLEN name_len;
-    const char *buf;
     const char *wanted;
     size_t i;
   PPCODE:
     state = request_state_from_object(self);
-    buf = SvPVbyte(state->buffer, buffer_len);
     wanted = SvPVbyte(name, name_len);
 
     for (i = 0; i < state->num_headers; ++i) {
         le_http_header_slice *header = &state->headers[i];
         if (ascii_equal_ci(
-                buf + header->name_offset,
+                state->bytes + header->name_offset,
                 header->name_length,
                 wanted,
                 (size_t)name_len
@@ -521,9 +524,5 @@ DESTROY(self)
     if (state == NULL)
         XSRETURN_EMPTY;
 
-    if (state->buffer != NULL)
-        SvREFCNT_dec(state->buffer);
-    if (state->headers != NULL)
-        Safefree(state->headers);
     Safefree(state);
     sv_setiv(inner, 0);
