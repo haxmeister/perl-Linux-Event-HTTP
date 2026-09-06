@@ -11,11 +11,12 @@ use Linux::Event::IO::Sock::Stream;
 use Linux::Event::Net::HTTP::Connection;
 use Linux::Event::Net::HTTP::Server;
 
-sub run_client ($loop, $server, $wire, $state) {
+sub run_client ($loop, $server, $wire, $state, $done) {
     my $guard = Linux::Event::Kernel::Timer->new(
         loop  => $loop,
         after => 2,
         on_timer => sub ($timer) {
+            diag('Upgrade wire before timeout: ' . $state->{wire});
             die "HTTP Upgrade integration test timed out\n";
         },
     );
@@ -29,6 +30,12 @@ sub run_client ($loop, $server, $wire, $state) {
         },
         on_data => sub ($stream, $bytes) {
             $state->{wire} .= $bytes;
+            if ($state->{wire} =~ $done) {
+                $guard->cancel;
+                $stream->close;
+                $server->close;
+                $loop->stop;
+            }
         },
         on_eof => sub ($stream) {
             $guard->cancel;
@@ -56,7 +63,7 @@ sub run_client ($loop, $server, $wire, $state) {
         $state->{target_class} = ref($self);
         $state->{same_object} = refaddr($self) == $state->{http_ref} ? 1 : 0;
         $state->{target_input} .= $bytes;
-        $self->end("TARGET:$bytes");
+        $self->write("TARGET:$bytes");
     }
 }
 
@@ -110,6 +117,7 @@ run_client(
         "\r\n" .
         "PING",
     $state,
+    qr/TARGET:PING\z/,
 );
 
 ok($state->{pending_in_request},
@@ -172,6 +180,7 @@ run_client(
         "Upgrade: test-proto\r\n" .
         "\r\n",
     $bad,
+    qr/\r\n\r\n\z/,
 );
 
 like(
@@ -213,6 +222,7 @@ run_client(
         "\r\n" .
         "x",
     $body,
+    qr/\r\n\r\n\z/,
 );
 
 like(
