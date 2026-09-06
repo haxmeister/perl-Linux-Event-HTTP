@@ -39,7 +39,7 @@ not create a wrapper closure per connection or add another per-request dispatch
 layer.
 
 A Connection subclass remains the declarative form for reusable protocol,
-tuning, socket, and later TLS policy:
+tuning, socket, and TLS policy:
 
 ```perl
 package HelloHTTP;
@@ -60,6 +60,36 @@ my $server = Linux::Event::Net::HTTP::Server->new(
     connection_class => 'HelloHTTP',
 );
 ```
+
+HTTPS uses the same HTTP classes. TLS remains Linux::Event transport policy on
+the accepted Connection subclass rather than a separate HTTPS protocol class:
+
+```perl
+package SecureHTTP;
+use parent 'Linux::Event::Net::HTTP::Connection';
+use Linux::Event::TLS
+    cert_file => '/etc/myapp/server-cert.pem',
+    key_file  => '/etc/myapp/server-key.pem',
+    alpn      => ['http/1.1'];
+
+sub on_request ($self, $req, $res) {
+    $res->end("secure\n");
+}
+
+package main;
+
+my $server = Linux::Event::Net::HTTP::Server->new(
+    loop             => $loop,
+    host             => '0.0.0.0',
+    port             => 443,
+    connection_class => 'SecureHTTP',
+);
+```
+
+Accepted TLS Connections use Linux::Event server-handshake semantics
+automatically. `on_ready` fires after the TLS handshake, and HTTP parsing sees
+only decrypted application bytes. The Connection can inspect negotiated
+`selected_alpn`, `tls_protocol`, and `tls_cipher` through Linux::Event.
 
 Applications use the Response object but do not construct it or pass it back to
 the Connection. Response is the writable handle for that transaction and may be
