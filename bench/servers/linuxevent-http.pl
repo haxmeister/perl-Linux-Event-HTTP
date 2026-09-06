@@ -9,11 +9,16 @@ use Linux::Event::Net::HTTP::Server;
 
 my $port = $ENV{BENCH_PORT} // die "BENCH_PORT is required\n";
 my $response_bytes = $ENV{BENCH_RESPONSE_BYTES} // 32;
+our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 my $payload = 'x' x $response_bytes;
 
 {
     package Linux::Event::Net::HTTP::Bench::CompareConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
+
+    sub stream_options ($class) {
+        return read_budget_bytes => $main::READ_BUDGET_BYTES;
+    }
 
     sub on_request ($self, $request, $response) {
         return;
