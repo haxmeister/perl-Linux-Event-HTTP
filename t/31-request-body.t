@@ -31,7 +31,7 @@ use Linux::Event::Net::HTTP::Connection;
         push @{$self->data->{events}}, "body:$target";
     }
 
-    sub on_body_end ($self, $request, $response) {
+    sub on_request_end ($self, $request, $response) {
         my $target = $request->target;
         push @{$self->data->{events}}, "end:$target";
         $response->end("$target\n");
@@ -118,7 +118,7 @@ is_deeply(
 is_deeply(
     \@ends,
     [ 'end:/fixed', 'end:/chunk', 'end:/done' ],
-    'on_body_end runs once for fixed, chunked, and bodyless requests',
+    'on_request_end runs once for fixed, chunked, and bodyless requests',
 );
 
 my @status = $state->{response} =~ /HTTP\/1\.1 200 OK\r\n/g;
@@ -138,7 +138,7 @@ like($state->{response}, qr{/fixed\n.*?/chunk\n.*?/done\n\z}s,
         $self->data->{body} .= $bytes;
     }
 
-    sub on_body_end ($self, $request, $response) {
+    sub on_request_end ($self, $request, $response) {
         $response->end("ok\n");
     }
 }
