@@ -183,10 +183,10 @@ Linux::Event::Net::HTTP::Response - response half of an HTTP transaction
 
 =head1 SYNOPSIS
 
-    sub on_request ($connection, $request, $response) {
-        $response->status(200);
-        $response->header('Content-Type', 'text/plain');
-        $response->end("hello\n");
+    sub on_request ($self, $req, $res) {
+        $res->status(200);
+        $res->header('Content-Type', 'text/plain');
+        $res->end("hello\n");
     }
 
 =head1 DESCRIPTION
@@ -195,10 +195,11 @@ Every successfully dispatched HTTP request receives one Response object created
 and bound by L<Linux::Event::Net::HTTP::Connection>. Applications do not
 construct Response objects and do not pass them back to Connection.
 
-Response owns application-facing response construction. Status and headers may
-be configured until output begins. C<end> completes a normal scalar response.
-C<write> begins a fixed-length streaming response when Content-Length has been
-set explicitly.
+Response is the writable, transaction-scoped output handle for one HTTP
+response. It is bound to its owning Connection and paired Request. Status and
+headers may be configured until output begins. C<write> streams response bytes;
+C<end> emits optional final bytes and completes the response half of the
+transaction.
 
 The HTTP/1 response head is serialized in XS. Header names and values are
 validated before they can be emitted, including rejection of CR/LF/NUL control
@@ -210,27 +211,31 @@ C<connection> returns the owning HTTP Connection while it is alive. C<request>
 returns the Request paired with this response. The connection reference is weak
 so retaining a completed Response does not retain the socket.
 
+A Connection may serve many request/response transactions over its lifetime;
+a Response represents only one of them. Response output delegates to the bound
+Connection, which owns transport and HTTP/1 ordering state.
+
 =head1 METHODS
 
 =head2 status
 
-    my $status = $response->status;
-    $response->status(404);
+    my $status = $res->status;
+    $res->status(404);
 
 Gets or sets the three-digit status code. It defaults to 200.
 
 =head2 reason
 
-    my $reason = $response->reason;
-    $response->reason('Not Here');
+    my $reason = $res->reason;
+    $res->reason('Not Here');
 
 Gets or sets the optional reason phrase. Passing undef restores the serializer's
 default phrase for the status code.
 
 =head2 header
 
-    $response->header('Content-Type', 'text/plain');
-    my $type = $response->header('Content-Type');
+    $res->header('Content-Type', 'text/plain');
+    my $type = $res->header('Content-Type');
 
 With a value, replaces all existing fields of the same ASCII
 case-insensitive name with one field. Without a value, returns the first
@@ -238,38 +243,52 @@ matching value or undef.
 
 =head2 add_header
 
-    $response->add_header('Set-Cookie', 'a=1');
-    $response->add_header('Set-Cookie', 'b=2');
+    $res->add_header('Set-Cookie', 'a=1');
+    $res->add_header('Set-Cookie', 'b=2');
 
 Appends another field without removing existing fields of the same name.
 
 =head2 header_values
 
-    my @cookies = $response->header_values('Set-Cookie');
+    my @cookies = $res->header_values('Set-Cookie');
 
 Returns all matching values in output order.
 
 =head2 write
 
-    $response->header('Content-Length', 12);
-    my $accepted = $response->write("hello ");
-    $response->end("world\n");
+    my $accepted = $res->write("hello ");
+    $res->write("world");
+    $res->end("\n");
 
-Begins or continues a fixed-length response body. Until chunked response
-streaming is implemented, Content-Length must be set before the first C<write>.
+Begins or continues a streaming response body.
+
+For HTTP/1.1, if Content-Length was not set before the first C<write>, the
+Connection automatically adds C<Transfer-Encoding: chunked> and frames each
+write. C<end> emits any supplied final bytes followed by the terminating zero
+chunk. An empty C<write> emits no chunk and does not terminate the response.
+
+If Content-Length was set explicitly, streaming remains fixed-length and the
+final emitted byte count must match it exactly.
+
+HTTP/1.0 does not support chunked transfer coding. A streaming response without
+Content-Length is therefore close-delimited and the Connection closes after the
+response completes.
+
 The return value mirrors Linux::Event Stream write backpressure: false means the
 bytes were accepted but the configured high watermark has been reached.
-
-Status and headers become immutable when the first bytes are committed.
+Status and headers become immutable when the first output is committed.
 
 =head2 end
 
-    $response->end("hello\n");
+    $res->end("hello\n");
 
-Completes the response. When C<end> is the first body operation,
-Content-Length is added automatically from the supplied byte-string length.
-For a response already started with C<write>, the total emitted byte count must
-match the declared Content-Length.
+Completes the response. When C<end> is the first body operation and no transfer
+coding was requested, Content-Length is added automatically from the supplied
+byte-string length.
+
+For a response already started with C<write>, C<end> follows the framing mode
+chosen by that first write: fixed-length, HTTP/1.1 chunked, or HTTP/1.0
+close-delimited.
 
 HEAD and body-forbidden status handling is enforced by the connection protocol
 layer. If HTTP persistence requires close, C<end> drains queued output before
@@ -290,7 +309,7 @@ True after the response head has been committed.
 
 =head2 is_ended
 
-True after C<end> completes the HTTP transaction.
+True after C<end> completes the response half of the HTTP transaction.
 
 =head1 INTERNAL SERIALIZATION
 
