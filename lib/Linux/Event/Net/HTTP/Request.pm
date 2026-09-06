@@ -34,7 +34,7 @@ both C<Transfer-Encoding> and C<Content-Length> is rejected.
 Bodies are fundamentally streamed by L<Linux::Event::Net::HTTP::Connection>.
 C<on_request> receives this Request and its paired Response after the request
 head is available. Optional C<on_body> callbacks receive body byte strings, and
-C<on_body_end> marks the complete request-body boundary. Content-Length and
+C<on_request_end> marks the complete request input boundary. Content-Length and
 chunked framing are removed by the protocol layer rather than exposed to the
 application.
 
