@@ -24,6 +24,7 @@ t/13-chunked-decoder.t
 t/20-response.t
 t/30-connection.t
 t/31-request-body.t
+t/32-request-body-lifecycle.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
