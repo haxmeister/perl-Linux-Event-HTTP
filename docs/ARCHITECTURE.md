@@ -18,8 +18,9 @@ The design is divided into three layers:
    Response APIs should not unnecessarily encode HTTP/1-specific details.
 2. Bodies are fundamentally streams. A convenience API may accumulate a small
    body, but accumulation is not the protocol primitive.
-3. Protocol parsing may move into XS/C and should avoid unnecessary copies and
-   avoid Perl callback churn in hot paths.
+3. HTTP/1 request-head parsing uses vendored picohttpparser through a private XS
+   boundary. The application-facing Request keeps parsed spans in native state
+   and materializes Perl strings only when requested.
 4. Linux::Event transport tuning, buffering, TLS, and backpressure must be
    reused rather than reimplemented here.
 5. The connection layer must permit protocol handoff so HTTP Upgrade can later
@@ -28,11 +29,34 @@ The design is divided into three layers:
    subclass/cached-callback performance characteristics.
 7. Convenience APIs must not make streaming, backpressure, or protocol limits
    second-class features.
+8. Vendored protocol code must have recorded provenance and license text and
+   must never require a network fetch during build, installation, or runtime.
 
-## Initial implementation order
+## HTTP/1 parser and request state
 
-1. HTTP/1 parser and protocol state machine.
-2. Request representation.
+picohttpparser is vendored at a recorded upstream commit and compiled as part of
+this distribution. The parser package is private; applications receive
+Linux::Event::Net::HTTP::Request objects rather than parser offsets or pico
+structures.
+
+A native Request allocation contains request metadata, header slices, and the
+stable request-head bytes they reference. Header names are compared in C using
+ASCII case-insensitive semantics. Original spelling and duplicate fields are
+preserved. Perl strings are created only for fields the application accesses.
+
+Strict protocol policy belongs above pico. The HTTP layer currently rejects
+obsolete folded headers and imposes explicit header-count limits without
+modifying the vendored parser source.
+
+## Implementation order
+
+Completed foundation:
+
+1. HTTP/1 request-head parser.
+2. Native lazy Request representation.
+
+Next protocol work:
+
 3. Response serialization.
 4. Bind one HTTP connection to Linux::Event stream transport.
 5. Sequential keep-alive requests.
@@ -41,7 +65,7 @@ The design is divided into three layers:
 8. Server/listener convenience layer.
 9. TLS integration.
 10. Upgrade handoff.
-11. Benchmarks and profiling.
+11. End-to-end benchmarks and profiling.
 
 Routing, middleware, sessions, templates, PSGI/PAGI adapters, compression,
 WebSocket, HTTP/2, and HTTP clients are intentionally outside the initial
