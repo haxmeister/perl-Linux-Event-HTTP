@@ -204,10 +204,47 @@ name one of its subclasses. Constructor callbacks may still be supplied; as on
 direct Connection construction, they override same-named class methods for
 accepted instances.
 
-The configured class continues to own C<stream_options>, socket policy, and
-other Connection subclass policy. Server validates that accepted-connection
+The configured class continues to own C<stream_options>, socket policy, TLS,
+and other Connection subclass policy. Server validates that accepted-connection
 policy when it is constructed, then leaves the policy on the Connection class
 rather than copying settings into the Server object.
+
+=head1 TLS
+
+HTTPS uses the same Server and Connection classes. Declare TLS on the configured
+Connection subclass using L<Linux::Event::TLS>:
+
+    package SecureHTTP;
+    use parent 'Linux::Event::Net::HTTP::Connection';
+    use Linux::Event::TLS
+        cert_file => '/etc/myapp/server-cert.pem',
+        key_file  => '/etc/myapp/server-key.pem',
+        alpn      => ['http/1.1'];
+
+    sub on_request ($self, $req, $res) {
+        $res->end("secure\n");
+    }
+
+    package main;
+
+    my $server = Linux::Event::Net::HTTP::Server->new(
+        loop             => $loop,
+        host             => '0.0.0.0',
+        port             => 443,
+        connection_class => 'SecureHTTP',
+    );
+
+Accepted TLS Connections automatically use Linux::Event server-handshake
+semantics. Server validates the configured Connection TLS declaration at
+construction time, including the requirement for a server certificate and key.
+The HTTP layer does not create a separate HTTPS Connection type and does not
+reimplement TLS state.
+
+C<on_ready> for a TLS Connection runs only after handshake and verification have
+completed. HTTP request parsing therefore sees decrypted application bytes, and
+Response output travels through the established TLS transport. Negotiated
+C<selected_alpn>, C<tls_protocol>, C<tls_cipher>, and C<tls_stats> remain
+available directly from the Connection through Linux::Event.
 
 =head1 LISTENER OPTIONS
 
@@ -259,6 +296,7 @@ Connections retain their independent lifecycles.
 =head1 SEE ALSO
 
 L<Linux::Event::Net::HTTP::Connection>, L<Linux::Event::Net::HTTP::Request>,
-L<Linux::Event::Net::HTTP::Response>, L<Linux::Event::IO::Sock::Listener>.
+L<Linux::Event::Net::HTTP::Response>, L<Linux::Event::IO::Sock::Listener>,
+L<Linux::Event::TLS>.
 
 =cut
