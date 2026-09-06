@@ -6,17 +6,23 @@ use Benchmark qw(cmpthese);
 use Getopt::Long qw(GetOptions);
 use Linux::Event::Net::HTTP::_Parser::HTTP1;
 
-my $iterations = 500_000;
+my $seconds = 1;
+my $iterations;
 GetOptions(
+    'seconds=i'    => \$seconds,
     'iterations=i' => \$iterations,
-) or die "usage: $0 [--iterations=N]\n";
+) or die "usage: $0 [--seconds=N | --iterations=N]\n";
 
-die "--iterations must be positive\n" if $iterations < 1;
+die "--seconds must be positive\n" if $seconds < 1;
+die "--iterations must be positive\n"
+    if defined($iterations) && $iterations < 1;
 
+my $count = defined($iterations) ? $iterations : -$seconds;
 my $parser = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+my $sink = 0;
 
 say "picohttpparser ", $parser->pico_version;
-say "iterations=$iterations";
+say defined($iterations) ? "iterations=$iterations" : "seconds=$seconds per case";
 
 for my $header_count (4, 16, 64) {
     my @lines = (
@@ -38,23 +44,27 @@ for my $header_count (4, 16, 64) {
     say "headers=$header_count bytes=", length($request);
 
     cmpthese(
-        $iterations,
+        $count,
         {
             pico_probe => sub {
-                $parser->probe_request($request, 0, 100);
+                $sink += $parser->probe_request($request, 0, 100);
             },
             pico_offsets => sub {
-                $parser->parse_request_offsets($request, 0, 100);
+                my $parsed = $parser->parse_request_offsets($request, 0, 100);
+                $sink += $parsed->[0];
             },
             pico_materialize => sub {
                 my $parsed = $parser->parse_request_offsets($request, 0, 100);
-                substr($request, $parsed->[2], $parsed->[3]);
-                substr($request, $parsed->[4], $parsed->[5]);
+                $sink += length substr($request, $parsed->[2], $parsed->[3]);
+                $sink += length substr($request, $parsed->[4], $parsed->[5]);
                 for my $header (@{$parsed->[6]}) {
-                    substr($request, $header->[0], $header->[1]);
-                    substr($request, $header->[2], $header->[3]);
+                    $sink += length substr($request, $header->[0], $header->[1]);
+                    $sink += length substr($request, $header->[2], $header->[3]);
                 }
             },
         },
     );
 }
+
+# Keep the benchmarked work observable without cluttering normal output.
+END { $sink = 0 if $sink < 0 }
