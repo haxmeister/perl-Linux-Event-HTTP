@@ -33,5 +33,8 @@ Revision history for Linux-Event-Net-HTTP
       Linux::Event stream-socket protocol while preserving live transport state.
     - Preserve same-read post-HTTP bytes across Upgrade, keep the normal request-end
       callback lifecycle, and queue the 101 response before target-protocol output.
+    - Add a forked end-to-end HTTP benchmark harness with persistent connections,
+      pipelining, request-body workloads, latency percentiles, JSON output, and optional
+      Linux::Event loop profiling.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
