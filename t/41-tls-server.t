@@ -28,14 +28,21 @@ my $temp = tempdir(CLEANUP => 1);
 my $cert = File::Spec->catfile($temp, 'server-cert.pem');
 my $key = File::Spec->catfile($temp, 'server-key.pem');
 
-my $generated = system(
-    $openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-    '-keyout', $key,
-    '-out', $cert,
-    '-subj', '/CN=localhost',
-    '-addext', 'subjectAltName=DNS:localhost',
-    '-days', '1',
-);
+my $generated;
+{
+    # Hosted Perl builds can export OPENSSL_CONF relative to the Perl prefix,
+    # while this test deliberately invokes the system OpenSSL command.
+    local $ENV{OPENSSL_CONF};
+    delete $ENV{OPENSSL_CONF};
+    $generated = system(
+        $openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+        '-keyout', $key,
+        '-out', $cert,
+        '-subj', '/CN=localhost',
+        '-addext', 'subjectAltName=DNS:localhost',
+        '-days', '1',
+    );
+}
 plan skip_all => 'openssl could not generate temporary TLS certificate'
     if $generated != 0 || !-s $cert || !-s $key;
 
