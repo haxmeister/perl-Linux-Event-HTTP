@@ -37,7 +37,7 @@ The design is divided into three layers:
     transaction. The protocol engine creates and binds that Response before
     application dispatch; application code never has to construct or return it.
 11. A persistent connection advances only when both halves of the current
-    transaction are complete: the full request body boundary has been consumed
+    transaction are complete: the full request input boundary has been consumed
     and the Response has ended.
 
 ## HTTP/1 parser and request state
@@ -74,7 +74,7 @@ sub on_body ($connection, $request, $response, $bytes) {
     ...
 }
 
-sub on_body_end ($connection, $request, $response) {
+sub on_request_end ($connection, $request, $response) {
     ...
 }
 ```
@@ -83,7 +83,8 @@ Content-Length bodies are consumed directly from the Connection input buffer.
 No whole-body scalar is built by the protocol engine. If no `on_body` callback
 is installed, bytes are drained and discarded so framing and keep-alive remain
 correct without forcing an allocation path on applications that do not consume
-the body.
+the body. `on_request_end` runs once after the full request input boundary has
+been consumed, including requests with no body.
 
 Chunked request bodies use a private XS wrapper around picohttpparser's stateful
 chunk decoder. Chunk framing is removed before Perl sees body bytes. The decoder
@@ -131,10 +132,10 @@ queuing, backpressure, and deadlines.
 
 Each parsed request creates one transaction consisting of the Request, its
 bound Response, request-body framing state, and response-output state. The next
-pipelined request cannot dispatch until the request body has reached its wire
-boundary and the Response has ended. If the body finishes first, reads pause
+pipelined request cannot dispatch until the request input has reached its wire
+boundary and the Response has ended. If the request finishes first, reads pause
 while the application retains the Response. If the Response finishes first,
-the connection continues consuming the current request body before advancing.
+the connection continues consuming the current request before advancing.
 
 ## Implementation order
 
@@ -149,7 +150,7 @@ Completed foundation:
 7. Bound Request/Response transaction API with scalar and fixed-length response
    output.
 8. Streaming Content-Length request bodies.
-9. Native chunked request decoding and request body completion callbacks.
+9. Native chunked request decoding and request-end callbacks.
 10. HTTP/1.1 Expect: 100-continue handling.
 
 Next protocol work:
