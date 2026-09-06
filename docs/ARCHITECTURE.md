@@ -31,6 +31,8 @@ The design is divided into three layers:
    second-class features.
 8. Vendored protocol code must have recorded provenance and license text and
    must never require a network fetch during build, installation, or runtime.
+9. Ambiguous HTTP/1 message framing is rejected rather than normalized in ways
+   that can disagree with another HTTP implementation on the same path.
 
 ## HTTP/1 parser and request state
 
@@ -39,14 +41,33 @@ this distribution. The parser package is private; applications receive
 Linux::Event::Net::HTTP::Request objects rather than parser offsets or pico
 structures.
 
-A native Request allocation contains request metadata, header slices, and the
-stable request-head bytes they reference. Header names are compared in C using
-ASCII case-insensitive semantics. Original spelling and duplicate fields are
-preserved. Perl strings are created only for fields the application accesses.
+A native Request allocation contains request metadata, header slices, stable
+request-head bytes, and validated framing state. Header names are compared in C
+using ASCII case-insensitive semantics. Original spelling and duplicate fields
+are preserved. Perl strings are created only for fields the application
+accesses.
 
-Strict protocol policy belongs above pico. The HTTP layer currently rejects
-obsolete folded headers and imposes explicit header-count limits without
-modifying the vendored parser source.
+Strict protocol policy belongs above pico. The HTTP layer rejects obsolete
+folded headers, imposes explicit header-count limits, requires exactly one Host
+field for HTTP/1.1, validates Content-Length agreement, rejects
+Transfer-Encoding plus Content-Length, requires chunked to be the final request
+transfer coding, and derives connection persistence from HTTP version and
+Connection options.
+
+The Request API exposes the resulting framing decision through `body_mode`,
+`content_length`, and `keep_alive`; it does not expose parser internals.
+
+## HTTP/1 response serialization
+
+Response keeps application-supplied status and ordered field pairs while the
+HTTP/1 response head is serialized in XS. Output validation rejects invalid
+field-name tokens and control characters that could permit response splitting.
+The serializer also refuses ambiguous framing fields, including multiple
+Content-Length fields and Transfer-Encoding combined with Content-Length.
+
+The serializer only emits the response head. Request/response body streaming
+and transport backpressure remain responsibilities of the connection protocol
+layer and Linux::Event transport respectively.
 
 ## Implementation order
 
@@ -54,18 +75,19 @@ Completed foundation:
 
 1. HTTP/1 request-head parser.
 2. Native lazy Request representation.
+3. HTTP/1 request message-framing validation and persistence policy.
+4. Native HTTP/1 response-head serialization.
 
 Next protocol work:
 
-3. Response serialization.
-4. Bind one HTTP connection to Linux::Event stream transport.
-5. Sequential keep-alive requests.
-6. Streaming request and response bodies.
-7. Chunked transfer coding.
-8. Server/listener convenience layer.
-9. TLS integration.
-10. Upgrade handoff.
-11. End-to-end benchmarks and profiling.
+5. Bind one HTTP connection to Linux::Event stream transport.
+6. Sequential keep-alive requests.
+7. Streaming request and response bodies.
+8. Chunked transfer coding.
+9. Server/listener convenience layer.
+10. TLS integration.
+11. Upgrade handoff.
+12. End-to-end benchmarks and profiling.
 
 Routing, middleware, sessions, templates, PSGI/PAGI adapters, compression,
 WebSocket, HTTP/2, and HTTP clients are intentionally outside the initial

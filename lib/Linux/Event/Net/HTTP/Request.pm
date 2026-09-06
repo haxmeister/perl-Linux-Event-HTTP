@@ -3,6 +3,8 @@ use v5.36;
 use strict;
 use warnings;
 
+use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
+
 our $VERSION = '0.001';
 
 sub CLONE_SKIP { 1 }
@@ -25,8 +27,12 @@ The request object does not expose HTTP/1 parser offsets or parser-specific
 storage. The same application-facing methods can therefore remain useful for
 later HTTP protocol versions.
 
+Request message framing is validated before the object is returned. Ambiguous
+framing such as conflicting C<Content-Length> values or a request containing
+both C<Transfer-Encoding> and C<Content-Length> is rejected.
+
 Bodies are fundamentally streamed by the protocol layer. Any eventual scalar
-body convenience API must be layered on top of that streaming primitive.
+body convenience API is layered on top of that streaming primitive.
 
 =head1 METHODS
 
@@ -47,6 +53,32 @@ Returns the request target exactly as received.
     my $version = $request->http_version;
 
 Returns the HTTP version, such as C<1.1>.
+
+=head2 body_mode
+
+    my $mode = $request->body_mode;
+
+Returns C<none>, C<content-length>, or C<chunked>. This reports HTTP message
+framing, not whether the application considers the request method to have
+content semantics.
+
+=head2 content_length
+
+    my $length = $request->content_length;
+
+Returns the validated Content-Length as an integer when one was supplied, or
+undef otherwise. Identical duplicate or comma-combined Content-Length values
+are normalized to one numeric value during validation.
+
+=head2 keep_alive
+
+    if ($request->keep_alive) {
+        ...
+    }
+
+Returns true when the HTTP version and Connection options permit this
+connection to remain persistent after the response. C<Connection: close>
+always disables persistence.
 
 =head2 header
 

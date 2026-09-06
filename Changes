@@ -8,4 +8,7 @@ Revision history for Linux-Event-Net-HTTP
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.
     - Preserve original header spelling, duplicate values, and legal underscore names.
+    - Validate HTTP/1 Host, Content-Length, Transfer-Encoding, body framing, and persistence.
+    - Reject ambiguous TE/CL framing and unsupported request transfer codings.
+    - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
