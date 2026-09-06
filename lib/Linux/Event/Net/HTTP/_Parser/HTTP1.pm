@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use Linux::Event::Net::HTTP ();
+use Linux::Event::Net::HTTP::Request ();
 use XSLoader ();
 
 our $VERSION = $Linux::Event::Net::HTTP::VERSION;
