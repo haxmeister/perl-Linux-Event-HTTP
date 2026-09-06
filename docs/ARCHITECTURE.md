@@ -39,6 +39,9 @@ The design is divided into three layers:
 11. A persistent connection advances only when both halves of the current
     transaction are complete: the full request input boundary has been consumed
     and the Response has ended.
+12. HTTPS is HTTP over Linux::Event TLS transport, not a separate HTTP
+    Connection hierarchy. TLS declaration and handshake policy stay on the
+    accepted Connection subclass.
 
 ## HTTP/1 parser and request state
 
@@ -191,9 +194,36 @@ Listener socket source and acceptance tuning remain owned by Linux::Event.
 Server delegates host/port/Unix/adopted-listener construction and methods such
 as `port`, `pause`, `resume`, and `close` rather than duplicating them.
 
-TLS integration remains a later milestone. When that work lands, TLS policy
-continues to belong to the accepted Connection/Stream class rather than Server
-reimplementing transport security.
+## TLS transport integration
+
+HTTPS uses the same `HTTP::Server`, `HTTP::Connection`, Request, and Response
+classes. A secure accepted Connection is declared in exactly the same place as
+other Linux::Event Stream policy:
+
+```perl
+package SecureHTTP;
+use parent 'Linux::Event::Net::HTTP::Connection';
+use Linux::Event::TLS
+    cert_file => '/etc/myapp/server-cert.pem',
+    key_file  => '/etc/myapp/server-key.pem',
+    alpn      => ['http/1.1'];
+```
+
+`HTTP::Server` validates the configured Connection's accepted-stream policy at
+construction time. Linux::Event then sees `_accepted => 1` on the real
+Connection subclass and creates server-side TLS transport before the HTTP input
+engine receives bytes. No HTTPS-specific wrapper object is inserted.
+
+TLS `on_ready` runs only after the handshake and verification state is complete.
+The HTTP parser therefore consumes decrypted application bytes, while Response
+writes pass through Linux::Event's TLS transport and shutdown semantics.
+Negotiated `selected_alpn`, `tls_protocol`, `tls_cipher`, and `tls_stats` remain
+available on the same HTTP Connection object.
+
+HTTP/1.1 ALPN is ordinary Linux::Event TLS policy. The current HTTP engine is
+HTTP/1.x only, so deployments using ALPN should advertise `http/1.1`; future
+HTTP/2 support will require protocol selection and a separate HTTP/2 engine,
+not reinterpretation of HTTP/1 bytes.
 
 ## Implementation order
 
@@ -213,10 +243,11 @@ Completed foundation:
 11. Automatic HTTP/1.1 chunked response streaming with HTTP/1.0 close-delimited
     fallback.
 12. HTTP Server/listener convenience layer with retained Connection callbacks.
+13. TLS transport integration through declarative Connection policy and
+    HTTP/1.1 ALPN coverage.
 
 Next protocol work:
 
-13. TLS integration.
 14. Upgrade handoff.
 15. End-to-end benchmarks and profiling.
 
