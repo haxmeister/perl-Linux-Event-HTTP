@@ -138,7 +138,7 @@ say 'Linux::Event::Net::HTTP cross-server comparison';
 say 'servers=' . join(',', @available);
 say 'skipped=' . join(',', @skipped) if @skipped;
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats";
-say 'mode=single-process single-thread loopback-tcp shared-client';
+say 'mode=single-process single-execution-slot loopback-tcp shared-client';
 
 for my $repeat (1 .. $repeats) {
     for my $name (rotated_servers($repeat, @available)) {
