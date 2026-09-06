@@ -42,3 +42,7 @@ jobs:
           perl Makefile.PL
           make
           make test
+
+      - name: Pico parser benchmark
+        if: github.ref == 'refs/heads/experiment/picohttpparser' && matrix.perl == '5'
+        run: perl -Mblib bench/pico-parser.pl --iterations=100000
