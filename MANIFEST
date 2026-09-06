@@ -22,6 +22,7 @@ lib/Linux/Event/Net/HTTP/Connection.pm
 lib/Linux/Event/Net/HTTP/Request.pm
 lib/Linux/Event/Net/HTTP/Response.pm
 lib/Linux/Event/Net/HTTP/Server.pm
+lib/Linux/Event/Net/HTTP/_Native/Response1.pm
 lib/Linux/Event/Net/HTTP/_Parser/HTTP1.pm
 lib/Linux/Event/Net/HTTP/_Parser/HTTP1/Chunked.pm
 lib/Linux/Event/Net/HTTP/_ServerConnection.pm
@@ -31,6 +32,7 @@ t/10-pico-parser.t
 t/11-native-request.t
 t/12-http1-framing.t
 t/13-chunked-decoder.t
+t/14-native-response-fastpath.t
 t/20-response.t
 t/30-connection.t
 t/31-request-body.t
@@ -47,3 +49,5 @@ xschunked/Chunked.xs
 xschunked/Makefile.PL
 xshttp1/HTTP1.xs
 xshttp1/Makefile.PL
+xsresponse1/Makefile.PL
+xsresponse1/Response1.xs
