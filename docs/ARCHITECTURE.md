@@ -65,16 +65,16 @@ The Request API exposes the resulting framing decision through `body_mode`,
 
 ## HTTP/1 request body streaming
 
-The Connection dispatches `on_request($connection, $request, $response)` as soon
-as the validated request head is available. Body bytes are then delivered with
-cached callbacks:
+The Connection dispatches `on_request($self, $req, $res)` as soon as the
+validated request head is available. Body bytes are then delivered with cached
+callbacks:
 
 ```perl
-sub on_body ($connection, $request, $response, $bytes) {
+sub on_body ($self, $req, $res, $bytes) {
     ...
 }
 
-sub on_request_end ($connection, $request, $response) {
+sub on_request_end ($self, $req, $res) {
     ...
 }
 ```
@@ -97,17 +97,21 @@ For HTTP/1.1 requests with a body and `Expect: 100-continue`, Connection emits
 `100 Continue` after validating the request head. Unsupported expectations are
 rejected with 417 before application dispatch.
 
-## HTTP/1 response serialization
+## HTTP/1 response serialization and streaming
 
 Connection creates one Response before invoking `on_request`:
 
 ```perl
-sub on_request ($connection, $request, $response) {
-    $response->status(200);
-    $response->header('Content-Type', 'text/plain');
-    $response->end("hello\n");
+sub on_request ($self, $req, $res) {
+    $res->status(200);
+    $res->header('Content-Type', 'text/plain');
+    $res->end("hello\n");
 }
 ```
+
+Response is the transaction-scoped writable output handle. It is bound to the
+persistent Connection and paired Request, while status, headers, and response
+completion remain specific to that one transaction.
 
 Response keeps application-supplied status and ordered field pairs while the
 HTTP/1 response head is serialized in XS. Output validation rejects invalid
@@ -116,11 +120,31 @@ The serializer also refuses ambiguous framing fields, including multiple
 Content-Length fields and Transfer-Encoding combined with Content-Length.
 
 The first body operation commits the response head and freezes status/header
-metadata. `end($bytes)` is the normal scalar convenience path and adds
-Content-Length automatically. `write($bytes)` supports fixed-length streaming
-when Content-Length is declared before output starts; its return value preserves
-Linux::Event Stream backpressure status. Automatic chunked response streaming
-remains a later transfer-coding step.
+metadata. `end($bytes)` remains the scalar convenience path and adds
+Content-Length automatically when it is the first body operation.
+
+Streaming uses `write` followed by `end`:
+
+```perl
+$res->write("one\n");
+$res->write("two\n");
+$res->end("three\n");
+```
+
+If Content-Length was declared before the first write, Connection enforces that
+fixed-length framing exactly. If HTTP/1.1 streaming starts without
+Content-Length, Connection automatically adds `Transfer-Encoding: chunked`,
+frames each nonempty write, and emits the terminal zero chunk from `end`.
+An empty write emits no chunk and never terminates a response.
+
+HTTP/1.0 cannot use chunked transfer coding. Unknown-length streaming therefore
+falls back to close-delimited response framing, which forces connection close
+after the response and current request input both complete.
+
+Chunk encoding currently occurs in the Perl protocol layer around the existing
+Linux::Event write path. This keeps the API and framing semantics correct first;
+per-chunk native encoding is a benchmark-driven optimization rather than a
+requirement of the public API.
 
 ## HTTP/1 connection
 
@@ -152,10 +176,11 @@ Completed foundation:
 8. Streaming Content-Length request bodies.
 9. Native chunked request decoding and request-end callbacks.
 10. HTTP/1.1 Expect: 100-continue handling.
+11. Automatic HTTP/1.1 chunked response streaming with HTTP/1.0 close-delimited
+    fallback.
 
 Next protocol work:
 
-11. Automatic chunked response streaming.
 12. Server/listener convenience layer.
 13. TLS integration.
 14. Upgrade handoff.
