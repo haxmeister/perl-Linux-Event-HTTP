@@ -41,6 +41,10 @@ jobs:
           make
           make test
 
+      - name: End-to-end benchmark smoke
+        if: matrix.perl == '5'
+        run: perl -Mblib bench/run-http-end-to-end.pl --smoke
+
       - name: Distribution integrity
         if: matrix.perl == '5'
         run: make disttest
@@ -48,3 +52,7 @@ jobs:
       - name: Pico parser benchmark
         if: github.event_name == 'workflow_dispatch' && matrix.perl == '5'
         run: perl -Mblib bench/pico-parser.pl --seconds=1
+
+      - name: HTTP end-to-end diagnostic benchmark
+        if: github.event_name == 'workflow_dispatch' && matrix.perl == '5'
+        run: perl -Mblib bench/run-http-end-to-end.pl --requests=20000 --warmup=2000 --connections=100 --repeats=3
