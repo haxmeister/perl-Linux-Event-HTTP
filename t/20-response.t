@@ -5,9 +5,12 @@ use warnings;
 use Test::More;
 use Linux::Event::Net::HTTP::Response;
 
-my $response = Linux::Event::Net::HTTP::Response->new(status => 200);
+my $class = 'Linux::Event::Net::HTTP::Response';
+ok(!$class->can('new'), 'Response objects are created by the HTTP connection');
 
-is($response->status, 200, 'status getter returns constructor status');
+my $response = $class->_new(status => 200);
+
+is($response->status, 200, 'status getter returns internal initial status');
 ok(!defined $response->reason, 'reason is optional');
 
 $response->header('Content-Type', 'text/plain');
@@ -56,7 +59,7 @@ is_deeply(
     'header setter replaces fields of same name',
 );
 
-my $with_length = Linux::Event::Net::HTTP::Response->new(
+my $with_length = $class->_new(
     status => 200,
     headers => [
         [ 'Content-Length', '0' ],
@@ -68,7 +71,7 @@ like(
     'decimal Content-Length serializes',
 );
 
-my $no_content_length = Linux::Event::Net::HTTP::Response->new(
+my $no_content_length = $class->_new(
     status => 204,
     headers => [
         [ 'Content-Length', '0' ],
@@ -78,7 +81,7 @@ my $no_content_ok = eval { $no_content_length->_serialize_head('1.1'); 1 };
 ok(!$no_content_ok, '204 response cannot emit Content-Length');
 like($@, qr/204.*Content-Length/, '204 Content-Length rejection is clear');
 
-my $ok = eval { Linux::Event::Net::HTTP::Response->new(status => 99); 1 };
+my $ok = eval { $class->_new(status => 99); 1 };
 ok(!$ok, 'invalid status is rejected');
 like($@, qr/status/, 'invalid status error is clear');
 
@@ -98,7 +101,7 @@ $ok = eval { $response->_serialize_head('2'); 1 };
 ok(!$ok, 'HTTP/2 cannot use HTTP/1 serializer');
 like($@, qr/version/, 'invalid serializer version error is clear');
 
-my $both = Linux::Event::Net::HTTP::Response->new(
+my $both = $class->_new(
     headers => [
         [ 'Content-Length', '3' ],
         [ 'Transfer-Encoding', 'chunked' ],
@@ -108,7 +111,7 @@ $ok = eval { $both->_serialize_head('1.1'); 1 };
 ok(!$ok, 'response TE plus CL is rejected');
 like($@, qr/both Transfer-Encoding and Content-Length/, 'response TE plus CL error is clear');
 
-my $duplicate_length = Linux::Event::Net::HTTP::Response->new(
+my $duplicate_length = $class->_new(
     headers => [
         [ 'Content-Length', '3' ],
         [ 'Content-Length', '3' ],
@@ -118,7 +121,7 @@ $ok = eval { $duplicate_length->_serialize_head('1.1'); 1 };
 ok(!$ok, 'multiple response Content-Length fields are rejected');
 like($@, qr/multiple Content-Length/, 'duplicate response Content-Length error is clear');
 
-my $bad_length = Linux::Event::Net::HTTP::Response->new(
+my $bad_length = $class->_new(
     headers => [
         [ 'Content-Length', '3, 3' ],
     ],
@@ -128,7 +131,7 @@ ok(!$ok, 'serializer only emits canonical decimal Content-Length');
 like($@, qr/decimal number/, 'non-canonical response Content-Length error is clear');
 
 # Serializer validates again in case internals are modified directly.
-my $tampered = Linux::Event::Net::HTTP::Response->new;
+my $tampered = $class->_new;
 $tampered->{headers} = [ [ 'Bad Header', 'x' ] ];
 $ok = eval { $tampered->_serialize_head('1.1'); 1 };
 ok(!$ok, 'native serializer revalidates tampered field names');
@@ -136,5 +139,15 @@ ok(!$ok, 'native serializer revalidates tampered field names');
 $tampered->{headers} = [ [ 'X-Test', "x\0y" ] ];
 $ok = eval { $tampered->_serialize_head('1.1'); 1 };
 ok(!$ok, 'native serializer revalidates tampered field values');
+
+my $unbound = $class->_new;
+$ok = eval { $unbound->end("x"); 1 };
+ok(!$ok, 'unbound internal Response cannot emit application output');
+like($@, qr/not bound/, 'unbound output rejection is clear');
+
+$unbound->_mark_started;
+$ok = eval { $unbound->status(201); 1 };
+ok(!$ok, 'response metadata locks after output starts');
+like($@, qr/cannot change/, 'metadata lock error is clear');
 
 done_testing;
