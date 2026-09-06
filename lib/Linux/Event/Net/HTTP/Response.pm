@@ -6,6 +6,7 @@ use warnings;
 use Scalar::Util qw(weaken);
 
 use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
+use Linux::Event::Net::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
 
@@ -21,13 +22,14 @@ sub _new ($class, %args) {
     _validate_reason($reason) if defined $reason;
 
     my $self = bless {
-        status     => 0 + $status,
-        reason     => $reason,
-        headers    => [],
-        connection => undef,
-        request    => undef,
-        started    => 0,
-        ended      => 0,
+        status          => 0 + $status,
+        reason          => $reason,
+        headers         => [],
+        connection      => undef,
+        request         => undef,
+        started         => 0,
+        ended           => 0,
+        upgrade_pending => 0,
     }, $class;
 
     if (defined $headers) {
@@ -52,12 +54,15 @@ sub _new_bound ($class, $connection, $request) {
     return $self;
 }
 
-sub connection ($self) { $self->{connection} }
-sub request    ($self) { $self->{request} }
-sub is_started ($self) { !!$self->{started} }
-sub is_ended   ($self) { !!$self->{ended} }
+sub connection   ($self) { $self->{connection} }
+sub request      ($self) { $self->{request} }
+sub is_started   ($self) { !!$self->{started} }
+sub is_ended     ($self) { !!$self->{ended} }
+sub is_upgrading ($self) { !!$self->{upgrade_pending} }
 
 sub _assert_mutable ($self) {
+    die 'response metadata cannot change after Upgrade handoff is requested'
+        if $self->{upgrade_pending};
     die 'response metadata cannot change after output has started'
         if $self->{started};
     die 'response has already ended' if $self->{ended};
@@ -122,6 +127,8 @@ sub header_values ($self, $name) {
 }
 
 sub write ($self, $bytes) {
+    die 'write(): response has an Upgrade handoff pending'
+        if $self->{upgrade_pending};
     die 'write(): response has already ended' if $self->{ended};
     my $connection = $self->{connection}
         or die 'write(): response is not bound to an active HTTP connection';
@@ -129,10 +136,17 @@ sub write ($self, $bytes) {
 }
 
 sub end ($self, $bytes = '') {
+    die 'end(): response has an Upgrade handoff pending'
+        if $self->{upgrade_pending};
     die 'end(): response has already ended' if $self->{ended};
     my $connection = $self->{connection}
         or die 'end(): response is not bound to an active HTTP connection';
     $connection->_write_response($self, $bytes, 1);
+    return $self;
+}
+
+sub upgrade ($self, $target_class) {
+    Linux::Event::Net::HTTP::_Upgrade->schedule($self, $target_class);
     return $self;
 }
 
@@ -294,6 +308,33 @@ HEAD and body-forbidden status handling is enforced by the connection protocol
 layer. If HTTP persistence requires close, C<end> drains queued output before
 ending the transport write side.
 
+=head2 upgrade
+
+    $res->header('Upgrade', 'websocket');
+    $res->header('Sec-WebSocket-Accept', $accept);
+    $res->upgrade('MyWebSocketConnection');
+
+Completes an HTTP/1.1 protocol switch and hands the same live stream-socket
+object to another L<Linux::Event::IO::Sock::Stream> subclass. C<upgrade> sets
+status 101, supplies C<Connection: Upgrade> when absent, serializes the switching
+response, and uses Linux::Event C<transition_to> for the protocol handoff.
+
+The request must contain C<Connection: Upgrade> and an C<Upgrade> offer, must not
+request connection close, and must have no message body. The response must set
+at least one C<Upgrade> protocol selected from the request offer and cannot use
+C<Content-Length> or C<Transfer-Encoding>.
+
+The actual transition is deferred until the current HTTP callback stack and
+C<on_request_end> have completed. Reads remain paused during that boundary.
+Any bytes already read beyond the HTTP request head are supplied to the target
+protocol, while Linux::Event retains the same socket, TLS transport, output
+queue, backpressure state, deadlines, and application data. The 101 response is
+queued before target-protocol input can run, so target writes remain ordered
+after the switching response.
+
+After C<upgrade> is requested, response metadata and ordinary C<write>/C<end>
+output are locked. Use C<is_upgrading> to distinguish this pending handoff.
+
 =head2 connection
 
 Returns the owning L<Linux::Event::Net::HTTP::Connection> while it remains
@@ -309,7 +350,13 @@ True after the response head has been committed.
 
 =head2 is_ended
 
-True after C<end> completes the response half of the HTTP transaction.
+True after C<end> completes the response half of the HTTP transaction, or after
+a pending Upgrade switching response is committed immediately before handoff.
+
+=head2 is_upgrading
+
+True after C<upgrade> has validated and scheduled a protocol handoff but before
+the 101 response has been committed and the live stream has transitioned.
 
 =head1 INTERNAL SERIALIZATION
 
