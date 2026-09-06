@@ -16,6 +16,7 @@ lib/Linux/Event/Net/HTTP/Response.pm
 lib/Linux/Event/Net/HTTP/Server.pm
 lib/Linux/Event/Net/HTTP/_Parser/HTTP1.pm
 lib/Linux/Event/Net/HTTP/_Parser/HTTP1/Chunked.pm
+lib/Linux/Event/Net/HTTP/_ServerConnection.pm
 t/00-load.t
 t/10-pico-parser.t
 t/11-native-request.t
@@ -26,6 +27,7 @@ t/30-connection.t
 t/31-request-body.t
 t/32-request-body-lifecycle.t
 t/33-response-chunked.t
+t/40-server.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
