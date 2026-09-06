@@ -26,10 +26,26 @@ framework.
 The initial implementation targets HTTP/1.1 while keeping application-facing
 request and response concepts separate from HTTP/1-specific wire details.
 
+HTTP/1 request-head parsing uses picohttpparser. Its source is vendored in this
+distribution at a recorded upstream revision, so configuration, building,
+installation, and runtime do not depend on the upstream repository or a network
+fetch.
+
+Parsed request metadata remains in native state. Method, target, and header
+strings are materialized as Perl scalars only when application code requests
+them. This preserves substantially more of the native parser's performance than
+eagerly constructing Perl structures for every parsed field.
+
 =head1 DESIGN
 
 See F<docs/ARCHITECTURE.md> for the current design constraints and development
-plan.
+plan. F<docs/PICOHTTPPARSER-EXPERIMENT.md> records the parser provenance,
+correctness policy, and representation benchmarks.
+
+=head1 THIRD-PARTY CODE
+
+The distribution includes picohttpparser by Kazuho Oku and contributors. The
+vendored source and upstream license are under F<vendor/picohttpparser/>.
 
 =head1 SECURITY
 
@@ -46,5 +62,8 @@ Copyright (C) 2026 Joshua S. Day.
 
 This library is free software; you may redistribute it and/or modify it under
 the same terms as Perl 5 itself.
+
+The vendored picohttpparser source retains its upstream license in
+F<vendor/picohttpparser/LICENSE>.
 
 =cut
