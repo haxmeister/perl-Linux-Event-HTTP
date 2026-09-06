@@ -40,6 +40,11 @@ my %server = (
         command => ['node', "$Bin/servers/node-http.js"],
         available => sub { command_ok('node', '--version') },
     },
+    go => {
+        label => 'Go net/http',
+        command => ['go', 'run', "$Bin/servers/go-http.go"],
+        available => sub { command_ok('go', 'version') },
+    },
     aiohttp => {
         label => 'Python aiohttp',
         command => ['python3', "$Bin/servers/aiohttp-http.py"],
@@ -50,7 +55,7 @@ my %server = (
 # Twiggy remains available explicitly, but is not in the primary comparison
 # because current Twiggy closes the long-lived benchmark connections before the
 # requested keep-alive workload completes.
-my @servers = qw(linuxevent feersum mojo node aiohttp);
+my @servers = qw(linuxevent feersum mojo node go aiohttp);
 my $requests = 20_000;
 my $warmup = 2_000;
 my $connections = 100;
@@ -169,6 +174,7 @@ if (defined $json_path) {
             mojolicious => capture($^X, '-MMojolicious', '-e', 'print $Mojolicious::VERSION'),
             twiggy => capture($^X, '-MTwiggy', '-e', 'print $Twiggy::VERSION'),
             node => capture('node', '--version'),
+            go => capture('go', 'version'),
             python => capture('python3', '--version'),
             aiohttp => capture('python3', '-c', 'import aiohttp; print(aiohttp.__version__)'),
             os => $sysname,
@@ -497,7 +503,7 @@ sub usage ($status) {
     print <<'USAGE';
 usage: bench/run-http-comparison.pl [options]
 
-  --servers=LIST           linuxevent,feersum,mojo,twiggy,node,aiohttp
+  --servers=LIST           linuxevent,feersum,mojo,twiggy,node,go,aiohttp
   --requests=N             measured requests per server/repeat (default 20000)
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)
