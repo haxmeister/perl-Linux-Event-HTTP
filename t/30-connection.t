@@ -100,17 +100,27 @@ like(
 {
     package T::DeferredHTTPConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
+    use Linux::Event::Kernel::Timer;
     use Linux::Event::Net::HTTP::Response;
 
     sub on_request ($self, $request) {
         $self->data->{connection} = $self;
         $self->data->{request} = $request;
 
-        $self->loop->after(0.02, sub ($loop) {
-            $self->data->{paused_before_response} = $self->is_read_paused ? 1 : 0;
-            my $response = Linux::Event::Net::HTTP::Response->new(status => 200);
-            $self->respond($response, "later\n");
-        });
+        Linux::Event::Kernel::Timer->new(
+            loop  => $self->loop,
+            after => 0.02,
+            data  => $self,
+            on_timer => sub ($timer) {
+                my $connection = $timer->data;
+                $connection->data->{paused_before_response}
+                    = $connection->is_read_paused ? 1 : 0;
+                my $response = Linux::Event::Net::HTTP::Response->new(
+                    status => 200,
+                );
+                $connection->respond($response, "later\n");
+            },
+        );
         return;
     }
 }
