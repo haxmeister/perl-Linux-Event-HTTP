@@ -50,6 +50,7 @@ WriteMakefile(
             package => [qw(
                 Linux::Event::Net::HTTP::_Parser::HTTP1
                 Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked
+                Linux::Event::Net::HTTP::_ServerConnection
             )],
         },
         provides => \%provides,
