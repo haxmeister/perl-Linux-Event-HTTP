@@ -1,0 +1,6 @@
+Revision history for Linux-Event-Net-HTTP
+
+0.001  UNRELEASED
+    - Initial distribution scaffold.
+    - Establish HTTP protocol, transport, and message-layer boundaries.
+    - Reserve Server, Connection, Request, and Response public namespaces.
