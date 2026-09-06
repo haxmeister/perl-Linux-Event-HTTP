@@ -17,6 +17,7 @@ lib/Linux/Event/Net/HTTP/Server.pm
 lib/Linux/Event/Net/HTTP/_Parser/HTTP1.pm
 t/00-load.t
 t/10-pico-parser.t
+t/11-native-request.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
