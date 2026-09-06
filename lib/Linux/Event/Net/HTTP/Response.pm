@@ -3,25 +3,31 @@ use v5.36;
 use strict;
 use warnings;
 
+use Scalar::Util qw(weaken);
+
 use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
 
 our $VERSION = '0.001';
 
-sub new ($class, %args) {
+sub _new ($class, %args) {
     my $status  = delete($args{status}) // 200;
     my $reason  = delete $args{reason};
     my $headers = delete $args{headers};
 
-    die 'unknown response constructor option: ' . join(', ', sort keys %args)
+    die 'unknown response option: ' . join(', ', sort keys %args)
         if %args;
 
     _validate_status($status);
     _validate_reason($reason) if defined $reason;
 
     my $self = bless {
-        status  => 0 + $status,
-        reason  => $reason,
-        headers => [],
+        status     => 0 + $status,
+        reason     => $reason,
+        headers    => [],
+        connection => undef,
+        request    => undef,
+        started    => 0,
+        ended      => 0,
     }, $class;
 
     if (defined $headers) {
@@ -38,10 +44,31 @@ sub new ($class, %args) {
     return $self;
 }
 
+sub _new_bound ($class, $connection, $request) {
+    my $self = $class->_new;
+    $self->{connection} = $connection;
+    weaken($self->{connection});
+    $self->{request} = $request;
+    return $self;
+}
+
+sub connection ($self) { $self->{connection} }
+sub request    ($self) { $self->{request} }
+sub is_started ($self) { !!$self->{started} }
+sub is_ended   ($self) { !!$self->{ended} }
+
+sub _assert_mutable ($self) {
+    die 'response metadata cannot change after output has started'
+        if $self->{started};
+    die 'response has already ended' if $self->{ended};
+    return;
+}
+
 sub status ($self, @args) {
     return $self->{status} if !@args;
 
     die 'status accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
     _validate_status($args[0]);
     $self->{status} = 0 + $args[0];
     return $self;
@@ -51,6 +78,7 @@ sub reason ($self, @args) {
     return $self->{reason} if !@args;
 
     die 'reason accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
     _validate_reason($args[0]) if defined $args[0];
     $self->{reason} = $args[0];
     return $self;
@@ -67,6 +95,7 @@ sub header ($self, $name, @args) {
     }
 
     die 'header setter accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
     _validate_value($args[0]);
 
     my @kept = grep { lc($_->[0]) ne lc($name) } @{$self->{headers}};
@@ -77,6 +106,7 @@ sub header ($self, $name, @args) {
 }
 
 sub add_header ($self, $name, $value) {
+    $self->_assert_mutable;
     _validate_name($name);
     _validate_value($value);
     push @{$self->{headers}}, [ "$name", "$value" ];
@@ -89,6 +119,31 @@ sub header_values ($self, $name) {
     return map { $_->[1] }
         grep { lc($_->[0]) eq $wanted }
         @{$self->{headers}};
+}
+
+sub write ($self, $bytes) {
+    die 'write(): response has already ended' if $self->{ended};
+    my $connection = $self->{connection}
+        or die 'write(): response is not bound to an active HTTP connection';
+    return $connection->_write_response($self, $bytes, 0);
+}
+
+sub end ($self, $bytes = '') {
+    die 'end(): response has already ended' if $self->{ended};
+    my $connection = $self->{connection}
+        or die 'end(): response is not bound to an active HTTP connection';
+    $connection->_write_response($self, $bytes, 1);
+    return $self;
+}
+
+sub _mark_started ($self) {
+    $self->{started} = 1;
+    return;
+}
+
+sub _mark_ended ($self) {
+    $self->{ended} = 1;
+    return;
 }
 
 sub _validate_status ($status) {
@@ -124,52 +179,45 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Response - HTTP response representation
+Linux::Event::Net::HTTP::Response - response half of an HTTP transaction
 
 =head1 SYNOPSIS
 
-    my $response = Linux::Event::Net::HTTP::Response->new(
-        status => 200,
-    );
-
-    $response->header('Content-Type', 'text/plain');
-    $response->add_header('Set-Cookie', 'a=1');
-    $response->add_header('Set-Cookie', 'b=2');
+    sub on_request ($connection, $request, $response) {
+        $response->status(200);
+        $response->header('Content-Type', 'text/plain');
+        $response->end("hello\n");
+    }
 
 =head1 DESCRIPTION
 
-Response stores application-supplied response metadata while HTTP/1 wire
-serialization is performed in XS. Header names and values are validated before
-they can be emitted, including rejection of CR/LF/NUL control characters that
-could otherwise permit response splitting.
+Every successfully dispatched HTTP request receives one Response object created
+and bound by L<Linux::Event::Net::HTTP::Connection>. Applications do not
+construct Response objects and do not pass them back to Connection.
 
-Body streaming belongs to the HTTP protocol connection layer. The Response
-object does not require a response body to be accumulated in memory.
+Response owns application-facing response construction. Status and headers may
+be configured until output begins. C<end> completes a normal scalar response.
+C<write> begins a fixed-length streaming response when Content-Length has been
+set explicitly.
+
+The HTTP/1 response head is serialized in XS. Header names and values are
+validated before they can be emitted, including rejection of CR/LF/NUL control
+characters that could otherwise permit response splitting.
+
+=head1 TRANSACTION RELATIONSHIP
+
+C<connection> returns the owning HTTP Connection while it is alive. C<request>
+returns the Request paired with this response. The connection reference is weak
+so retaining a completed Response does not retain the socket.
 
 =head1 METHODS
-
-=head2 new
-
-    my $response = Linux::Event::Net::HTTP::Response->new(
-        status => 200,
-        reason => 'OK',
-        headers => [
-            [ 'Content-Type', 'text/plain' ],
-        ],
-    );
-
-C<status> defaults to 200. C<reason> is optional; the HTTP/1 serializer supplies
-the conventional reason phrase for common status codes when it is omitted.
-
-The optional C<headers> value is an array reference of C<[name, value]> pairs so
-field order and repeated field names can be preserved.
 
 =head2 status
 
     my $status = $response->status;
     $response->status(404);
 
-Gets or sets the three-digit status code.
+Gets or sets the three-digit status code. It defaults to 200.
 
 =head2 reason
 
@@ -200,6 +248,49 @@ Appends another field without removing existing fields of the same name.
     my @cookies = $response->header_values('Set-Cookie');
 
 Returns all matching values in output order.
+
+=head2 write
+
+    $response->header('Content-Length', 12);
+    my $accepted = $response->write("hello ");
+    $response->end("world\n");
+
+Begins or continues a fixed-length response body. Until chunked response
+streaming is implemented, Content-Length must be set before the first C<write>.
+The return value mirrors Linux::Event Stream write backpressure: false means the
+bytes were accepted but the configured high watermark has been reached.
+
+Status and headers become immutable when the first bytes are committed.
+
+=head2 end
+
+    $response->end("hello\n");
+
+Completes the response. When C<end> is the first body operation,
+Content-Length is added automatically from the supplied byte-string length.
+For a response already started with C<write>, the total emitted byte count must
+match the declared Content-Length.
+
+HEAD and body-forbidden status handling is enforced by the connection protocol
+layer. If HTTP persistence requires close, C<end> drains queued output before
+ending the transport write side.
+
+=head2 connection
+
+Returns the owning L<Linux::Event::Net::HTTP::Connection> while it remains
+alive.
+
+=head2 request
+
+Returns the L<Linux::Event::Net::HTTP::Request> paired with this response.
+
+=head2 is_started
+
+True after the response head has been committed.
+
+=head2 is_ended
+
+True after C<end> completes the HTTP transaction.
 
 =head1 INTERNAL SERIALIZATION
 
