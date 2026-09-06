@@ -20,8 +20,10 @@ t/00-load.t
 t/10-pico-parser.t
 t/11-native-request.t
 t/12-http1-framing.t
+t/13-chunked-decoder.t
 t/20-response.t
 t/30-connection.t
+t/31-request-body.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
