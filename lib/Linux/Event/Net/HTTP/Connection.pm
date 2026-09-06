@@ -404,6 +404,34 @@ sub _compare_count ($count, $decimal) {
         || $actual cmp $decimal;
 }
 
+sub _chunk_wire ($bytes) {
+    return '' if !length($bytes);
+    return sprintf('%x', length($bytes)) . "\r\n" . $bytes . "\r\n";
+}
+
+sub _chunked_transfer_encoding ($operation, $version, $values) {
+    return 0 if !@$values;
+
+    croak "$operation(): Transfer-Encoding is not valid for HTTP/1.0 responses"
+        if $version ne '1.1';
+
+    my @coding;
+    for my $value (@$values) {
+        for my $member (split /,/, $value, -1) {
+            $member =~ s/\A[ \t]+//;
+            $member =~ s/[ \t]+\z//;
+            croak "$operation(): invalid Transfer-Encoding response value"
+                if $member eq '' || $member =~ /;/;
+            push @coding, lc $member;
+        }
+    }
+
+    croak "$operation(): only chunked response Transfer-Encoding is supported"
+        if @coding != 1 || $coding[0] ne 'chunked';
+
+    return 1;
+}
+
 sub _response_start ($self, $response, $bytes, $final) {
     my $request = $self->{_http_active_request};
     my $version = $request->http_version;
@@ -419,23 +447,31 @@ sub _response_start ($self, $response, $bytes, $final) {
         if $body_forbidden && length($bytes);
 
     my @transfer_encoding = $response->header_values('Transfer-Encoding');
-    croak "$operation(): Transfer-Encoding response bodies are not implemented yet"
-        if @transfer_encoding;
-
     my @content_length = $response->header_values('Content-Length');
     my $head_request = $method eq 'HEAD';
+
+    croak "$operation(): response cannot contain both Transfer-Encoding and Content-Length"
+        if @transfer_encoding && @content_length;
 
     croak 'write(): HEAD responses must be completed with end()'
         if !$final && $head_request;
     croak 'write(): this response status cannot use body streaming'
         if !$final && $body_forbidden;
 
-    if (!@content_length && !$body_forbidden) {
+    my $chunked = _chunked_transfer_encoding(
+        $operation, $version, \@transfer_encoding,
+    );
+    my $close_delimited = 0;
+
+    if (!@content_length && !$body_forbidden && !$chunked) {
         if ($final) {
             $response->header('Content-Length', length($bytes));
             @content_length = $response->header_values('Content-Length');
+        } elsif ($version eq '1.1') {
+            $response->header('Transfer-Encoding', 'chunked');
+            $chunked = 1;
         } else {
-            croak 'write(): set Content-Length before starting a streaming response';
+            $close_delimited = 1;
         }
     }
 
@@ -458,12 +494,14 @@ sub _response_start ($self, $response, $bytes, $final) {
 
     my @connection = $response->header_values('Connection');
     my $close_after = !$request->keep_alive
-        || _has_connection_token(\@connection, 'close');
+        || _has_connection_token(\@connection, 'close')
+        || $close_delimited;
 
     if (!$request->keep_alive && $version eq '1.1') {
         $response->header('Connection', 'close');
         $close_after = 1;
-    } elsif ($request->keep_alive && $version eq '1.0' && !@connection) {
+    } elsif ($request->keep_alive && $version eq '1.0'
+        && !@connection && !$close_after) {
         $response->header('Connection', 'keep-alive');
     }
 
@@ -476,6 +514,7 @@ sub _response_start ($self, $response, $bytes, $final) {
             sent          => 0,
             suppress_body => $head_request || $body_forbidden ? 1 : 0,
             close_after   => $close_after ? 1 : 0,
+            chunked       => $chunked ? 1 : 0,
         },
         $head,
     );
@@ -501,14 +540,20 @@ sub _write_response ($self, $response, $body, $final) {
         $state = $self->{_http_response_state} = $created;
 
         if ($final) {
-            my $wire_body = $state->{suppress_body} ? '' : $bytes;
+            my $wire_body = '';
+            if (!$state->{suppress_body}) {
+                $wire_body = $state->{chunked}
+                    ? _chunk_wire($bytes) . "0\r\n\r\n"
+                    : $bytes;
+            }
             return $self->_complete_response(
                 $response, $head . $wire_body, $state->{close_after},
             );
         }
 
         $state->{sent} = length($bytes);
-        return $self->write($head . $bytes);
+        my $wire_body = $state->{chunked} ? _chunk_wire($bytes) : $bytes;
+        return $self->write($head . $wire_body);
     }
 
     my $new_sent = $state->{sent} + length($bytes);
@@ -524,12 +569,16 @@ sub _write_response ($self, $response, $body, $final) {
     $state->{sent} = $new_sent;
 
     if ($final) {
+        my $wire = $state->{chunked}
+            ? _chunk_wire($bytes) . "0\r\n\r\n"
+            : $bytes;
         return $self->_complete_response(
-            $response, $bytes, $state->{close_after},
+            $response, $wire, $state->{close_after},
         );
     }
 
-    return length($bytes) ? $self->write($bytes) : 1;
+    my $wire = $state->{chunked} ? _chunk_wire($bytes) : $bytes;
+    return length($wire) ? $self->write($wire) : 1;
 }
 
 sub _complete_response ($self, $response, $wire, $close_after) {
@@ -619,17 +668,17 @@ Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
     package UploadHTTP;
     use parent 'Linux::Event::Net::HTTP::Connection';
 
-    sub on_request ($self, $request, $response) {
+    sub on_request ($self, $req, $res) {
         $self->data->{body} = '';
-        $response->header('Content-Type', 'text/plain');
+        $res->header('Content-Type', 'text/plain');
     }
 
-    sub on_body ($self, $request, $response, $bytes) {
+    sub on_body ($self, $req, $res, $bytes) {
         $self->data->{body} .= $bytes;
     }
 
-    sub on_request_end ($self, $request, $response) {
-        $response->end("received " . length($self->data->{body}) . " bytes\n");
+    sub on_request_end ($self, $req, $res) {
+        $res->end("received " . length($self->data->{body}) . " bytes\n");
     }
 
     package main;
@@ -685,7 +734,7 @@ C<Content-Length: 0>, immediately after C<on_request> returns.
 
 =head2 on_request
 
-    sub on_request ($connection, $request, $response) {
+    sub on_request ($self, $req, $res) {
         ...
     }
 
@@ -696,7 +745,7 @@ event.
 
 =head2 on_body
 
-    sub on_body ($connection, $request, $response, $bytes) {
+    sub on_body ($self, $req, $res, $bytes) {
         ...
     }
 
@@ -706,8 +755,8 @@ application.
 
 =head2 on_request_end
 
-    sub on_request_end ($connection, $request, $response) {
-        $response->end("ok\n");
+    sub on_request_end ($self, $req, $res) {
+        $res->end("ok\n");
     }
 
 Runs once when the complete request input boundary has been reached. This
@@ -718,16 +767,16 @@ pauses reads so a later request cannot overtake it.
 
 A direct/adopted connection may use constructor callbacks instead:
 
-    my $connection = Linux::Event::Net::HTTP::Connection->new(
+    my $conn = Linux::Event::Net::HTTP::Connection->new(
         fh => $connected_socket,
-        on_request => sub ($connection, $request, $response) {
+        on_request => sub ($conn, $req, $res) {
             ...
         },
-        on_body => sub ($connection, $request, $response, $bytes) {
+        on_body => sub ($conn, $req, $res, $bytes) {
             ...
         },
-        on_request_end => sub ($connection, $request, $response) {
-            $response->end("done\n");
+        on_request_end => sub ($conn, $req, $res) {
+            $res->end("done\n");
         },
     );
 
@@ -743,16 +792,25 @@ the connection is closed.
 The Response object owns status, headers, body output, and transaction
 completion:
 
-    $response->status(200);
-    $response->header('Content-Type', 'text/plain');
-    $response->end("hello\n");
+    $res->status(200);
+    $res->header('Content-Type', 'text/plain');
+    $res->end("hello\n");
 
-For fixed-length response streaming, declare the final length before output
-starts:
+A scalar C<end> automatically supplies Content-Length. Streaming can declare a
+known Content-Length explicitly:
 
-    $response->header('Content-Length', 12);
-    my $accepted = $response->write("hello ");
-    $response->end("world\n");
+    $res->header('Content-Length', 12);
+    my $accepted = $res->write("hello ");
+    $res->end("world\n");
+
+When HTTP/1.1 streaming begins without Content-Length, Connection automatically
+adds C<Transfer-Encoding: chunked> and frames each C<write>. C<end> frames any
+final bytes and emits the terminating zero chunk. Empty C<write> calls do not
+terminate the response.
+
+HTTP/1.0 has no chunked transfer coding. Unknown-length streaming therefore
+uses a close-delimited response and ends the connection after the response and
+current request input have both completed.
 
 The first C<write> commits the HTTP response head, after which status and
 headers are immutable. C<write> returns Linux::Event Stream backpressure status.
@@ -763,7 +821,7 @@ deferred until the current request input boundary is consumed.
 
 HEAD responses suppress body bytes while retaining the representation length
 used for automatic Content-Length. Status 204 and 304 reject supplied body
-bytes. Automatic chunked response streaming remains a later protocol milestone.
+bytes. Response trailers are not yet exposed.
 
 =head1 LIMITS
 
