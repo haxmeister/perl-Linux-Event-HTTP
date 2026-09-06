@@ -12,6 +12,8 @@ use JSON::PP ();
 use POSIX qw(WNOHANG strftime uname);
 use Time::HiRes qw(time sleep);
 
+$SIG{PIPE} = 'IGNORE';
+
 my %server = (
     linuxevent => {
         label => 'Linux::Event::Net::HTTP',
@@ -75,7 +77,7 @@ if ($smoke) {
     $requests = 500;
     $warmup = 100;
     $connections = 4;
-    $pipeline = 2;
+    $pipeline = 1;
     $response_bytes = 8;
     $repeats = 1;
     $timeout = 15;
@@ -168,9 +170,15 @@ if (defined $json_path) {
             perl => "$^V",
             node => capture('node', '--version'),
             python => capture('python3', '--version'),
-            mojolicious => capture($^X, '-MMojolicious', '-e', 'print $Mojolicious::VERSION'),
-            twiggy => capture($^X, '-MTwiggy', '-e', 'print $Twiggy::VERSION'),
-            aiohttp => capture('python3', '-c', 'import aiohttp; print(aiohttp.__version__)'),
+            mojolicious => capture(
+                $^X, '-MMojolicious', '-e', 'print $Mojolicious::VERSION',
+            ),
+            twiggy => capture(
+                $^X, '-MTwiggy', '-e', 'print $Twiggy::VERSION',
+            ),
+            aiohttp => capture(
+                'python3', '-c', 'import aiohttp; print(aiohttp.__version__)',
+            ),
             os => $sysname,
             kernel => $release,
             machine => $machine,
@@ -201,18 +209,33 @@ sub run_case ($name, $wire) {
     my ($pid, $stdout_path, $stderr_path) = start_server($name, $port);
     wait_ready($name, $pid, $port, $stdout_path, $stderr_path);
 
-    my @socket = open_clients($port, $connections);
-    drive_phase(\@socket, $wire, $warmup, $pipeline, 0, $timeout)
-        if $warmup;
+    my @socket;
+    my ($latency, $wall);
+    my $ok = eval {
+        @socket = open_clients($port, $connections);
+        drive_phase(\@socket, $wire, $warmup, $pipeline, 0, $timeout)
+            if $warmup;
 
-    my $start = time;
-    my $latency = drive_phase(
-        \@socket, $wire, $requests, $pipeline, 1, $timeout,
-    );
-    my $wall = time - $start;
+        my $start = time;
+        $latency = drive_phase(
+            \@socket, $wire, $requests, $pipeline, 1, $timeout,
+        );
+        $wall = time - $start;
+        1;
+    };
+    my $error = $@;
 
     close $_ for @socket;
     stop_server($pid);
+
+    if (!$ok) {
+        my $detail = slurp_log('stdout', $stdout_path)
+            . slurp_log('stderr', $stderr_path);
+        unlink $stdout_path;
+        unlink $stderr_path;
+        die "$server{$name}{label} failed: $error$detail";
+    }
+
     unlink $stdout_path;
     unlink $stderr_path;
 
@@ -237,10 +260,9 @@ sub start_server ($name, $port) {
     if ($pid == 0) {
         $ENV{BENCH_PORT} = $port;
         $ENV{BENCH_RESPONSE_BYTES} = $response_bytes;
-        open STDOUT, '>', $stdout_path or die "open $stdout_path: $!\n";
-        open STDERR, '>', $stderr_path or die "open $stderr_path: $!\n";
-        exec @{$server{$name}{command}};
-        die "exec $name: $!\n";
+        open STDOUT, '>', $stdout_path or POSIX::_exit(126);
+        open STDERR, '>', $stderr_path or POSIX::_exit(126);
+        exec @{$server{$name}{command}} or POSIX::_exit(127);
     }
 
     return ($pid, $stdout_path, $stderr_path);
@@ -268,7 +290,9 @@ sub wait_ready ($name, $pid, $port, $stdout_path, $stderr_path) {
     }
 
     stop_server($pid);
-    die "benchmark server $name did not listen on port $port\n";
+    die "benchmark server $name did not listen on port $port\n"
+        . slurp_log('stdout', $stdout_path)
+        . slurp_log('stderr', $stderr_path);
 }
 
 sub server_failure ($name, $stdout_path, $stderr_path) {
@@ -474,15 +498,17 @@ sub command_ok (@command) {
     if ($pid == 0) {
         open STDOUT, '>', '/dev/null';
         open STDERR, '>', '/dev/null';
-        exec @command;
-        POSIX::_exit(127);
+        exec @command or POSIX::_exit(127);
     }
     waitpid($pid, 0);
     return $? == 0;
 }
 
 sub capture (@command) {
-    my $text = qx{@command 2>/dev/null};
+    open my $fh, '-|', @command or return undef;
+    local $/;
+    my $text = <$fh> // '';
+    close $fh;
     return undef if $? != 0;
     $text =~ s/\A\s+//;
     $text =~ s/\s+\z//;
@@ -504,7 +530,7 @@ usage: bench/run-http-comparison.pl [options]
   --timeout=SECONDS        server/client phase timeout (default 20)
   --strict                 fail instead of skipping unavailable competitors
   --json=PATH              write machine-readable report
-  --smoke                  tiny correctness workload
+  --smoke                  tiny keep-alive correctness workload
   --help                   show this help
 USAGE
     exit $status;
