@@ -36,6 +36,9 @@ The design is divided into three layers:
 10. Every successfully dispatched Request owns one corresponding Response
     transaction. The protocol engine creates and binds that Response before
     application dispatch; application code never has to construct or return it.
+11. A persistent connection advances only when both halves of the current
+    transaction are complete: the full request body boundary has been consumed
+    and the Response has ended.
 
 ## HTTP/1 parser and request state
 
@@ -60,6 +63,39 @@ Connection options.
 The Request API exposes the resulting framing decision through `body_mode`,
 `content_length`, and `keep_alive`; it does not expose parser internals.
 
+## HTTP/1 request body streaming
+
+The Connection dispatches `on_request($connection, $request, $response)` as soon
+as the validated request head is available. Body bytes are then delivered with
+cached callbacks:
+
+```perl
+sub on_body ($connection, $request, $response, $bytes) {
+    ...
+}
+
+sub on_body_end ($connection, $request, $response) {
+    ...
+}
+```
+
+Content-Length bodies are consumed directly from the Connection input buffer.
+No whole-body scalar is built by the protocol engine. If no `on_body` callback
+is installed, bytes are drained and discarded so framing and keep-alive remain
+correct without forcing an allocation path on applications that do not consume
+the body.
+
+Chunked request bodies use a private XS wrapper around picohttpparser's stateful
+chunk decoder. Chunk framing is removed before Perl sees body bytes. The decoder
+retains partial chunk state across reads and preserves bytes after the terminal
+chunk so a pipelined request can remain in the same transport buffer. Chunk
+extensions are accepted. Trailer sections are consumed to establish the body
+boundary but are not yet exposed to applications.
+
+For HTTP/1.1 requests with a body and `Expect: 100-continue`, Connection emits
+`100 Continue` after validating the request head. Unsupported expectations are
+rejected with 417 before application dispatch.
+
 ## HTTP/1 response serialization
 
 Connection creates one Response before invoking `on_request`:
@@ -82,28 +118,23 @@ The first body operation commits the response head and freezes status/header
 metadata. `end($bytes)` is the normal scalar convenience path and adds
 Content-Length automatically. `write($bytes)` supports fixed-length streaming
 when Content-Length is declared before output starts; its return value preserves
-Linux::Event Stream backpressure status. Automatic chunked streaming remains a
-later transfer-coding step.
+Linux::Event Stream backpressure status. Automatic chunked response streaming
+remains a later transfer-coding step.
 
 ## HTTP/1 connection
 
 `Linux::Event::Net::HTTP::Connection` is itself a
 `Linux::Event::IO::Sock::Stream` subclass. Its cached `on_data` callback is the
 HTTP protocol engine, so there is no wrapper object between Linux::Event byte
-I/O and HTTP request parsing. Linux::Event continues to own transport, TLS,
-write queuing, backpressure, and deadlines.
+I/O and HTTP parsing. Linux::Event continues to own transport, TLS, write
+queuing, backpressure, and deadlines.
 
-Validated no-body requests are dispatched through
-`on_request($connection, $request, $response)`. The Response object commits
-output directly through its owning Connection. Completion applies HTTP
-persistence rules and permits the next already-buffered request to run only
-after the current response has ended. If an application retains Response for a
-later event, Connection pauses reads until that transaction completes.
-
-The current connection deliberately refuses positive Content-Length and
-chunked request bodies with 501. Request-body streaming is the next
-state-machine milestone rather than an implicit whole-body accumulation
-feature.
+Each parsed request creates one transaction consisting of the Request, its
+bound Response, request-body framing state, and response-output state. The next
+pipelined request cannot dispatch until the request body has reached its wire
+boundary and the Response has ended. If the body finishes first, reads pause
+while the application retains the Response. If the Response finishes first,
+the connection continues consuming the current request body before advancing.
 
 ## Implementation order
 
@@ -117,15 +148,17 @@ Completed foundation:
 6. Ordered sequential keep-alive and pipelined request dispatch.
 7. Bound Request/Response transaction API with scalar and fixed-length response
    output.
+8. Streaming Content-Length request bodies.
+9. Native chunked request decoding and request body completion callbacks.
+10. HTTP/1.1 Expect: 100-continue handling.
 
 Next protocol work:
 
-8. Streaming request bodies.
-9. Chunked transfer coding.
-10. Server/listener convenience layer.
-11. TLS integration.
-12. Upgrade handoff.
-13. End-to-end benchmarks and profiling.
+11. Automatic chunked response streaming.
+12. Server/listener convenience layer.
+13. TLS integration.
+14. Upgrade handoff.
+15. End-to-end benchmarks and profiling.
 
 Routing, middleware, sessions, templates, PSGI/PAGI adapters, compression,
 WebSocket, HTTP/2, and HTTP clients are intentionally outside the initial
