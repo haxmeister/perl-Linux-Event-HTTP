@@ -127,8 +127,9 @@ sub schedule ($class, $response, $target) {
 
     $response->{upgrade_pending} = 1;
     $conn->{_http_pending_upgrade} = {
-        response => $response,
-        target   => $target,
+        response    => $response,
+        target      => $target,
+        resume_read => $conn->is_read_paused ? 0 : 1,
     };
 
     Linux::Event::Kernel::Timer->new(
@@ -194,6 +195,7 @@ sub _handoff ($timer) {
     $conn->write($head);
 
     my $input = $conn->{_http_input};
+    my $resume_read = $pending->{resume_read};
     $conn->{_http_input} = '';
     delete $conn->{_http_pending_upgrade};
     $conn->_clear_transaction;
@@ -204,6 +206,7 @@ sub _handoff ($timer) {
         } else {
             $conn->transition_to($target);
         }
+        $conn->resume_read if $resume_read && $conn->is_read_paused;
         1;
     };
     if (!$transitioned) {
