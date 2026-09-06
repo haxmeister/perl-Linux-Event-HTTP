@@ -79,6 +79,10 @@ our $SINK = 0;
         $response->end($main::PAYLOAD);
         return;
     }
+
+    # This benchmark object intentionally bypasses Stream construction and has
+    # no native transport state. Do not inherit the real Stream destructor.
+    sub DESTROY ($self) { return }
 }
 
 my $template_request = $PARSER->parse_request($REQUEST_WIRE, 0, 100)
