@@ -10,9 +10,36 @@ This distribution is intended to provide the HTTP protocol layer, not a web
 framework. Linux::Event remains responsible for transport, TLS, buffering,
 backpressure, deadlines, and event dispatch.
 
-A server connection uses the same subclass/cached-callback model as
-Linux::Event itself. Each validated request is paired with a Response created by
-the protocol engine:
+The simplest server form hides Listener plumbing while retaining the same
+cached callback model used by Linux::Event:
+
+```perl
+use v5.36;
+use Linux::Event::Loop;
+use Linux::Event::Net::HTTP::Server;
+
+my $loop = Linux::Event::Loop->new;
+
+my $server = Linux::Event::Net::HTTP::Server->new(
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 8080,
+    on_request => sub ($conn, $req, $res) {
+        $res->header('Content-Type', 'text/plain');
+        $res->end("hello\n");
+    },
+);
+
+$loop->run;
+```
+
+`HTTP::Server` is a thin convenience over `Linux::Event::IO::Sock::Listener`.
+It retains one callback CV and reuses it for accepted HTTP connections; it does
+not create a wrapper closure per connection or add another per-request dispatch
+layer.
+
+A Connection subclass remains the declarative form for reusable protocol,
+tuning, socket, and later TLS policy:
 
 ```perl
 package HelloHTTP;
@@ -23,6 +50,15 @@ sub on_request ($self, $req, $res) {
     $res->header('Content-Type', 'text/plain');
     $res->end("hello\n");
 }
+
+package main;
+
+my $server = Linux::Event::Net::HTTP::Server->new(
+    loop             => $loop,
+    host             => '127.0.0.1',
+    port             => 8080,
+    connection_class => 'HelloHTTP',
+);
 ```
 
 Applications use the Response object but do not construct it or pass it back to
