@@ -80,7 +80,7 @@ build_default_final(CLASS, request, body)
     if (SvROK(body))
         croak("end(): body must be a scalar byte string");
 
-    body_copy = newSVsv(body);
+    body_copy = SvOK(body) ? newSVsv(body) : newSVpvn("", 0);
     if (SvUTF8(body_copy) && !sv_utf8_downgrade(body_copy, TRUE)) {
         SvREFCNT_dec(body_copy);
         croak("end(): body contains wide characters; encode it to bytes first");
