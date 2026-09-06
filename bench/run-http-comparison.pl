@@ -20,6 +20,11 @@ my %server = (
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
         available => sub { 1 },
     },
+    feersum => {
+        label => 'Feersum',
+        command => [$^X, "$Bin/servers/feersum-http.pl"],
+        available => sub { command_ok($^X, '-MFeersum', '-e', '1') },
+    },
     mojo => {
         label => 'Mojolicious',
         command => [$^X, "$Bin/servers/mojo-http.pl"],
@@ -42,7 +47,10 @@ my %server = (
     },
 );
 
-my @servers = qw(linuxevent mojo twiggy node aiohttp);
+# Twiggy remains available explicitly, but is not in the primary comparison
+# because current Twiggy closes the long-lived benchmark connections before the
+# requested keep-alive workload completes.
+my @servers = qw(linuxevent feersum mojo node aiohttp);
 my $requests = 20_000;
 my $warmup = 2_000;
 my $connections = 100;
@@ -94,8 +102,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "at least one server is required\n" if !@servers;
 die "unknown server: $_\n" for grep { !exists $server{$_} } @servers;
 
-my @available;
-my @skipped;
+my (@available, @skipped);
 for my $name (@servers) {
     if ($server{$name}{available}->()) {
         push @available, $name;
@@ -112,25 +119,19 @@ my $request_wire = make_request($request_body_bytes);
 my @records;
 
 say 'Linux::Event::Net::HTTP cross-server comparison';
-say "servers=" . join(',', @available);
-say "skipped=" . join(',', @skipped) if @skipped;
+say 'servers=' . join(',', @available);
+say 'skipped=' . join(',', @skipped) if @skipped;
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats";
 say 'mode=single-process single-thread loopback-tcp shared-client';
 
 for my $repeat (1 .. $repeats) {
-    my @order = rotated_servers($repeat, @available);
-    for my $name (@order) {
+    for my $name (rotated_servers($repeat, @available)) {
         my $row = run_case($name, $request_wire);
         $row->{repeat} = $repeat;
         push @records, $row;
         printf "%-24s repeat=%d %10.1f req/s p50=%8.1f us p95=%8.1f us p99=%8.1f us max=%8.1f us\n",
-            $server{$name}{label},
-            $repeat,
-            $row->{requests_per_second},
-            $row->{latency_us_p50},
-            $row->{latency_us_p95},
-            $row->{latency_us_p99},
-            $row->{latency_us_max};
+            $server{$name}{label}, $repeat,
+            @{$row}{qw(requests_per_second latency_us_p50 latency_us_p95 latency_us_p99 latency_us_max)};
     }
 }
 
@@ -153,11 +154,7 @@ for my $name (@available) {
     push @summary, $row;
     printf "%-24s %12.1f %12.1f %12.1f %12.1f %12.1f\n",
         $row->{label},
-        $row->{requests_per_second},
-        $row->{latency_us_p50},
-        $row->{latency_us_p95},
-        $row->{latency_us_p99},
-        $row->{latency_us_max};
+        @{$row}{qw(requests_per_second latency_us_p50 latency_us_p95 latency_us_p99 latency_us_max)};
 }
 
 if (defined $json_path) {
@@ -168,17 +165,12 @@ if (defined $json_path) {
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
+            feersum => capture($^X, '-MFeersum', '-e', 'print $Feersum::VERSION'),
+            mojolicious => capture($^X, '-MMojolicious', '-e', 'print $Mojolicious::VERSION'),
+            twiggy => capture($^X, '-MTwiggy', '-e', 'print $Twiggy::VERSION'),
             node => capture('node', '--version'),
             python => capture('python3', '--version'),
-            mojolicious => capture(
-                $^X, '-MMojolicious', '-e', 'print $Mojolicious::VERSION',
-            ),
-            twiggy => capture(
-                $^X, '-MTwiggy', '-e', 'print $Twiggy::VERSION',
-            ),
-            aiohttp => capture(
-                'python3', '-c', 'import aiohttp; print(aiohttp.__version__)',
-            ),
+            aiohttp => capture('python3', '-c', 'import aiohttp; print(aiohttp.__version__)'),
             os => $sysname,
             kernel => $release,
             machine => $machine,
@@ -209,13 +201,11 @@ sub run_case ($name, $wire) {
     my ($pid, $stdout_path, $stderr_path) = start_server($name, $port);
     wait_ready($name, $pid, $port, $stdout_path, $stderr_path);
 
-    my @socket;
-    my ($latency, $wall);
+    my (@socket, $latency, $wall);
     my $ok = eval {
         @socket = open_clients($port, $connections);
         drive_phase(\@socket, $wire, $warmup, $pipeline, 0, $timeout)
             if $warmup;
-
         my $start = time;
         $latency = drive_phase(
             \@socket, $wire, $requests, $pipeline, 1, $timeout,
@@ -238,7 +228,6 @@ sub run_case ($name, $wire) {
 
     unlink $stdout_path;
     unlink $stderr_path;
-
     return {
         server => $name,
         requests => $requests,
@@ -262,9 +251,9 @@ sub start_server ($name, $port) {
         $ENV{BENCH_RESPONSE_BYTES} = $response_bytes;
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
-        exec @{$server{$name}{command}} or POSIX::_exit(127);
+        exec @{$server{$name}{command}};
+        POSIX::_exit(127);
     }
-
     return ($pid, $stdout_path, $stderr_path);
 }
 
@@ -281,14 +270,11 @@ sub wait_ready ($name, $pid, $port, $stdout_path, $stderr_path) {
             close $fh;
             return;
         }
-
         my $done = waitpid($pid, WNOHANG);
-        if ($done == $pid) {
-            die server_failure($name, $stdout_path, $stderr_path);
-        }
+        die server_failure($name, $stdout_path, $stderr_path)
+            if $done == $pid;
         sleep 0.01;
     }
-
     stop_server($pid);
     die "benchmark server $name did not listen on port $port\n"
         . slurp_log('stdout', $stdout_path)
@@ -321,7 +307,6 @@ sub stop_server ($pid) {
     }
     kill 'KILL', $pid;
     waitpid($pid, 0);
-    return;
 }
 
 sub free_port () {
@@ -358,13 +343,11 @@ sub drive_phase ($socket, $wire, $count, $depth, $measure, $phase_timeout) {
     my %state;
     my $base = int($count / @$socket);
     my $extra = $count % @$socket;
-
     for my $i (0 .. $#$socket) {
         my $quota = $base + ($i < $extra ? 1 : 0);
         next if !$quota;
         my $fh = $socket->[$i];
-        my $fd = fileno($fh);
-        $state{$fd} = {
+        $state{fileno($fh)} = {
             fh => $fh,
             quota => $quota,
             sent => 0,
@@ -378,7 +361,6 @@ sub drive_phase ($socket, $wire, $count, $depth, $measure, $phase_timeout) {
     my @latency;
     my $received = 0;
     my $deadline = time + $phase_timeout;
-
     fill_pipeline($_, $wire, $depth, $measure) for values %state;
 
     while ($received < $count) {
@@ -424,7 +406,6 @@ sub drive_phase ($socket, $wire, $count, $depth, $measure, $phase_timeout) {
             }
         }
     }
-
     return \@latency;
 }
 
@@ -435,7 +416,6 @@ sub fill_pipeline ($state, $wire, $depth, $measure) {
         push @{$state->{sent_at}}, time if $measure;
         ++$state->{sent};
     }
-    return;
 }
 
 sub write_all ($fh, $bytes) {
@@ -449,7 +429,6 @@ sub write_all ($fh, $bytes) {
         die "client write returned zero bytes\n" if $n == 0;
         $offset += $n;
     }
-    return;
 }
 
 sub make_request ($body_bytes) {
@@ -498,7 +477,8 @@ sub command_ok (@command) {
     if ($pid == 0) {
         open STDOUT, '>', '/dev/null';
         open STDERR, '>', '/dev/null';
-        exec @command or POSIX::_exit(127);
+        exec @command;
+        POSIX::_exit(127);
     }
     waitpid($pid, 0);
     return $? == 0;
@@ -519,7 +499,7 @@ sub usage ($status) {
     print <<'USAGE';
 usage: bench/run-http-comparison.pl [options]
 
-  --servers=LIST           linuxevent,mojo,twiggy,node,aiohttp
+  --servers=LIST           linuxevent,feersum,mojo,twiggy,node,aiohttp
   --requests=N             measured requests per server/repeat (default 20000)
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)
