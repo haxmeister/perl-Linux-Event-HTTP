@@ -102,14 +102,14 @@ jobs:
       - name: Cross-server smoke
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent,feersum,mojo,node,aiohttp \
+            --servers=linuxevent,feersum,mojo,node,go,aiohttp \
             --smoke \
             --strict
 
       - name: Cross-server directional benchmark
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent,feersum,mojo,node,aiohttp \
+            --servers=linuxevent,feersum,mojo,node,go,aiohttp \
             --strict \
             --requests=10000 \
             --warmup=1000 \
