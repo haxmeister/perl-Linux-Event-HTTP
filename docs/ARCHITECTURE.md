@@ -23,8 +23,8 @@ The design is divided into three layers:
    and materializes Perl strings only when requested.
 4. Linux::Event transport tuning, buffering, TLS, and backpressure must be
    reused rather than reimplemented here.
-5. The connection layer must permit protocol handoff so HTTP Upgrade can later
-   transfer a connection to another protocol such as WebSocket.
+5. HTTP Upgrade transfers the same live stream-socket resource to another
+   protocol class rather than detaching and rebuilding transport state.
 6. The canonical callback-scoping model should preserve Linux::Event's
    subclass/cached-callback performance characteristics.
 7. Convenience APIs must not make streaming, backpressure, or protocol limits
@@ -225,6 +225,44 @@ HTTP/1.x only, so deployments using ALPN should advertise `http/1.1`; future
 HTTP/2 support will require protocol selection and a separate HTTP/2 engine,
 not reinterpretation of HTTP/1 bytes.
 
+## HTTP Upgrade handoff
+
+Upgrade is a transaction boundary, not a second transport acquisition step. The
+application or target protocol layer prepares the protocol-specific response
+fields and asks the bound Response to hand the live connection to another
+stream-socket protocol:
+
+```perl
+$res->header('Upgrade', 'websocket');
+$res->header('Sec-WebSocket-Accept', $accept);
+$res->upgrade('MyWebSocketConnection');
+```
+
+The HTTP layer validates HTTP/1.1 Upgrade framing: the request must contain
+`Connection: Upgrade`, must offer the selected Upgrade protocol, must remain
+persistent, and in the initial contract must have no request message body. The
+switching response cannot contain Content-Length or Transfer-Encoding.
+`Response->upgrade` normalizes the status to 101 and adds `Connection: Upgrade`
+when the response did not already supply it.
+
+The handoff is deliberately deferred to the next Loop turn. This lets the
+ordinary `on_request` and `on_request_end` stack unwind before the object changes
+class. While the handoff is pending, Response metadata and ordinary body output
+are locked and HTTP reads remain paused after the request input boundary.
+
+Immediately before transition, HTTP queues the complete 101 response. It then
+removes the finished HTTP transaction, passes any bytes already read beyond the
+HTTP head as explicit preserved input, and calls Linux::Event `transition_to()`.
+The target protocol therefore receives the same Perl object and the same native
+ordered-byte state. The socket or socketpair, TLS provider, queued output,
+backpressure state, deadlines, watcher registrations, and application data all
+remain in place. Target-protocol writes append after the already-queued 101.
+
+This is the intended integration boundary for a separate
+`Linux::Event::Net::WebSocket` distribution. WebSocket handshake calculations
+and frame semantics belong there; HTTP owns only the validated 101 transaction
+and protocol handoff.
+
 ## Implementation order
 
 Completed foundation:
@@ -245,10 +283,10 @@ Completed foundation:
 12. HTTP Server/listener convenience layer with retained Connection callbacks.
 13. TLS transport integration through declarative Connection policy and
     HTTP/1.1 ALPN coverage.
+14. Atomic HTTP/1.1 Upgrade handoff through Linux::Event protocol transition.
 
 Next protocol work:
 
-14. Upgrade handoff.
 15. End-to-end benchmarks and profiling.
 
 Routing, middleware, sessions, templates, PSGI/PAGI adapters, compression,
