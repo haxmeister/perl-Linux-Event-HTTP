@@ -28,6 +28,7 @@ t/31-request-body.t
 t/32-request-body-lifecycle.t
 t/33-response-chunked.t
 t/40-server.t
+t/41-tls-server.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
