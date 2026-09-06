@@ -10,12 +10,31 @@ This distribution is intended to provide the HTTP protocol layer, not a web
 framework. Linux::Event remains responsible for transport, TLS, buffering,
 backpressure, deadlines, and event dispatch.
 
+A server connection uses the same subclass/cached-callback model as
+Linux::Event itself. Each validated request is paired with a Response created by
+the protocol engine:
+
+```perl
+package HelloHTTP;
+use parent 'Linux::Event::Net::HTTP::Connection';
+
+sub on_request ($connection, $request, $response) {
+    $response->status(200);
+    $response->header('Content-Type', 'text/plain');
+    $response->end("hello\n");
+}
+```
+
+Applications use the Response object but do not construct it or pass it back to
+the Connection. A response may also be retained and completed from a later
+event.
+
 HTTP/1 request-head parsing uses
 [picohttpparser](https://github.com/h2o/picohttpparser), vendored directly in
 this distribution at a recorded upstream revision. Builds and installations do
-not depend on the upstream repository or any network fetch. Linux::Event::Net::HTTP
-keeps parsed request metadata in native state and materializes Perl strings only
-when application code asks for them.
+not depend on the upstream repository or any network fetch.
+Linux::Event::Net::HTTP keeps parsed request metadata in native state and
+materializes Perl strings only when application code asks for them.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design constraints and
 [docs/PICOHTTPPARSER-EXPERIMENT.md](docs/PICOHTTPPARSER-EXPERIMENT.md) for parser
