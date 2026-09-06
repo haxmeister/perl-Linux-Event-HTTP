@@ -29,7 +29,23 @@ Applications use the Response object but do not construct it or pass it back to
 the Connection. A response may also be retained and completed from a later
 event.
 
-HTTP/1 request-head parsing uses
+Request bodies are streaming-first. Fixed-length and chunked bodies are
+delivered without whole-request accumulation:
+
+```perl
+sub on_body ($connection, $request, $response, $bytes) {
+    process_bytes($bytes);
+}
+
+sub on_body_end ($connection, $request, $response) {
+    $response->end("done\n");
+}
+```
+
+If no `on_body` callback is installed, the protocol engine drains the body so
+framing and keep-alive remain correct without building an unused body scalar.
+
+HTTP/1 request-head parsing and chunked request decoding use
 [picohttpparser](https://github.com/h2o/picohttpparser), vendored directly in
 this distribution at a recorded upstream revision. Builds and installations do
 not depend on the upstream repository or any network fetch.
