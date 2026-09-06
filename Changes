@@ -17,7 +17,7 @@ Revision history for Linux-Event-Net-HTTP
     - Lock response status and headers once output begins.
     - Stream Content-Length request bodies through cached on_body callbacks.
     - Decode chunked request bodies natively with picohttpparser while preserving pipeline bytes.
-    - Add on_body_end transaction completion and body draining when no consumer is installed.
+    - Add on_request_end transaction completion and body draining when no consumer is installed.
     - Support HTTP/1.1 Expect: 100-continue and reject unsupported expectations with 417.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
