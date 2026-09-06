@@ -15,6 +15,7 @@ lib/Linux/Event/Net/HTTP/Request.pm
 lib/Linux/Event/Net/HTTP/Response.pm
 lib/Linux/Event/Net/HTTP/Server.pm
 lib/Linux/Event/Net/HTTP/_Parser/HTTP1.pm
+lib/Linux/Event/Net/HTTP/_Parser/HTTP1/Chunked.pm
 t/00-load.t
 t/10-pico-parser.t
 t/11-native-request.t
@@ -25,5 +26,7 @@ vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
 vendor/picohttpparser/picohttpparser.h
+xschunked/Chunked.xs
+xschunked/Makefile.PL
 xshttp1/HTTP1.xs
 xshttp1/Makefile.PL
