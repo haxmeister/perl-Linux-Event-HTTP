@@ -13,6 +13,15 @@ backpressure, deadlines, and event dispatch.
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design constraints and
 initial implementation order.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+Please do not report security vulnerabilities through public issues. See
+[SECURITY.md](SECURITY.md) for private reporting instructions.
+
 ## License
 
 This library is free software; you may redistribute it and/or modify it under
