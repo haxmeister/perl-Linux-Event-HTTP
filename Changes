@@ -12,5 +12,8 @@ Revision history for Linux-Event-Net-HTTP
     - Reject ambiguous TE/CL framing and unsupported request transfer codings.
     - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
     - Bind HTTP Connection directly to Linux::Event::IO::Sock::Stream.
+    - Pair every dispatched Request with a connection-created Response object.
+    - Move response completion to Response->end and fixed-length output to Response->write.
+    - Lock response status and headers once output begins.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
