@@ -31,8 +31,17 @@ Request message framing is validated before the object is returned. Ambiguous
 framing such as conflicting C<Content-Length> values or a request containing
 both C<Transfer-Encoding> and C<Content-Length> is rejected.
 
-Bodies are fundamentally streamed by the protocol layer. Any eventual scalar
-body convenience API is layered on top of that streaming primitive.
+Bodies are fundamentally streamed by L<Linux::Event::Net::HTTP::Connection>.
+C<on_request> receives this Request and its paired Response after the request
+head is available. Optional C<on_body> callbacks receive body byte strings, and
+C<on_body_end> marks the complete request-body boundary. Content-Length and
+chunked framing are removed by the protocol layer rather than exposed to the
+application.
+
+Chunked trailer sections are currently consumed to establish the message
+boundary but are not yet exposed through Request. Any scalar whole-body
+convenience API will be layered on top of the streaming primitive rather than
+becoming the protocol's storage model.
 
 =head1 METHODS
 
