@@ -9,6 +9,7 @@ use Carp qw(croak);
 use Scalar::Util qw(refaddr);
 use utf8 ();
 
+use Linux::Event::Net::HTTP::_Native::Response1 ();
 use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
 use Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked ();
 use Linux::Event::Net::HTTP::Response;
@@ -46,6 +47,9 @@ sub new ($class, %option) {
     my $on_request = _take_http_handler($class, 'on_request', \%option);
     my $on_body = _take_http_handler($class, 'on_body', \%option);
     my $on_request_end = _take_http_handler($class, 'on_request_end', \%option);
+    my $on_request_final = _take_http_handler(
+        $class, 'on_request_final', \%option,
+    );
 
     croak 'new(): HTTP Connection requires on_request callback or method'
         if !$on_request;
@@ -54,6 +58,7 @@ sub new ($class, %option) {
     $self->{_http_on_request} = $on_request;
     $self->{_http_on_body} = $on_body;
     $self->{_http_on_request_end} = $on_request_end;
+    $self->{_http_on_request_final} = $on_request_final;
     $self->{_http_input} = '';
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
@@ -133,6 +138,24 @@ sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
     return 1 if $ok;
     $self->_fail_active_transaction(500, $request, $response);
     return 0;
+}
+
+sub _invoke_request_final ($self, $request) {
+    my ($ok, $body);
+    {
+        local $self->{_http_dispatching} = 1;
+        $ok = eval {
+            $body = $self->{_http_on_request_final}->($self, $request);
+            1;
+        };
+    }
+
+    if (!$ok) {
+        $self->_protocol_error(500, $request->http_version);
+        return (0, undef);
+    }
+
+    return (1, $body);
 }
 
 sub _clear_transaction ($self) {
@@ -281,6 +304,33 @@ sub _finalize_transaction ($self) {
     return;
 }
 
+sub _complete_request_final_fallback ($self, $request, $body) {
+    my $response
+        = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
+    my $request_state = $self->{_http_bodyless_state} //= {
+        mode      => 'none',
+        body_done => 1,
+    };
+    $request_state->{body_done} = 1;
+    delete $request_state->{close_after_response};
+
+    $self->{_http_active_request} = $request;
+    $self->{_http_active_response} = $response;
+    $self->{_http_request_state} = $request_state;
+    $self->{_http_response_state} = undef;
+
+    my $ok = eval {
+        $response->end($body);
+        1;
+    };
+    if (!$ok) {
+        $self->_fail_active_transaction(500, $request, $response);
+        return 0;
+    }
+
+    return 1;
+}
+
 sub _drive_http1 ($self) {
     return if $self->{_http_driving} || $self->{_http_closing}
         || $self->is_closed;
@@ -350,17 +400,48 @@ sub _drive_http1 ($self) {
             last;
         }
 
-        my $response
-            = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
         my $body_mode = $request->body_mode;
         my $bodyless = $body_mode eq 'none';
+
+        if ($bodyless && $self->{_http_on_request_final}) {
+            my ($ok, $body) = $self->_invoke_request_final($request);
+            last if !$ok;
+            last if $self->{_http_closing} || $self->is_closed;
+
+            if (defined $body) {
+                my $wire;
+                my $built = eval {
+                    $wire = Linux::Event::Net::HTTP::_Native::Response1
+                        ->build_default_final($request, $body);
+                    1;
+                };
+                if (!$built) {
+                    $self->_protocol_error(500, $request->http_version);
+                    last;
+                }
+
+                if (defined $wire) {
+                    $self->write($wire);
+                    next;
+                }
+
+                last if !$self->_complete_request_final_fallback(
+                    $request, $body,
+                );
+                next;
+            }
+        }
+
+        my $response
+            = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
         my $request_state;
         if ($bodyless) {
             $request_state = $self->{_http_bodyless_state} //= {
                 mode      => 'none',
                 body_done => 0,
             };
-            $request_state->{body_done} = 0;
+            $request_state->{body_done}
+                = $self->{_http_on_request_end} ? 0 : 1;
             delete $request_state->{close_after_response};
         } else {
             $request_state = _new_request_state($request, $body_mode);
@@ -384,12 +465,14 @@ sub _drive_http1 ($self) {
         next if !$self->{_http_active_request};
 
         if ($bodyless) {
-            $request_state->{body_done} = 1;
-            last if !$self->_invoke_http_callback(
-                $self->{_http_on_request_end}, $request, $response,
-            );
-            last if $self->{_http_closing} || $self->is_closed;
-            next if !$self->{_http_active_request};
+            if ($self->{_http_on_request_end}) {
+                $request_state->{body_done} = 1;
+                last if !$self->_invoke_http_callback(
+                    $self->{_http_on_request_end}, $request, $response,
+                );
+                last if $self->{_http_closing} || $self->is_closed;
+                next if !$self->{_http_active_request};
+            }
 
             if ($response->is_ended) {
                 $self->_finalize_transaction;
