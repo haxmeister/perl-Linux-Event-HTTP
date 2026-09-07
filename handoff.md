@@ -11,9 +11,41 @@ Updated: 2026-09-07 (America/Chicago)
   `d5018cd9979be7be3d6e439509c69563e8d8a180`
 - Main implementation commit removing the public fast-final shortcut:
   `a3d91c42808fd9ba99869c6bafa736acaf32fe7e`
+- Final structural audit cleanup continued through branch head after
+  `2903ea5a3c7f177122896071a42a0c61c97c82ba`; inspect the current branch head
+  rather than assuming that SHA remains final.
 - Temporary workflow/helper scaffolding used to validate the refactor has been
   removed from the branch.
 - Do **not** merge this branch to `main` without Joshua's explicit authorization.
+
+## Final structural audit status
+
+The final branch-diff audit has now confirmed the intended structural shape:
+
+- there is no live `lib/Linux/Event/Net/HTTP` package tree
+- there is no public generic `Linux::Event::HTTP::Connection`
+- the server-direction connection is `Linux::Event::HTTP::Server::Connection`
+- there is only one HTTP-local native extension, `_HTTP1`
+- the old `xschunked` and `xsresponse1` extension directories are gone
+- the old parser/Response1 private wrapper packages are gone
+- the public fast-final callback is gone; `on_request_final` remains only in
+  explicit rejection tests/errors and historical discussion
+- two superseded, unshipped benchmark-development probes were removed:
+  `bench/run-http-hotpath.pl` and `bench/run-http-response-path.pl`
+- duplicate `_HTTP1` imports left by consolidation were removed from
+  `Response.pm` and `t/14-native-response-fastpath.t`
+- maintained end-to-end and cross-server JSON benchmark identities now use
+  `linux-event-http-*` rather than `linux-event-net-http-*`
+
+One cosmetic benchmark-documentation cleanup remains in
+`bench/run-http-transaction-ladder.pl`: a few descriptions/JSON identifiers
+still say `Response1`, `Connection::_drive_http1`, or `linux-event-net-http`.
+They do not affect code or API behavior. Clean them before declaring the audit
+fully closed if a safe whole-file edit path is available.
+
+The open draft PR #14 belongs to the older `refactor/ecosystem-charter` branch
+and its description no longer matches this branch. Do not treat PR #14 as the
+integration proposal for `refactor/http-charter-structure`.
 
 ## Charter being applied
 
@@ -58,6 +90,13 @@ Linux::Event::HTTP::Client::Connection
 ```
 
 The client is **not implemented on this branch**.
+
+`HTTP::Request` and `HTTP::Response` remain the current protocol object names,
+but this does not require a future client to force server and client lifecycle
+semantics into the same implementation. If the client direction needs distinct
+live response/request roles, keep those client-specific roles under
+`Linux::Event::HTTP::Client` rather than making the server Response API grow
+mode switches merely for naming symmetry.
 
 ## Client decision
 
@@ -173,6 +212,12 @@ HEAD, HTTP/1.0, custom status/headers, streaming, deferred responses, request
 bodies, and other non-eligible cases continue through the ordinary Response
 state machine.
 
+For bodyless requests without an `on_request_end` handler, the server marks the
+request body complete before invoking `on_request`, so the canonical
+`on_request -> Response->end` shape remains eligible for the narrow private
+optimization. When `on_request_end` is configured, that lifecycle boundary is
+preserved instead of bypassed for benchmark speed.
+
 ## Server and transport boundary
 
 `Linux::Event::HTTP::Server` remains a thin control-plane convenience around
@@ -251,6 +296,11 @@ on_request_end -> Response->end      15715.4 req/s
 
 That is only a smoke/directional result and is **not** a performance claim.
 
+The final audit cleanup commits made after those guarded runs still require
+normal branch/PR CI before integration. In particular, the two JSON benchmark
+identity edits were verified from their commit diffs to contain only the
+intended string/key changes.
+
 ## Closed performance experiments
 
 Do not reopen these without a new measured hypothesis:
@@ -276,10 +326,11 @@ covers supported Perl configurations, HTTP smoke, and distribution integrity.
 
 ## Next steps
 
-1. Audit the final branch diff for stale old namespace, old public Connection,
-   `Net::WebSocket`, or obsolete fast-final implementation references.
-2. Treat historical mentions in this handoff as history, not live API.
-3. Run/inspect normal CI after the branch is proposed for integration.
+1. Clean the remaining cosmetic stale terminology in
+   `bench/run-http-transaction-ladder.pl` when it can be done safely.
+2. Propose `refactor/http-charter-structure` to `main` with a new draft PR; do
+   not reuse the stale older PR #14 description.
+3. Inspect normal PR CI for the final audit-cleanup head.
 4. Do not merge without explicit authorization.
 5. After this structural branch lands, client implementation can be a separate
    feature effort. Do not mix that new feature into this refactor.
