@@ -21,19 +21,14 @@ Updated: 2026-09-06 (America/Chicago)
 
 We are measuring where the remaining full HTTP transaction cost lives after introducing the native default final-response fast path.
 
-Relevant implementation/benchmark commit:
+Relevant implementation/benchmark commits:
 
 - `aa8f991` - `Benchmark fused HTTP callback dispatch`
+- `cbda5d4` - `Match bodyless transaction benchmark to production state reuse`
 
-That commit adds a `fused` transaction-ladder stage and a corresponding hot-path benchmark. Instead of invoking the two HTTP callbacks through two separate `_invoke_http_callback` calls, the fused stage executes both callbacks under one localized `_http_dispatching` flag and one `eval` boundary.
+The fused commit adds a `fused` transaction-ladder stage and a corresponding hot-path benchmark. Instead of invoking the two HTTP callbacks through two separate `_invoke_http_callback` calls, the fused stage executes both callbacks under one localized `_http_dispatching` flag and one `eval` boundary.
 
-Files changed by that experiment:
-
-- `bench/run-http-hotpath.pl`
-- `bench/run-http-transaction-ladder.pl`
-- `bench/servers/linuxevent-transaction-stage.pl`
-
-The transaction ladder is now:
+The transaction ladder is:
 
 - parse
 - bound
@@ -47,11 +42,11 @@ The transaction ladder is now:
 - end
 - full HTTP
 
-The benchmark contract version for the transaction ladder is 3.
+The benchmark contract version is 3.
 
 ## Recovered benchmark results
 
-These results were produced earlier in this experiment and are now recorded here so a new chat does not have to reconstruct them.
+These results were produced earlier in this experiment and are recorded here so a new chat does not have to reconstruct them.
 
 ### Native final-response hot path
 
@@ -95,7 +90,7 @@ The native-final candidate was better in all seven rotated repeats.
 
 Conclusion: the native default-final path is a real but modest end-to-end win. Fusing the two callback wrappers adds only about another `1.6%` beyond native-final-response, so callback wrapper duplication is not the dominant remaining problem.
 
-### Transaction lifecycle ladder
+### Transaction lifecycle ladder - older recorded run
 
 One recorded ladder median set was:
 
@@ -106,19 +101,25 @@ One recorded ladder median set was:
 - + native end: `33,939 req/s`
 - full HTTP: `27,202 req/s`
 
-Conclusion: the biggest remaining losses are before the final response write. In particular, Response binding/allocation and transaction-state setup are much more suspicious than the callback wrapper itself.
+IMPORTANT: the `state` stage in that older run was not accurately mirroring the current production bodyless-GET path. The benchmark called `_new_request_state` and allocated a new state hash for every request, while production `Connection::_drive_http1` reuses a per-connection `_http_bodyless_state` hash for `body_mode eq 'none'`.
+
+Commit `cbda5d4` corrects `bench/servers/linuxevent-transaction-stage.pl` to use the same cached bodyless state logic as production. Therefore the old `57,506 -> 45,581` bound-to-state drop must not be treated as a valid estimate of current production transaction-state cost until the ladder is rerun.
+
+This correction itself is an important conclusion: part of the apparent transaction-state penalty was benchmark artifact, not necessarily production overhead.
 
 ## Current conclusion
 
-The native default final-response experiment succeeded at proving there was substantial avoidable cost in `Response->end`, but end-to-end throughput is now constrained elsewhere. The fused-dispatch result strongly argues against spending much more complexity on callback-dispatch fusion at this point.
+The native default final-response experiment succeeded at proving there was substantial avoidable cost in `Response->end`, but end-to-end throughput is now constrained elsewhere. The fused-dispatch result strongly argues against spending much more complexity on callback-dispatch fusion.
+
+The current strongest remaining suspect is Response binding/allocation (`parse -> bound`). The transaction-state stage must now be remeasured after `cbda5d4`; its previous cost estimate is invalid for bodyless GET.
 
 The next target should remain Perl-side unless measurement proves otherwise. Do not add more XS merely because the full HTTP gap remains large.
 
 ## Immediate next work
 
-1. Inspect and benchmark a lighter Response/transaction-state path, especially the large `parse -> bound -> state` losses.
-2. Prefer a benchmark-only/bodyless-GET or prebound-response experiment first, so we can isolate which object/state operations are expensive before changing production semantics.
-3. Quantify whether Response allocation/binding, transaction hash/state creation, or request bookkeeping dominates.
+1. Rerun the transaction ladder after `cbda5d4` and record the corrected `bound -> state` delta.
+2. If `state` rises close to `bound`, focus directly on `Response->_new_bound` allocation/binding/weakening.
+3. Split Response binding cost into allocation/hash initialization vs `weaken(connection)` before considering any production redesign.
 4. Only promote an optimization to production if it preserves request/response semantics and shows a meaningful end-to-end gain.
 5. Re-run cross-server comparison after any production-worthy optimization.
 
