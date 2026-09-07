@@ -48,6 +48,7 @@ t/33-response-chunked.t
 t/40-server.t
 t/41-tls-server.t
 t/42-upgrade.t
+t/50-final-response.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
