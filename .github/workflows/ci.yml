@@ -130,6 +130,20 @@ jobs:
             --response-bytes=32 \
             --repeats=3
 
+      - name: Integrated fast-final smoke
+        run: |
+          perl -Mblib bench/run-http-fast-final-experiment.pl --smoke
+
+      - name: Integrated fast-final diagnostic
+        run: |
+          perl -Mblib bench/run-http-fast-final-experiment.pl \
+            --requests=20000 \
+            --warmup=2000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=32 \
+            --repeats=3
+
       - name: Cross-server smoke
         run: |
           perl -Mblib bench/run-http-comparison.pl \
