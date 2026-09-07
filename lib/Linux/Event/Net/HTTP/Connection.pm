@@ -78,8 +78,7 @@ sub on_data ($self, $bytes) {
     return;
 }
 
-sub _new_request_state ($request) {
-    my $mode = $request->body_mode;
+sub _new_request_state ($request, $mode = $request->body_mode) {
     my $state = {
         mode      => $mode,
         body_done => 0,
@@ -353,7 +352,19 @@ sub _drive_http1 ($self) {
 
         my $response
             = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
-        my $request_state = _new_request_state($request);
+        my $body_mode = $request->body_mode;
+        my $bodyless = $body_mode eq 'none';
+        my $request_state;
+        if ($bodyless) {
+            $request_state = $self->{_http_bodyless_state} //= {
+                mode      => 'none',
+                body_done => 0,
+            };
+            $request_state->{body_done} = 0;
+            delete $request_state->{close_after_response};
+        } else {
+            $request_state = _new_request_state($request, $body_mode);
+        }
 
         $self->{_http_active_request} = $request;
         $self->{_http_active_response} = $response;
@@ -371,6 +382,23 @@ sub _drive_http1 ($self) {
         }
         last if $self->{_http_closing} || $self->is_closed;
         next if !$self->{_http_active_request};
+
+        if ($bodyless) {
+            $request_state->{body_done} = 1;
+            last if !$self->_invoke_http_callback(
+                $self->{_http_on_request_end}, $request, $response,
+            );
+            last if $self->{_http_closing} || $self->is_closed;
+            next if !$self->{_http_active_request};
+
+            if ($response->is_ended) {
+                $self->_finalize_transaction;
+                next;
+            }
+
+            $self->pause_read if !$self->is_read_paused;
+            last;
+        }
 
         if (!_body_pending($request_state)) {
             $self->_finish_request_body;
