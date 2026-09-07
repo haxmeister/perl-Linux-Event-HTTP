@@ -32,7 +32,7 @@ WriteMakefile(
     AUTHOR           => 'Joshua S. Day <hax@cpan.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036000',
-    DIR              => [qw(xshttp1 xschunked xsresponse1)],
+    DIR              => [qw(xshttp1 xschunked)],
     CONFIGURE_REQUIRES => {
         'ExtUtils::MakeMaker' => 0,
     },
