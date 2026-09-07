@@ -38,35 +38,10 @@ It retains one callback CV and reuses it for accepted HTTP connections; it does
 not create a wrapper closure per connection or add another per-request dispatch
 layer.
 
-For simple bodyless requests that can return the default complete response in
-one scalar, an optional final-response callback avoids allocating the general
-Response transaction machinery:
-
-```perl
-my $server = Linux::Event::HTTP::Server->new(
-    loop => $loop,
-    host => '127.0.0.1',
-    port => 8080,
-
-    on_request_final => sub ($conn, $req) {
-        return "hello\n" if $req->target eq '/';
-        return undef;  # use the general Response path
-    },
-
-    on_request => sub ($conn, $req, $res) {
-        $res->status(404);
-        $res->end("not found\n");
-    },
-);
-```
-
-`on_request_final` is deliberately narrow. It is considered only for validated
-bodyless requests and a defined scalar return represents the default final
-response body. Returning `undef` declines the shortcut. Requests with bodies,
-custom status or headers, streaming, deferred completion, and other general
-response work continue through `on_request`, which remains required. Cases
-such as HEAD or HTTP/1.0 preserve the returned body through ordinary Response
-serialization when the native default-final form is not eligible.
+Scalar `Response->end(...)` is also the complete-response path for simple
+bodyless requests. Eligible default scalar responses may use a private native
+finalization path internally; applications use the same `on_request`/`Response`
+API whether that optimization applies or not.
 
 A Connection subclass remains the declarative form for reusable protocol,
 tuning, socket, and TLS policy:
@@ -140,12 +115,12 @@ uses Linux::Event `transition_to()` after the HTTP request lifecycle has
 finished. The target retains the same socket, TLS transport, output queue,
 backpressure, deadlines, and application data. Bytes already read after the HTTP
 request head are preserved and become the target protocol's first input. This
-is the boundary intended for a separate `Linux::Event::Net::WebSocket`
+is the boundary intended for a separate `Linux::Event::WebSocket`
 distribution.
 
 Applications use the Response object but do not construct it or pass it back to
-the Connection. Response is the writable handle for a general-path transaction
-and may be retained and completed from a later event.
+the Connection. Response is the writable handle for a server transaction and may
+be retained and completed from a later event.
 
 Streaming response output uses the same `write`/`end` shape. HTTP/1.1 adds
 chunked transfer coding automatically when no Content-Length was declared:

@@ -241,4 +241,14 @@ like(
     'Response can complete its request from a later event',
 );
 
+my $removed_ok = eval {
+    Linux::Event::HTTP::Server::Connection->new(
+        on_request => sub { },
+        on_request_final => sub { return "old\n" },
+    );
+    1;
+};
+ok(!$removed_ok, 'direct Connection rejects removed on_request_final option');
+like($@, qr/on_request_final was removed/, 'Connection gives migration guidance');
+
 done_testing;

@@ -14,17 +14,15 @@ use Linux::Event::HTTP::Server;
     package T::FinalResponse;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
-    sub on_request_final ($self, $request) {
-        ++$self->data->{final_hits};
-        die "final-response boom\n" if $self->data->{final_die};
-        return $self->data->{final_result};
-    }
-
     sub on_request ($self, $request, $response) {
         my $state = $self->data;
-        ++$state->{general_hits};
-        if (($state->{general_mode} // '') eq 'immediate') {
-            $response->end($state->{general_body});
+        ++$state->{request_hits};
+        die "request boom\n" if $state->{request_die};
+
+        if (($state->{mode} // '') eq 'invalid-body') {
+            $response->end([]);
+        } elsif (($state->{mode} // '') ne 'body') {
+            $response->end($state->{response_body});
         }
         return;
     }
@@ -38,7 +36,7 @@ use Linux::Event::HTTP::Server;
     sub on_request_end ($self, $request, $response) {
         my $state = $self->data;
         ++$state->{request_end_hits};
-        if (($state->{general_mode} // '') eq 'body') {
+        if (($state->{mode} // '') eq 'body') {
             $response->end('post:' . $state->{body} . "\n");
         }
         return;
@@ -48,11 +46,11 @@ use Linux::Event::HTTP::Server;
 sub new_state (%extra) {
     return {
         wire => '',
-        final_hits => 0,
-        general_hits => 0,
+        request_hits => 0,
         body_hits => 0,
         request_end_hits => 0,
         body => '',
+        response_body => "fast\n",
         %extra,
     };
 }
@@ -106,9 +104,7 @@ sub run_exchange ($request_wire, $state, $expected_wire_body = undef) {
         },
         on_eof => sub ($stream) {
             $finish->($stream);
-            if (!$done) {
-                die "server closed before complete final response\n";
-            }
+            die "server closed before complete final response\n" if !$done;
         },
         on_error => sub ($stream, $error) {
             die "final-response client failed: $error\n";
@@ -120,7 +116,7 @@ sub run_exchange ($request_wire, $state, $expected_wire_body = undef) {
     return $state->{wire};
 }
 
-my $state = new_state(final_result => "fast\n");
+my $state = new_state(response_body => "fast\n");
 my $wire = run_exchange(
     "GET /fast HTTP/1.1\r\nHost: example.test\r\n\r\n",
     $state,
@@ -128,26 +124,11 @@ my $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.1 200 OK\r\nContent-Length: 5\r\n\r\nfast\n\z/s,
-    'eligible bodyless request uses returned final-response body',
+    'ordinary on_request plus Response->end completes eligible scalar response',
 );
-is($state->{final_hits}, 1, 'final-response callback runs once');
-is($state->{general_hits}, 0, 'general on_request is skipped on final-response success');
-is($state->{request_end_hits}, 0, 'bodyless request-end callback is skipped on final-response success');
+is($state->{request_hits}, 1, 'ordinary request callback runs once');
 
-$state = new_state(
-    final_result => undef,
-    general_mode => 'immediate',
-    general_body => "general\n",
-);
-$wire = run_exchange(
-    "GET /fallback HTTP/1.1\r\nHost: example.test\r\n\r\n",
-    $state,
-);
-like($wire, qr/\r\n\r\ngeneral\n\z/s, 'undef falls through to ordinary on_request path');
-is($state->{final_hits}, 1, 'final-response callback runs before undef fallback');
-is($state->{general_hits}, 1, 'ordinary on_request handles undef fallback');
-
-$state = new_state(final_result => 'head-body');
+$state = new_state(response_body => 'head-body');
 $wire = run_exchange(
     "HEAD /head HTTP/1.1\r\nHost: example.test\r\n\r\n",
     $state,
@@ -156,12 +137,11 @@ $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.1 200 OK\r\nContent-Length: 9\r\n\r\n\z/s,
-    'HEAD preserves representation length through ordinary Response fallback',
+    'HEAD keeps representation length while suppressing response body bytes',
 );
-is($state->{final_hits}, 1, 'HEAD still uses final-response application callback');
-is($state->{general_hits}, 0, 'HEAD fallback does not invoke general application callback');
+is($state->{request_hits}, 1, 'HEAD uses the same ordinary request callback');
 
-$state = new_state(final_result => "old\n");
+$state = new_state(response_body => "old\n");
 $wire = run_exchange(
     "GET /old HTTP/1.0\r\n\r\n",
     $state,
@@ -169,15 +149,11 @@ $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.0 200 OK\r\nContent-Length: 4\r\n\r\nold\n\z/s,
-    'HTTP/1.0 returned body falls back through ordinary Response serialization',
+    'HTTP/1.0 uses ordinary Response serialization',
 );
-is($state->{final_hits}, 1, 'HTTP/1.0 invokes final-response callback once');
-is($state->{general_hits}, 0, 'HTTP/1.0 fallback does not re-run general callback');
+is($state->{request_hits}, 1, 'HTTP/1.0 uses the same ordinary request callback');
 
-$state = new_state(
-    final_result => "must-not-run\n",
-    general_mode => 'body',
-);
+$state = new_state(mode => 'body');
 $wire = run_exchange(
     "POST /body HTTP/1.1\r\n" .
         "Host: example.test\r\n" .
@@ -185,13 +161,12 @@ $wire = run_exchange(
         "data",
     $state,
 );
-like($wire, qr/\r\n\r\npost:data\n\z/s, 'body-bearing request stays on general streaming path');
-is($state->{final_hits}, 0, 'final-response callback is not invoked for request bodies');
-is($state->{general_hits}, 1, 'general on_request handles body-bearing request');
-is($state->{body}, 'data', 'general path receives request body bytes');
-is($state->{request_end_hits}, 1, 'general path receives request-end callback');
+like($wire, qr/\r\n\r\npost:data\n\z/s, 'body-bearing request stays on streaming request path');
+is($state->{request_hits}, 1, 'body-bearing request invokes ordinary on_request');
+is($state->{body}, 'data', 'request body bytes are delivered');
+is($state->{request_end_hits}, 1, 'request-end callback completes body response');
 
-$state = new_state(final_die => 1);
+$state = new_state(request_die => 1);
 $wire = run_exchange(
     "GET /boom HTTP/1.1\r\nHost: example.test\r\n\r\n",
     $state,
@@ -199,11 +174,11 @@ $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.1 500 [^\r\n]+\r\nContent-Length: 0\r\nConnection: close\r\n\r\n\z/s,
-    'final-response callback exception becomes protocol-safe 500',
+    'ordinary request callback exception becomes protocol-safe 500',
 );
-is($state->{general_hits}, 0, 'exception does not fall through to general handler');
+is($state->{request_hits}, 1, 'failing ordinary request callback runs once');
 
-$state = new_state(final_result => []);
+$state = new_state(mode => 'invalid-body');
 $wire = run_exchange(
     "GET /invalid-body HTTP/1.1\r\nHost: example.test\r\n\r\n",
     $state,
@@ -211,11 +186,11 @@ $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.1 500 [^\r\n]+\r\nContent-Length: 0\r\nConnection: close\r\n\r\n\z/s,
-    'invalid returned body becomes protocol-safe 500',
+    'invalid Response->end body becomes protocol-safe 500',
 );
-is($state->{general_hits}, 0, 'invalid returned body does not enter general handler');
+is($state->{request_hits}, 1, 'invalid body is handled inside ordinary request callback');
 
-$state = new_state(final_result => "ignored\n");
+$state = new_state(response_body => "ignored\n");
 $wire = run_exchange(
     "GET /expect HTTP/1.1\r\n" .
         "Host: example.test\r\n" .
@@ -225,8 +200,8 @@ $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.1 417 [^\r\n]+\r\nContent-Length: 0\r\nConnection: close\r\n\r\n\z/s,
-    'unsupported Expect remains governed by ordinary protocol validation',
+    'unsupported Expect is rejected before application dispatch',
 );
-is($state->{final_hits}, 0, 'invalid Expect is rejected before final-response callback');
+is($state->{request_hits}, 0, 'invalid Expect never reaches on_request');
 
 done_testing;

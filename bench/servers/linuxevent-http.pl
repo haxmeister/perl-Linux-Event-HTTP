@@ -45,38 +45,12 @@ my $payload = 'x' x $response_bytes;
     }
 }
 
-{
-    package Linux::Event::HTTP::Bench::FastFinalCompareConnection;
-    use parent 'Linux::Event::HTTP::Server::Connection';
-
-    sub stream_options ($class) {
-        return read_budget_bytes => $main::READ_BUDGET_BYTES;
-    }
-
-    sub on_request_final ($self, $request) {
-        return $self->data->{payload};
-    }
-
-    # Preserve the ordinary streaming/body-bearing fallback contract. The
-    # bodyless GET comparison should complete in on_request_final before any
-    # Response object is allocated.
-    sub on_request ($self, $request, $response) {
-        return;
-    }
-
-    sub on_request_end ($self, $request, $response) {
-        $response->end($self->data->{payload});
-        return;
-    }
-}
 
 my $connection_class = $mode eq 'natural'
     ? 'Linux::Event::HTTP::Bench::NaturalCompareConnection'
     : $mode eq 'request-end'
         ? 'Linux::Event::HTTP::Bench::RequestEndCompareConnection'
-        : $mode eq 'fast-final'
-            ? 'Linux::Event::HTTP::Bench::FastFinalCompareConnection'
-            : die "unknown BENCH_LINUXEVENT_MODE: $mode\n";
+        : die "unknown BENCH_LINUXEVENT_MODE: $mode\n";
 
 my $loop = Linux::Event::Loop->new;
 my $server = Linux::Event::HTTP::Server->new(

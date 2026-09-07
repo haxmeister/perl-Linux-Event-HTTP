@@ -41,21 +41,6 @@ $SIG{PIPE} = 'IGNORE';
     }
 }
 
-{
-    package Linux::Event::HTTP::Bench::FastFinalConnection;
-    use parent 'Linux::Event::HTTP::Server::Connection';
-
-    sub on_request_final ($self, $request) {
-        return $self->data->{payload};
-    }
-
-    sub on_request ($self, $request, $response) {
-        # Required general fallback for body-bearing or explicitly declined
-        # fast-final transactions. The measured GET workload should not reach it.
-        $response->end($self->data->{payload});
-        return;
-    }
-}
 
 my $requests = 20_000;
 my $warmup = 2_000;
@@ -99,24 +84,21 @@ die "repeats must be > 0\n" if $repeats <= 0;
 die "timeout must be > 0\n" if $timeout <= 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @mode = qw(ordinary_request ordinary_request_end fast_final);
+my @mode = qw(ordinary_request ordinary_request_end);
 my %label = (
     ordinary_request     => 'on_request -> Response->end',
     ordinary_request_end => 'on_request_end -> Response->end',
-    fast_final           => 'integrated fast-final return',
 );
 my %class = (
     ordinary_request     => 'Linux::Event::HTTP::Bench::OrdinaryRequestConnection',
     ordinary_request_end => 'Linux::Event::HTTP::Bench::OrdinaryRequestEndConnection',
-    fast_final           => 'Linux::Event::HTTP::Bench::FastFinalConnection',
 );
 my %records;
 
-say 'Linux::Event::HTTP production-shaped fast-final experiment';
+say 'Linux::Event::HTTP response finalization benchmark';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats";
-say 'ordinary_request = real Connection on_request($conn,$req,$res) + Response->end with early bodyless completion';
+say 'ordinary_request = real Connection on_request($conn,$req,$res) + Response->end';
 say 'ordinary_request_end = real Connection no-op on_request + on_request_end($conn,$req,$res) + Response->end';
-say 'fast_final = real Connection on_request_final($conn,$req) returning scalar body before Response allocation';
 
 for my $repeat (1 .. $repeats) {
     my @order = $repeat % 2 ? @mode : reverse @mode;
@@ -148,13 +130,6 @@ for my $mode (@mode) {
         @{$median{$mode}}{qw(requests_per_second latency_us_p50 latency_us_p95 latency_us_p99 latency_us_max)};
 }
 
-for my $baseline (qw(ordinary_request ordinary_request_end)) {
-    my $gain = 100 * (
-        $median{fast_final}{requests_per_second}
-            / $median{$baseline}{requests_per_second} - 1
-    );
-    printf "fast_final vs %-20s %+.2f%%\n", $baseline, $gain;
-}
 my $ordinary_vs_end = 100 * (
     $median{ordinary_request}{requests_per_second}
         / $median{ordinary_request_end}{requests_per_second} - 1
@@ -388,7 +363,7 @@ sub median (@values) {
 
 sub usage ($status) {
     print <<'USAGE';
-usage: bench/run-http-fast-final-experiment.pl [options]
+usage: bench/run-http-final-response.pl [options]
 
   --requests=N        measured requests per mode/repeat (default 20000)
   --warmup=N          warmup requests per mode/repeat (default 2000)

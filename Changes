@@ -3,7 +3,8 @@ Revision history for Linux-Event-HTTP
 0.001  UNRELEASED
     - Initial distribution scaffold.
     - Establish HTTP protocol, transport, and message-layer boundaries.
-    - Reserve Server, Connection, Request, and Response public namespaces.
+    - Use the flat Linux::Event::HTTP namespace and make the server-side transport
+      class Linux::Event::HTTP::Server::Connection, leaving Client structure for later.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.
@@ -11,7 +12,7 @@ Revision history for Linux-Event-HTTP
     - Validate HTTP/1 Host, Content-Length, Transfer-Encoding, body framing, and persistence.
     - Reject ambiguous TE/CL framing and unsupported request transfer codings.
     - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
-    - Bind HTTP Connection directly to Linux::Event::IO::Sock::Stream.
+    - Bind HTTP Server::Connection directly to Linux::Event::IO::Sock::Stream.
     - Pair general-path dispatched Requests with a connection-created Response object.
     - Move response completion to Response->end and fixed-length output to Response->write.
     - Lock response status and headers once output begins.
@@ -38,9 +39,10 @@ Revision history for Linux-Event-HTTP
       Linux::Event loop profiling.
     - Add a reproducible cross-server comparison harness for Linux::Event, Feersum,
       Mojolicious, Node.js, Go, aiohttp, and optional libh2o reference runs.
-    - Add optional on_request_final($connection, $request) for validated bodyless
-      complete responses while retaining on_request as the required general fallback.
-    - Add a narrow native default-final response builder and focused final-response
-      benchmark, with ordinary Response fallback for HEAD, HTTP/1.0, and body-bearing requests.
+    - Keep on_request -> Response as the single server request API while transparently
+      optimizing eligible scalar Response->end completions with a narrow native builder.
+    - Consolidate request parsing, chunked decoding, response serialization, and the
+      default-final builder into one private Linux::Event::HTTP::_HTTP1 extension.
+    - Keep a focused response-finalization benchmark for supported callback shapes.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
