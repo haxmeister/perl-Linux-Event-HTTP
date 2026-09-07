@@ -30,7 +30,6 @@ t/10-pico-parser.t
 t/11-native-request.t
 t/12-http1-framing.t
 t/13-chunked-decoder.t
-t/14-native-response-fastpath.t
 t/20-response.t
 t/30-connection.t
 t/31-request-body.t
@@ -39,7 +38,6 @@ t/33-response-chunked.t
 t/40-server.t
 t/41-tls-server.t
 t/42-upgrade.t
-t/50-final-response.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
@@ -48,5 +46,3 @@ xschunked/Chunked.xs
 xschunked/Makefile.PL
 xshttp1/HTTP1.xs
 xshttp1/Makefile.PL
-xsresponse1/Makefile.PL
-xsresponse1/Response1.xs
