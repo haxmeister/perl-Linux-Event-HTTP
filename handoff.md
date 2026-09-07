@@ -6,7 +6,6 @@ Updated: 2026-09-06 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-Net-HTTP`
 - Current branch: `experiment/native-final-response`
-- Branch head before this handoff commit: `aa8f991d233202b420babaa29e57e96ae234e041`
 - Draft PR: #13, `Experiment: native default final-response fast path`
 - Base branch: `feature/http-comparison-benchmarks`
 - DO NOT merge PR #13 or PR #11 without explicit authorization.
@@ -22,7 +21,7 @@ Updated: 2026-09-06 (America/Chicago)
 
 We are measuring where the remaining full HTTP transaction cost lives after introducing the native default final-response fast path.
 
-The latest commit before this file was:
+Relevant implementation/benchmark commit:
 
 - `aa8f991` - `Benchmark fused HTTP callback dispatch`
 
@@ -48,15 +47,80 @@ The transaction ladder is now:
 - end
 - full HTTP
 
-The benchmark contract version for the transaction ladder is now 3.
+The benchmark contract version for the transaction ladder is 3.
+
+## Recovered benchmark results
+
+These results were produced earlier in this experiment and are now recorded here so a new chat does not have to reconstruct them.
+
+### Native final-response hot path
+
+Earlier hot-path comparison:
+
+- old/default final response path: about `42.28 us/op` / `23.7k ops/s`
+- native default final-response path: about `17.04 us/op` / `58.7k ops/s`
+- `Response->end` specifically improved from about `29.41 us/op` to `7.78 us/op`
+
+Conclusion: the response-ending machinery itself had a very large removable Perl-side cost, and the native default final-response path successfully removes much of it.
+
+### Real HTTP server, early native-final result
+
+One earlier cross-server run reported approximately:
+
+- Linux::Event::Net::HTTP: `31,923.8 req/s`
+- Feersum: `99,269 req/s`
+- Go net/http: roughly `64k-67k req/s` depending on the comparison run
+- Node HTTP: `26,236 req/s` in that run
+
+The Feersum throughput gap improved from roughly `5.40x` before the native-final work to roughly `3.11x` after it.
+
+A recorded pipeline=1 comparison also had Linux::Event::Net::HTTP at `31,924 req/s`, p50 `3,038 us`, p95 `3,437 us`, p99 `6,031 us`; Feersum `99,269 req/s`; Go `67,431 req/s`; aiohttp `17,391 req/s`.
+
+### Controlled native-final / fused comparison
+
+Same-host controlled run, 100k requests, 100 connections, pipeline=1, 32-byte response:
+
+- baseline median: `54,777 req/s`
+- native-callback: `55,391 req/s` (`+1.1%` vs baseline)
+- native-final-response: `57,087 req/s` (`+4.2%` vs baseline)
+- native-final-response + fused callback dispatch: `58,004 req/s` (`+5.9%` vs baseline)
+
+For baseline vs native-final-response, latency moved approximately:
+
+- p50: `1.81 ms -> 1.76 ms`
+- p95: `1.93 ms -> 1.86 ms`
+- p99: `2.00 ms -> 1.93 ms`
+
+The native-final candidate was better in all seven rotated repeats.
+
+Conclusion: the native default-final path is a real but modest end-to-end win. Fusing the two callback wrappers adds only about another `1.6%` beyond native-final-response, so callback wrapper duplication is not the dominant remaining problem.
+
+### Transaction lifecycle ladder
+
+One recorded ladder median set was:
+
+- parse: `89,864 req/s`
+- + Response binding: `57,506 req/s` (`-36.0%` from parse)
+- + transaction state: `45,581 req/s`
+- + callbacks: `41,892 req/s`
+- + native end: `33,939 req/s`
+- full HTTP: `27,202 req/s`
+
+Conclusion: the biggest remaining losses are before the final response write. In particular, Response binding/allocation and transaction-state setup are much more suspicious than the callback wrapper itself.
+
+## Current conclusion
+
+The native default final-response experiment succeeded at proving there was substantial avoidable cost in `Response->end`, but end-to-end throughput is now constrained elsewhere. The fused-dispatch result strongly argues against spending much more complexity on callback-dispatch fusion at this point.
+
+The next target should remain Perl-side unless measurement proves otherwise. Do not add more XS merely because the full HTTP gap remains large.
 
 ## Immediate next work
 
-1. Run the hot-path benchmark and transaction lifecycle ladder with the new `fused` stage.
-2. Compare `callbacks -> fused` to quantify the cost of the second callback dispatch wrapper / second eval boundary.
-3. Compare `fused -> eligibility -> build -> mark -> commit -> end -> http` to identify the largest remaining gap.
-4. Only after measurement, decide whether any production callback-dispatch fusion is justified.
-5. Run the cross-server HTTP comparison again after any production-worthy optimization to see whether it materially changes competitive position.
+1. Inspect and benchmark a lighter Response/transaction-state path, especially the large `parse -> bound -> state` losses.
+2. Prefer a benchmark-only/bodyless-GET or prebound-response experiment first, so we can isolate which object/state operations are expensive before changing production semantics.
+3. Quantify whether Response allocation/binding, transaction hash/state creation, or request bookkeeping dominates.
+4. Only promote an optimization to production if it preserves request/response semantics and shows a meaningful end-to-end gain.
+5. Re-run cross-server comparison after any production-worthy optimization.
 
 ## Important architecture constraint
 
