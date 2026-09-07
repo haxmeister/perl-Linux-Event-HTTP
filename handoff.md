@@ -6,144 +6,213 @@ Updated: 2026-09-07 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-Net-HTTP`
 - Branch: `experiment/native-final-response`
-- Draft PR: #13, `Experiment: native default final-response fast path`
+- Draft PR: #13, currently titled `Experiment: native default final-response fast path`
 - Base: `feature/http-comparison-benchmarks`
+- Implementation/cleanup head before this handoff-only commit: `197e2ce736fbe8b2337a2e4e6c7459cf1b6d405b`
 - DO NOT merge PR #13 or PR #11 without explicit authorization.
-- `handoff.md` is the live checkpoint. Update it after every meaningful benchmark, experiment, or conclusion.
+- `handoff.md` is the live checkpoint; update it after every meaningful result or conclusion.
 
 ## Strategy
 
 1. Keep Linux::Event::Net::HTTP among the highest-performance servers in the ecosystem.
-2. Minimize C/XS maintenance; do not add a new native subsystem unless measurements make it necessary.
-3. Preserve the general Response/streaming model while providing a cheaper complete-response path where measurements justify it.
+2. Minimize C/XS maintenance; do not add a large native HTTP subsystem unless measurement makes it necessary.
+3. Preserve the general Response/streaming model while providing a cheaper complete-response path where justified.
 4. libh2o remains a benchmark/reference, not the current HTTP/1 integration direction.
 5. GitHub hosted-runner absolute throughput varies dramatically; prefer same-run ratios and A/B measurements.
 
-## Production-shaped changes currently on this branch
+## Final API direction
+
+The specialized bodyless complete-response callback is now named:
+
+    on_request_final($connection, $request)
+
+Reason: “final response” is HTTP terminology and distinguishes this from request-input completion (`on_request_end`). Avoid names containing `fast`, which expose implementation, and `complete`, which is ambiguous with request completion.
+
+`on_request` remains REQUIRED as the general fallback for:
+
+- request bodies
+- custom status and headers
+- streaming
+- deferred responses
+- any request where the narrow final-response path is declined or not applicable
+
+For a validated bodyless request:
+
+- defined scalar return => try native default `200 OK` final serialization before Response allocation
+- `undef` => ordinary `on_request` / Response path
+- HEAD, HTTP/1.0, non-persistent/native-ineligible cases => preserve the returned body through ordinary Response serialization without invoking the application twice
+- callback exception or invalid returned body => protocol-safe 500
+- invalid Expect is rejected before final-response callback
+
+## Production changes on the branch
 
 ### Safe early bodyless completion
 
-For a bodyless request with no configured `on_request_end`, real `Connection::_drive_http1` marks the reusable request state `body_done = 1` before ordinary `on_request`. Natural `$response->end(...)` can therefore use the existing native default-final shortcut. If `on_request_end` exists, old callback ordering remains intact.
+For a bodyless request with no `on_request_end`, real `Connection::_drive_http1` marks the reusable request state complete before ordinary `on_request`, allowing natural `$response->end(...)` to use native default-final serialization. If `on_request_end` exists, old callback ordering is preserved.
 
-### Experimental complete-response callback
+### Final-response path in real Connection
 
-Real `Connection` discovers/caches optional `on_request_final($conn,$request)`. For validated bodyless requests it runs before Response allocation:
+The complete-response behavior is integrated directly into real `Connection::_drive_http1`. There is no duplicated production parser/driver. The obsolete private `_Experiment::FastFinalConnection` module has been deleted.
 
-- scalar return => native default-final serialization/write when eligible
-- `undef` => ordinary Response/application fallback
-- HEAD, HTTP/1.0, and other native-ineligible results => ordinary Response fallback without re-invoking the app callback
-- body-bearing requests => ordinary streaming path
-- callback exception or invalid body => protocol-safe 500
-- invalid Expect is rejected before callback dispatch
+### Server support
 
-The implementation is production-shaped. `on_request_final` is still treated as an experimental public name until Server/API cleanup is complete.
+`Server->new` now accepts and retains `on_request_final`, and `_ServerConnection` forwards it directly into each accepted configured Connection. Server still rejects a final-only configuration with no general `on_request` fallback.
 
-### Native default-final builder copy reduction
+`t/40-server.t` verifies Server forwarding and ordinary fallback serialization without a duplicate application callback.
 
-Commit `2a04725` changed `Response1.xs::build_default_final` so an already-materialized, non-magical, non-UTF8 byte string is read directly instead of first being copied with `newSVsv(body)`. UTF8, magical, numeric/non-PV, and other cases retain copy-based safety behavior. Commit `5c35e9d` expanded scalar/UTF8 semantic tests. Perl 5.36/latest/latest-threaded are green.
+### Production semantic test
 
-## Decision-grade complete-response results
+The old experiment-named test was promoted to `t/50-final-response.t` and added to `MANIFEST`. It covers:
 
-Repeated focused real-Connection results:
+- eligible GET final-response success
+- `undef` fallback
+- HEAD fallback
+- HTTP/1.0 fallback
+- body-bearing POST staying on ordinary streaming path
+- callback exception => 500
+- invalid returned body => 500
+- invalid Expect rejected before callback
 
-- CI 34085015017: natural `35,589.8`, fast-final `46,963.4` req/s => **+31.96%**
-- CI 34085371457: natural `34,484.1`, fast-final `46,363.5` => **+34.45%**
-- CI 34085638210: natural `35,271.3`, fast-final `46,119.1` => **+30.76%**
-- CI 34086436382: natural `35,725.5`, fast-final `45,629.5` => **+27.72%**
-- CI 34086824437: natural `36,095.5`, fast-final `48,305.9` => **+33.83%**
+### Documentation
 
-The specialized complete-response path is therefore a robust ~28-34% win over optimized natural `on_request -> Response->end` on these runners.
+`Connection.pm` and `Server.pm` now document `on_request_final`, its signature, narrow/default-200 contract, fallbacks, errors, and why ordinary `on_request` remains required. Connection POD no longer claims every successful request necessarily allocates a Response.
 
-### Fair shared cross-server examples
+### Native default-final body-copy reduction
 
-CI 34085638210, same runner/harness:
+`Response1.xs::build_default_final` reads an ordinary materialized non-magical non-UTF8 byte scalar directly instead of first copying it with `newSVsv`. UTF8/magical/numeric/non-PV cases retain the safe copy path.
 
-- Linux::Event natural `34,396.5`
-- Linux::Event fast-final `46,034.3`
-- Go `59,429.7`
-- Feersum `73,843.8`
-- libh2o `69,404.4` (noisy)
+A same-run A/B proved this local optimization:
 
-Fast-final vs natural: **+33.83%**.
+- 32-byte body: +14.67% builder throughput, about 48 ns saved/build
+- 4 KiB body: +28.10%, about 119 ns saved/build
 
-CI 34086824437:
+Keep it, but do not describe it as a large server-level gain.
+
+## Decision-grade performance evidence
+
+Focused real-Connection final-response vs optimized natural `on_request -> Response->end`:
+
+- CI 34085015017: +31.96%
+- CI 34085371457: +34.45%
+- CI 34085638210: +30.76%
+- CI 34086436382: +27.72%
+- CI 34086824437: +33.83%
+- CI 34087395935 on much faster hardware: natural `81,177.0`, final `100,964.8` req/s => +24.38%
+
+The benefit has therefore remained substantial across very different hosted runners: roughly +24-34% in the focused real-Connection harness.
+
+Fair shared-harness examples:
+
+### CI 34085638210
+
+- Linux::Event natural: `34,396.5 req/s`
+- Linux::Event final-response: `46,034.3`
+- Go: `59,429.7`
+- Feersum: `73,843.8`
+- libh2o: `69,404.4` (noisy)
+
+Final vs natural: +33.83%.
+
+### CI 34087395935 (much faster runner)
 
 Natural pass:
-- Linux::Event `34,680.1`
-- Go `59,057.7`
-- Feersum `75,253.1`
-- libh2o `66,882.4` (one low repeat)
+- Linux::Event `80,737.6`
+- Go `118,978.2`
+- Feersum `146,541.8`
+- libh2o `134,903.3`
 
-Fast-final pass:
-- Linux::Event `46,778.6`
-- Go `59,362.0`
-- Feersum `74,193.8`
-- libh2o `72,448.5`
+Final-response pass:
+- Linux::Event `97,947.0`
+- Go `110,719.7`
+- Feersum `141,508.7`
+- libh2o `136,755.9`
 
-Fast-final remains materially ahead of Node/aiohttp but below Go/Feersum/libh2o. Do not compare absolute throughput between different GitHub runners.
+Final vs natural: +21.32%. Competitor absolute values and Node in particular were noisy; use this primarily as another same-run confirmation of the Linux::Event API delta.
 
-## CLOSED: response-builder temporary-body-copy A/B - CI 34086436382
+## Closed experiments
 
-A temporary private copy-reference XSUB reproduced the old unconditional `newSVsv(body)` path in the same binary. 200k calls, 20k warmup, 5 alternating repeats:
+### Duplicated bodyless Perl driver
 
-- 0-byte: no-copy `3,439,673.9`, copy `3,033,010.0 ops/s` => **+13.41%**
-- 32-byte: `3,051,201.8` vs `2,660,744.2` => **+14.67%**
-- 256-byte: `2,558,984.8` vs `2,259,119.6` => **+13.27%**
-- 4096-byte: `2,362,721.9` vs `1,844,456.8` => **+28.10%**
+Only ~2.4% over full HTTP in its decision run. Do not pursue.
 
-At 32 bytes this saves about **48 ns/build**; at 4 KiB about **119 ns/build**. Decision: **keep the production no-copy optimization**, but describe it as a small local win, not a large end-to-end gain. The temporary copy-reference XSUB and benchmark have been removed.
+### libh2o integration
 
-## CLOSED: HTTP input-buffer adoption/clear experiment - CI 34086824437
+pico + Linux::Event transport already approaches Feersum/libh2o before the Perl transaction layer. H2O would also own event/socket state. Keep libh2o as a reference competitor; do not integrate it as the HTTP/1 engine now.
 
-A same-run microbenchmark exercised the real pico parser under three input shapes. Proposed strategy: assign incoming bytes when `_http_input` is empty (Perl COW) instead of always `.=`; clear by assignment when the parser consumed all buffered input instead of always mutating with `substr`.
+### Input-buffer COW/adopt/clear
 
-300k parsed requests, 30k warmup, 5 alternating repeats, 45-byte request:
+Same-run real-pico microbenchmark:
 
-- one complete request per incoming chunk:
-  - legacy `934,248.2 req/s`, ~`1070 ns/req`
-  - adopt/clear `954,392.6`, ~`1048 ns/req`
-  - **+2.16%** (~23 ns saved)
-- four coalesced requests per chunk:
-  - legacy `1,146,034.8`
-  - adopt/clear `1,125,172.1`
-  - **-1.82%**
-- one request split across two chunks:
-  - legacy `715,985.3`
-  - adopt/clear `708,374.0`
-  - **-1.06%**
+- complete request/chunk: +2.16% (~23 ns)
+- four coalesced requests/chunk: -1.82%
+- request split across two chunks: -1.06%
 
-### Decision
+Do not integrate; tiny favorable saving plus real workload regressions.
 
-**Do not integrate this optimization.** The favorable common-case saving is only ~23 ns and it regresses fragmented/coalesced shapes by ~1-2%. This is too workload-sensitive and too small against a ~20 us full transaction to justify branches in `Connection::on_data` / `_drive_http1`. Remove the temporary benchmark and CI step.
+### Response temporary body copy
 
-## Other closed conclusions
+Closed via same-run A/B. Keep production no-copy optimization; temporary reference XSUB/benchmark removed.
 
-1. A duplicated production bodyless Perl driver was tested and is not worthwhile (~2.4% over full HTTP in its decision run). Do not pursue it.
-2. pico + Linux::Event transport gets close to Feersum/libh2o before the general Perl transaction layer. Do not pursue production libh2o HTTP/1 integration now.
-3. Realistic Perl application callback-return-body shapes preserve essentially all stripped-path performance; callback invocation itself is not the giant cost bucket.
-4. `Response->_new_bound` is roughly ~1 us on representative runners, while reusable bodyless state reset is ~0.15 us. Avoiding eager Response/general transaction machinery explains the large complete-response gain.
-5. Linux::Event core Stream already writes directly from the supplied scalar when no output is queued and copies only a partial/EAGAIN remainder. Queued segments drain with `writev`; there is no unconditional extra Stream copy after HTTP builds a wire scalar.
-6. Splitting head/body into two ordinary `write()` calls would likely exchange memcpy work for another syscall. Do not pursue without a dedicated segmented-submit measurement/core primitive.
-7. Current representative tiny costs from CI 34086824437: parse direct ~649 ns, parse under eval ~762 ns, request `body_mode` ~184 ns, no-Expect validation ~352 ns, `Response->_new_bound` ~1.0 us, bodyless state reuse ~145 ns, active transaction assign/clear ~462 ns.
+## Remaining cost picture
+
+The large missing cost bucket was eager Response/general transaction machinery, not the Perl application callback itself. On the fast CI 34087395935 runner:
+
+- parse direct ~348 ns
+- parse under eval ~415 ns
+- `Response->_new_bound` ~573 ns
+- reusable bodyless state ~77 ns
+- active transaction assign/clear ~261 ns
+- transaction ladder native eligibility -> native wire build only -1.68%
+
+On slower runners the absolute ns values are larger but the structure is similar. Remaining individual costs are mostly hundreds of ns; do not accrete complexity chasing them without a credible aggregate win.
+
+Linux::Event Stream already immediately writes from the supplied scalar when output is empty and only copies a remainder on partial/EAGAIN. Queued segments drain with `writev`. Do not split HTTP head/body into ordinary separate writes without a measured segmented-submit primitive; that likely trades memcpy for another syscall.
+
+## PR cleanup completed
+
+The investigation accumulated a large amount of one-off profiling scaffolding. The following were removed from the branch after their conclusions were recorded here:
+
+- `bench/run-http-direct-api-experiment.pl`
+- `bench/run-http-layer-ladder.pl`
+- `bench/run-http-object-cost.pl`
+- `bench/run-http-transport-floor.pl`
+- `bench/servers/linuxevent-parse-floor.pl`
+- `bench/servers/linuxevent-perl-buffer-floor.pl`
+- `bench/servers/linuxevent-stream-floor.pl`
+- `bench/servers/linuxevent-transaction-stage.pl`
+
+`bench/run-http-hotpath.pl` was reverted to the existing base-branch version rather than carrying experiment-only additions.
+
+Kept because they have ongoing value:
+
+- shared `bench/run-http-comparison.pl`
+- focused `bench/run-http-fast-final-experiment.pl` for final-response regression evidence (name may still be cleaned up)
+- `bench/run-http-transaction-ladder.pl` for cumulative transaction diagnostics
+- libh2o as an optional/reference shared-harness competitor
+
+Routine PR CI was trimmed to the transaction ladder, focused final-response comparison, and the natural/final shared cross-server passes. Exploratory direct-API/object-cost stages were removed from routine CI.
+
+## CI status
+
+- CI 34087395935 was fully green on Perl 5.36, latest, latest-threaded, disttest, focused diagnostics, and both shared cross-server passes. It validated Server final-response forwarding/tests before the later test-name/private-module/docs cleanup.
+- A final CI run at the current cleanup head is required to prove the shipped `t/50-final-response.t`, MANIFEST, deleted private experiment module, documentation, and trimmed diagnostic set together.
 
 ## Current conclusions
 
-1. More bespoke HTTP XS/C is still not justified as a broad move.
-2. Safe early bodyless completion belongs in the ordinary API and remains green.
-3. The specialized complete-response API is now strongly justified by repeated real-Connection and shared-harness evidence: roughly **+28-34%** over optimized natural usage.
-4. The no-temporary-copy response builder improvement is worth keeping, but is a small local optimization.
-5. The input-buffer COW/clear idea is closed and should not be integrated.
-6. Remaining microcosts are mostly hundreds of nanoseconds; do not accumulate complexity chasing them without a credible aggregate win.
-7. The old private `_Experiment::FastFinalConnection` implementation is obsolete.
+1. More bespoke native HTTP driver code is not justified.
+2. Safe early bodyless completion belongs in the ordinary API.
+3. `on_request_final` is now the selected complete-response API name and is justified by repeated ~24-34% focused gains over optimized natural usage.
+4. The no-temporary-copy response builder optimization is worth keeping as a small local win.
+5. Input COW/clear and duplicated bodyless-driver ideas are closed.
+6. Production semantics are now concentrated in real `Connection`; the private duplicated experiment is gone.
+7. PR #13 is being reduced from an investigation branch into a reviewable feature branch.
 8. PR #13 and PR #11 remain unmerged.
 
 ## Immediate next work
 
-1. Remove `bench/run-http-input-buffer-ab.pl` and its CI step.
-2. Finalize the complete-response API surface. `on_request_final` is currently the leading name because HTTP uses “final response” distinctly from interim responses, while `complete` would collide conceptually with request-body completion / `on_request_end`.
-3. Add `on_request_final` support to `Server` constructor callback forwarding with semantic tests and documentation, while preserving ordinary `on_request` as the required general/body-bearing fallback.
-4. Remove obsolete private `_Experiment::FastFinalConnection` and stale experiment artifacts.
-5. Rerun full semantic CI and natural/fast-final cross-server comparison.
-6. Prepare PR #13 for review, but **do not merge it** without explicit authorization.
-
-Do not merge PR #13 or PR #11 without explicit authorization.
+1. Wait for/check final CI at the current cleanup head and fix any real failures.
+2. Inspect the remaining PR diff for stale experiment wording/artifacts.
+3. Rename or otherwise clean up the focused `run-http-fast-final-experiment.pl` benchmark if worthwhile, without changing its measured contract.
+4. Update README/Changes/benchmark docs if the public final-response API is not yet represented there.
+5. Update PR #13 title/body from “Experiment” to the reviewable final-response feature once the current-head CI is green.
+6. Do NOT merge PR #13 or PR #11 without explicit authorization.
