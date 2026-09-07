@@ -70,9 +70,17 @@ our $STAGE = 'direct';
     my $MAX_REQUEST_HEAD = 65_536;
 
     # Parent construction requires an HTTP application callback. This benchmark
-    # overrides on_data and dispatches its deliberately narrower request-only
-    # callback itself so that the measured shape is explicit.
+    # overrides on_data and invokes narrower request-only application methods so
+    # that the measured API shapes are explicit.
     sub on_request ($self, $request, $response) { return }
+
+    sub application_wire ($self, $request) {
+        return $self->data->{wire};
+    }
+
+    sub application_body ($self, $request) {
+        return $self->data->{payload};
+    }
 
     sub _dispatch_direct ($self, $request) {
         my $ok;
@@ -93,6 +101,50 @@ our $STAGE = 'direct';
         return 0;
     }
 
+    sub _dispatch_return_wire ($self, $request) {
+        my ($wire, $ok);
+        {
+            local $self->{_http_dispatching} = 1;
+            $ok = eval {
+                $wire = $self->application_wire($request);
+                1;
+            };
+        }
+
+        if (!$ok || !defined $wire) {
+            $self->_protocol_error(500, $request->http_version);
+            return 0;
+        }
+
+        $self->write($wire);
+        return 1;
+    }
+
+    sub _dispatch_return_body ($self, $request) {
+        my ($body, $ok);
+        {
+            local $self->{_http_dispatching} = 1;
+            $ok = eval {
+                $body = $self->application_body($request);
+                1;
+            };
+        }
+
+        if (!$ok) {
+            $self->_protocol_error(500, $request->http_version);
+            return 0;
+        }
+
+        my $wire = Linux::Event::Net::HTTP::_Native::Response1
+            ->build_default_final($request, $body);
+        if (!defined $wire) {
+            $self->_protocol_error(500, $request->http_version);
+            return 0;
+        }
+        $self->write($wire);
+        return 1;
+    }
+
     sub on_data ($self, $bytes) {
         return if $self->{_http_closing} || $self->is_closed;
         $self->{_bench_input} = '' if !defined $self->{_bench_input};
@@ -101,11 +153,14 @@ our $STAGE = 'direct';
         return if $self->{_http_driving};
         local $self->{_http_driving} = 1;
 
+        my $stage = $main::STAGE;
+        my $checked = $stage eq 'checked' || $stage eq 'checked_return_body';
+
         while (!$self->{_http_closing} && !$self->is_closed) {
             last if !length($self->{_bench_input});
 
             my $request;
-            if ($main::STAGE eq 'checked') {
+            if ($checked) {
                 my $parsed = eval {
                     $request = $PARSER->parse_request(
                         $self->{_bench_input}, 0, $MAX_HEADERS,
@@ -132,20 +187,20 @@ our $STAGE = 'direct';
             }
 
             my $consumed = $request->_consumed;
-            if ($main::STAGE eq 'checked' && $consumed > $MAX_REQUEST_HEAD) {
+            if ($checked && $consumed > $MAX_REQUEST_HEAD) {
                 $self->_protocol_error(431, $request->http_version);
                 last;
             }
             substr($self->{_bench_input}, 0, $consumed, '');
 
-            # This experiment intentionally models a complete bodyless request
-            # callback. A future production API would need a generic fallback
-            # for body-bearing or non-fast-final transactions.
+            # These experiments intentionally model complete bodyless requests.
+            # A production API would need a generic fallback for body-bearing or
+            # non-fast-final transactions.
             my $body_mode = $request->body_mode;
             die "direct benchmark unexpectedly parsed $body_mode request\n"
                 if $body_mode ne 'none';
 
-            if ($main::STAGE eq 'checked') {
+            if ($checked) {
                 my $expect =
                     Linux::Event::Net::HTTP::Connection::_expect_continue(
                         $request,
@@ -156,28 +211,41 @@ our $STAGE = 'direct';
                 }
             }
 
-            last if !$self->_dispatch_direct($request);
+            my $dispatched =
+                $stage eq 'return_wire' ? $self->_dispatch_return_wire($request)
+                : ($stage eq 'return_body' || $stage eq 'checked_return_body')
+                    ? $self->_dispatch_return_body($request)
+                    : $self->_dispatch_direct($request);
+            last if !$dispatched;
         }
         return;
     }
 }
 
+my $payload = 'x' x $response_bytes;
+my $prebuilt_wire =
+    "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @stage = qw(direct checked);
+my @stage = qw(direct return_wire return_body checked_return_body checked);
 my %label = (
-    direct  => 'request-only direct final',
-    checked => 'request-only checked final',
+    direct              => 'driver direct final',
+    return_wire         => 'callback returns wire',
+    return_body         => 'callback returns body',
+    checked_return_body => 'checked callback body',
+    checked             => 'checked driver final',
 );
 my %records;
 
 say 'Linux::Event::Net::HTTP direct API-shape experiment';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats";
-say 'direct = parse + bodyless eligibility + one guarded Perl callback + native default-final write';
-say 'checked = direct + production parser eval/error boundary + head-size guard + Expect validation';
+say 'direct = driver performs guarded native default-final build/write';
+say 'return_wire = one guarded application method returns prebuilt wire, driver writes';
+say 'return_body = one guarded application method returns body, driver performs native default-final build/write';
+say 'checked_return_body = return_body plus production parser/error/head-size/Expect checks';
+say 'checked = direct plus production parser/error/head-size/Expect checks';
 
 for my $repeat (1 .. $repeats) {
-    my @order = $repeat % 2 ? @stage : reverse @stage;
-    for my $stage (@order) {
+    for my $stage (rotated_stages($repeat, @stage)) {
         $STAGE = $stage;
         my $row = run_case($stage, $request_wire);
         push @{$records{$stage}}, $row;
@@ -260,7 +328,10 @@ sub start_server ($stage, $port) {
             stream_class => 'Linux::Event::Net::HTTP::Bench::DirectAPIConnection',
             host => '127.0.0.1',
             port => $port,
-            data => { payload => 'x' x $response_bytes },
+            data => {
+                payload => $payload,
+                wire => $prebuilt_wire,
+            },
         );
         $loop->run;
         POSIX::_exit(0);
@@ -468,6 +539,12 @@ sub median (@values) {
     return @values % 2
         ? $values[$mid]
         : ($values[$mid - 1] + $values[$mid]) / 2;
+}
+
+sub rotated_stages ($repeat, @list) {
+    return @list if @list < 2;
+    my $offset = ($repeat - 1) % @list;
+    return (@list[$offset .. $#list], @list[0 .. $offset - 1]);
 }
 
 sub usage ($status) {
