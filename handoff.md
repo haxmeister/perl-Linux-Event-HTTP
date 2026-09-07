@@ -6,46 +6,20 @@ Updated: 2026-09-07 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Working branch: `refactor/http-charter-structure`
+- Draft integration PR: #15, `Restructure Linux::Event::HTTP around protocol roles`
 - Base `main` when this work started: `e38254d6513e2044019f2516ea1a45633932facc`
-- Main implementation commit for namespace/native consolidation:
+- Namespace/native consolidation implementation commit:
   `d5018cd9979be7be3d6e439509c69563e8d8a180`
-- Main implementation commit removing the public fast-final shortcut:
+- Public fast-final callback removal commit:
   `a3d91c42808fd9ba99869c6bafa736acaf32fe7e`
-- Final structural audit cleanup continued through branch head after
-  `2903ea5a3c7f177122896071a42a0c61c97c82ba`; inspect the current branch head
-  rather than assuming that SHA remains final.
-- Temporary workflow/helper scaffolding used to validate the refactor has been
-  removed from the branch.
-- Do **not** merge this branch to `main` without Joshua's explicit authorization.
+- Final terminology/audit cleanup code head before this handoff-only update:
+  `826bbfcfb45341dba9b087c20a6c1cf82d16ea93`
+- PR CI run `34162582933` passed on that code head.
+- Do **not** merge PR #15 or this branch to `main` without Joshua's explicit
+  authorization.
 
-## Final structural audit status
-
-The final branch-diff audit has now confirmed the intended structural shape:
-
-- there is no live `lib/Linux/Event/Net/HTTP` package tree
-- there is no public generic `Linux::Event::HTTP::Connection`
-- the server-direction connection is `Linux::Event::HTTP::Server::Connection`
-- there is only one HTTP-local native extension, `_HTTP1`
-- the old `xschunked` and `xsresponse1` extension directories are gone
-- the old parser/Response1 private wrapper packages are gone
-- the public fast-final callback is gone; `on_request_final` remains only in
-  explicit rejection tests/errors and historical discussion
-- two superseded, unshipped benchmark-development probes were removed:
-  `bench/run-http-hotpath.pl` and `bench/run-http-response-path.pl`
-- duplicate `_HTTP1` imports left by consolidation were removed from
-  `Response.pm` and `t/14-native-response-fastpath.t`
-- maintained end-to-end and cross-server JSON benchmark identities now use
-  `linux-event-http-*` rather than `linux-event-net-http-*`
-
-One cosmetic benchmark-documentation cleanup remains in
-`bench/run-http-transaction-ladder.pl`: a few descriptions/JSON identifiers
-still say `Response1`, `Connection::_drive_http1`, or `linux-event-net-http`.
-They do not affect code or API behavior. Clean them before declaring the audit
-fully closed if a safe whole-file edit path is available.
-
-The open draft PR #14 belongs to the older `refactor/ecosystem-charter` branch
-and its description no longer matches this branch. Do not treat PR #14 as the
-integration proposal for `refactor/http-charter-structure`.
+The older draft PR #14 belongs to `refactor/ecosystem-charter` and is stale. Do
+not use its description as the current design or integration proposal.
 
 ## Charter being applied
 
@@ -53,22 +27,24 @@ Linux::Event is the Linux-native communications engine. Reusable low-level
 performance work belongs in Linux::Event core so multiple protocol layers can
 benefit from it.
 
-Linux::Event::HTTP is an HTTP protocol distribution. It prioritizes protocol
+Linux::Event::HTTP is an HTTP protocol distribution. Prioritize protocol
 correctness, ease of correct use, a simple API, maintainability, and
-composability. It should not grow routing, middleware, sessions, templates,
-PSGI/PAGI adapters, or other web-framework responsibilities.
+composability over winning isolated HTTP microbenchmarks.
+
+Do not add routing, middleware, sessions, templates, PSGI/PAGI, or other web
+framework responsibilities here. Those are separate layers for other projects.
 
 Use established CPAN/community libraries for standards and utilities when they
 fit the protocol boundary. Do not force a dependency or object model into the
 hot wire path merely because a prominent module exists.
 
-Do not add HTTP-specific XS merely to improve a benchmark. First identify
+Do not add HTTP-specific XS merely to improve a benchmark. First determine
 whether the expensive primitive is generic transport/buffer/write machinery
-that belongs in Linux::Event.
+that belongs in Linux::Event core.
 
-## Public structure after this refactor
+## Final public structure
 
-The current server-side public modules are:
+Current server-side public modules:
 
 ```text
 Linux::Event::HTTP
@@ -78,51 +54,38 @@ Linux::Event::HTTP::Request
 Linux::Event::HTTP::Response
 ```
 
-The old `Linux::Event::Net::HTTP` namespace has been flattened. The old generic
-`HTTP::Connection` name was also removed because the implemented connection is
-specifically the server-direction protocol connection.
+The old `Linux::Event::Net::HTTP` namespace is gone. There is no public generic
+`Linux::Event::HTTP::Connection`; the implemented connection is specifically
+the server-direction protocol connection.
 
-Future client structure is intentionally reserved as:
+Future client structure is reserved as:
 
 ```text
 Linux::Event::HTTP::Client
 Linux::Event::HTTP::Client::Connection
 ```
 
-The client is **not implemented on this branch**.
+The client is **not implemented on this branch** and must remain a separate
+feature effort.
 
 `HTTP::Request` and `HTTP::Response` remain the current protocol object names,
-but this does not require a future client to force server and client lifecycle
-semantics into the same implementation. If the client direction needs distinct
-live response/request roles, keep those client-specific roles under
-`Linux::Event::HTTP::Client` rather than making the server Response API grow
-mode switches merely for naming symmetry.
-
-## Client decision
-
-A native HTTP client belongs in Linux::Event::HTTP because initiating and
-speaking HTTP is protocol functionality of the communications engine ecosystem.
-
-Do not base the Linux::Event client on HTTP::Tiny or LWP. Their public request
-lifecycles are fundamentally blocking/synchronous and are not a clean transport
-seam for Linux::Event's event-driven connection lifecycle.
-
-If someone wants LWP, HTTP::Tiny, framework, or other compatibility adapters,
-those belong in separate adapter distributions. The future native client should
-use `Linux::Event::HTTP::Client` / `Client::Connection` and share private HTTP
-wire machinery only where the semantics are genuinely common with the server.
+but this does not force a future client to combine incompatible server/client
+lifecycle semantics into those same implementations. If client-direction live
+roles differ materially, keep them under `Linux::Event::HTTP::Client` rather
+than adding mode switches to the server Response API merely for naming
+symmetry.
 
 ## Request/Response CPAN audit conclusion
 
-Prominent CPAN message/header modules were evaluated before this refactor,
-including `HTTP::Request`, `HTTP::Response`, `HTTP::Headers`,
-`HTTP::Headers::Fast`, and `HTTP::XSHeaders`.
+Prominent CPAN message/header modules were evaluated, including `HTTP::Request`,
+`HTTP::Response`, `HTTP::Headers`, `HTTP::Headers::Fast`, and
+`HTTP::XSHeaders`.
 
-Keep Linux::Event::HTTP's own Request and Response because they represent live
-protocol roles rather than complete buffered HTTP messages:
+Keep Linux::Event::HTTP's own Request and Response because they are live
+protocol roles rather than complete buffered messages:
 
 - Request is a validated native incoming request-head view. Method, target, and
-  headers are materialized lazily; request bodies remain streaming connection
+  headers are materialized lazily. Request bodies remain streamed connection
   input rather than Request-owned content.
 - Response is a live writable server transaction with `write`, `end`,
   backpressure, framing, persistence, and Upgrade behavior.
@@ -132,10 +95,9 @@ Those APIs normalize header names in ways that can conflate legal wire names
 such as `X_Foo` and `X-Foo`, while this parser intentionally preserves them as
 distinct fields.
 
-Also do not grow Request/Response into another generic HTTP utility ecosystem.
-URI conveniences, cookies, dates, authentication helpers, MIME interpretation,
-and similar application-level semantics should use appropriate external
-libraries when needed rather than being reinvented here.
+Do not grow Request/Response into another generic HTTP utility ecosystem. URI,
+cookie, date, authentication, MIME, and similar application-level conveniences
+should use appropriate external libraries where suitable.
 
 ## Consolidated native HTTP/1 boundary
 
@@ -154,7 +116,7 @@ xshttp1/HTTP1.xs
     -> Linux::Event::HTTP::_HTTP1.so
 ```
 
-The single private `_HTTP1` shared object owns the current:
+The single private `_HTTP1` shared object owns:
 
 - HTTP/1 request-head parser and lazy Request XSUBs
 - chunked request decoder (`_HTTP1::Chunked` logical package)
@@ -162,13 +124,13 @@ The single private `_HTTP1` shared object owns the current:
 - narrow default scalar response builder
 
 picohttpparser is compiled once. The old `Response1.xs` duplicated the native
-`le_http_request_state` structure layout from the parser extension; that
-maintenance risk is gone.
+request-state structure layout from the parser extension; that maintenance risk
+is gone.
 
-The native consolidation is about reducing protocol-local native maintenance,
-not moving HTTP semantics into Linux::Event core.
+This consolidation reduces HTTP-local native maintenance. It is not a reason to
+move HTTP semantics into Linux::Event core.
 
-## Server request API after this refactor
+## Server request API
 
 There is one canonical request API:
 
@@ -180,48 +142,42 @@ on_request => sub ($conn, $req, $res) {
 
 Optional body lifecycle callbacks remain:
 
-```perl
+```text
 on_body
 on_request_end
 ```
 
-The former public `on_request_final` callback has been removed. Passing that
-option to `Server` or direct `Server::Connection` construction now fails with a
-clear migration error directing the caller to `on_request` + `Response->end`.
+The former public `on_request_final` callback has been removed. Passing it to
+`Server` or direct `Server::Connection` construction fails with migration
+guidance to use `on_request` plus `Response->end`.
 
-## Final-response experiment: keep the lesson, not the API
+For bodyless requests without an `on_request_end` handler, the connection marks
+the body complete before `on_request`, so the canonical
+`on_request -> Response->end` path remains eligible for the narrow private
+native default-final optimization. If `on_request_end` is configured, that
+lifecycle boundary is preserved instead of bypassed for benchmark speed.
 
-The historical `on_request_final` experiment was valuable and should not be
-forgotten:
+## Final-response experiment conclusion
 
-- focused real-Connection runs were roughly +24% to +34% over the then-optimized
-  ordinary `on_request -> Response->end` path
-- one shared-harness run showed about +21%
-- the narrow native default-final response builder itself saved only about 48 ns
-  for a 32-byte response body in its focused A/B
+The historical `on_request_final` experiment was useful, but its public API was
+rejected.
 
-The important conclusion is that eager general Response/transaction machinery
-can be expensive for a trivial complete response. The conclusion is **not** that
-applications should choose a separate benchmark-oriented callback API.
-
-The public shortcut has therefore been removed, while the ordinary
-`Response->end(...)` path retains the private `_try_native_default_final` /
-`_HTTP1->build_default_final` optimization when a response is eligible.
+Measured work showed that eager general Response/transaction machinery can be
+expensive for trivial complete responses. The public lesson is **not** to expose
+a benchmark-specific callback. The ordinary `Response->end(...)` path therefore
+retains the private `_try_native_default_final` /
+`_HTTP1->build_default_final` optimization when eligible.
 
 HEAD, HTTP/1.0, custom status/headers, streaming, deferred responses, request
-bodies, and other non-eligible cases continue through the ordinary Response
+bodies, and other non-eligible cases continue through the general Response
 state machine.
 
-For bodyless requests without an `on_request_end` handler, the server marks the
-request body complete before invoking `on_request`, so the canonical
-`on_request -> Response->end` shape remains eligible for the narrow private
-optimization. When `on_request_end` is configured, that lifecycle boundary is
-preserved instead of bypassed for benchmark speed.
+Do not reopen the public fast-final API without a fundamentally new reason.
 
 ## Server and transport boundary
 
 `Linux::Event::HTTP::Server` remains a thin control-plane convenience around
-`Linux::Event::IO::Sock::Listener`.
+`Linux::Event::IO::Sock::Listener`:
 
 ```text
 HTTP::Server
@@ -231,14 +187,13 @@ HTTP::Server
 ```
 
 Server retains callback CVs once and reuses them for accepted connections. The
-private `_ServerConnection` adapter still exists solely to bridge Listener
-accepted-stream construction into the selected HTTP connection class and its
-HTTP-specific constructor callbacks.
+private `_ServerConnection` adapter exists only to bridge Listener accepted
+stream construction into the configured HTTP connection class and HTTP-specific
+constructor callbacks.
 
-Do not enlarge Linux::Event's Listener API merely to eliminate this small
-private adapter. If future protocol distributions independently need the same
-accepted-stream constructor capability, reconsider it then as reusable core
-functionality.
+Do not enlarge Linux::Event Listener merely to eliminate this small private
+adapter. Reconsider only if multiple protocol distributions independently need
+the same reusable accepted-stream constructor capability.
 
 TLS remains Linux::Event transport policy on the Server::Connection subclass.
 There is no separate HTTPS connection hierarchy.
@@ -249,7 +204,7 @@ Keep the existing Upgrade design:
 
 1. HTTP validates HTTP/1.1 Upgrade semantics and the selected protocol.
 2. HTTP queues the valid 101 response.
-3. HTTP clears its completed transaction state.
+3. HTTP clears completed transaction state.
 4. Linux::Event `transition_to()` hands the same live transport object to the
    target protocol class.
 
@@ -259,78 +214,100 @@ application data, and bytes already read beyond the HTTP head are preserved.
 WebSocket semantics belong in a separate `Linux::Event::WebSocket`
 distribution. HTTP owns only the HTTP Upgrade transaction and handoff.
 
+## Client decision
+
+A native HTTP client belongs in Linux::Event::HTTP because initiating and
+speaking HTTP is protocol functionality in this communications ecosystem.
+
+Do not base it on HTTP::Tiny or LWP; their public request lifecycles are
+blocking/synchronous and are not a clean transport seam for Linux::Event's
+event-driven connection lifecycle.
+
+Compatibility adapters for LWP, HTTP::Tiny, frameworks, or other ecosystems
+belong in separate adapter distributions. The native client should use
+`Linux::Event::HTTP::Client` / `Client::Connection` and share private HTTP wire
+machinery only where semantics are genuinely common with the server.
+
+## Final structural audit completed
+
+The branch-diff audit confirmed:
+
+- no live `lib/Linux/Event/Net/HTTP` package tree
+- no public generic `HTTP::Connection`
+- only the server-specific `HTTP::Server::Connection`
+- one HTTP-local native extension, `_HTTP1`
+- old `xschunked` and `xsresponse1` extension directories removed
+- old parser/Response1 private wrapper packages removed
+- `on_request_final` present only in explicit rejection tests/errors and
+  historical discussion
+- superseded unshipped `bench/run-http-hotpath.pl` removed
+- superseded unshipped `bench/run-http-response-path.pl` removed
+- duplicate `_HTTP1` imports removed from `Response.pm` and the native response
+  test
+- end-to-end, cross-server, and transaction-ladder benchmark JSON identities
+  use `linux-event-http-*`
+- transaction-ladder wording uses `_HTTP1` and `Server::Connection`, not the old
+  `Response1` or generic Connection names
+
+The transaction-ladder whole-file edit also removed one blank separator and the
+final newline at EOF. CI passed with it; this is formatting-only and not an API,
+behavior, or integration issue. It may be tidied later if desired without
+reopening the structural design.
+
 ## Validation completed
 
-### Namespace/native consolidation
-
-A temporary GitHub Actions working checkout applied the refactor with ordinary
-`git mv`, built the distribution, and committed only after all validation
-passed.
-
-Validated:
+Earlier guarded validation during namespace/native consolidation passed:
 
 - `perl Makefile.PL`
 - `make`
-- full test suite: 15 files / 304 tests, PASS
-- end-to-end benchmark smoke, PASS
-- `make disttest`, PASS
+- full test suite
+- end-to-end benchmark smoke
+- `make disttest`
 
-### Public final-response API removal
+The public fast-final removal was separately validated in Actions run
+`34159940212` with 15 test files / 292 tests passing plus benchmark smoke and
+`make disttest`.
 
-A second guarded run removed the shortcut and validated the supported API.
-GitHub Actions run: `34159940212`.
+After the final audit cleanup, draft PR #15 ran normal CI at code head
+`826bbfcfb45341dba9b087c20a6c1cf82d16ea93`:
 
-Validated:
+- GitHub Actions run: `34162582933`
+- overall conclusion: SUCCESS
+- Perl latest: SUCCESS, including build/test, end-to-end smoke, and distribution
+  integrity
+- Perl 5.36: SUCCESS
+- Perl latest threaded: SUCCESS
+- heavy cross-server diagnostic: skipped by normal-CI policy
 
-- full test suite: 15 files / 292 tests, PASS
-- end-to-end benchmark smoke, PASS
-- focused response-finalization benchmark smoke, PASS
-- `make disttest`, PASS
-
-The focused smoke in that shared runner happened to report:
-
-```text
-on_request -> Response->end          18091.1 req/s
-on_request_end -> Response->end      15715.4 req/s
-```
-
-That is only a smoke/directional result and is **not** a performance claim.
-
-The final audit cleanup commits made after those guarded runs still require
-normal branch/PR CI before integration. In particular, the two JSON benchmark
-identity edits were verified from their commit diffs to contain only the
-intended string/key changes.
+This handoff update itself advances the branch after that validated code head;
+it contains documentation only.
 
 ## Closed performance experiments
 
 Do not reopen these without a new measured hypothesis:
 
-- Duplicated bodyless Perl driver: only a small gain; rejected.
-- HTTP input-buffer COW/adopt/clear: about +2% in one shape but regressions for
-  split/coalesced reads; rejected.
-- libh2o as the HTTP/1 engine: keep as a benchmark/reference competitor, not an
-  integration direction.
-- Splitting ordinary HTTP head/body writes: likely exchanges memcpy for another
-  syscall. Reconsider only if Linux::Event gains a measured generic segmented or
-  gathered submit primitive.
-- Broad native HTTP connection driver: not justified by measurements.
+- duplicated bodyless Perl driver: only a small gain; rejected
+- HTTP input-buffer COW/adopt/clear: small gain in one shape but regressions for
+  split/coalesced reads; rejected
+- libh2o as the HTTP/1 engine: benchmark/reference competitor only
+- splitting ordinary HTTP head/body writes: likely trades memcpy for another
+  syscall; revisit only with a measured generic Linux::Event segmented/gathered
+  submit primitive
+- broad native HTTP connection driver: not justified by measurements
 
 ## Current benchmark policy
 
-`bench/run-http-final-response.pl` now measures only supported public callback
-shapes. The cross-server benchmark no longer has a `fast-final` Linux::Event
-mode.
+`bench/run-http-final-response.pl` measures only supported public callback
+shapes. The cross-server benchmark has no `fast-final` Linux::Event mode.
 
 Heavy comparison/performance CI remains `workflow_dispatch` only. Ordinary CI
 covers supported Perl configurations, HTTP smoke, and distribution integrity.
 
 ## Next steps
 
-1. Clean the remaining cosmetic stale terminology in
-   `bench/run-http-transaction-ladder.pl` when it can be done safely.
-2. Propose `refactor/http-charter-structure` to `main` with a new draft PR; do
-   not reuse the stale older PR #14 description.
-3. Inspect normal PR CI for the final audit-cleanup head.
-4. Do not merge without explicit authorization.
-5. After this structural branch lands, client implementation can be a separate
-   feature effort. Do not mix that new feature into this refactor.
+1. Keep PR #15 draft and unmerged until Joshua explicitly authorizes integration.
+2. If desired, remove the tiny transaction-ladder formatting-only artifact
+   (blank separator/final newline) without changing semantics.
+3. Do not mix native client implementation into this structural PR.
+4. After this branch lands, start the native client as a separate feature effort
+   under `Linux::Event::HTTP::Client` / `Client::Connection`.
