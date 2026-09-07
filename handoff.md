@@ -10,8 +10,10 @@ Updated: 2026-09-07 (America/Chicago)
 - Public completion introspection is `Response->is_complete`.
 - `Response->end` and `Response->is_ended` are deliberately absent; there are no compatibility aliases because this distribution is still unreleased.
 - Transport-level `Server::Connection->end(...)` remains a Linux::Event Stream operation and was not renamed. The naming change is specifically intended to keep HTTP transaction completion distinct from transport shutdown.
-- The API/README cleanup was committed directly to `main` as `971c9f167dc8e11ed9c2d6976ea1d11377734bfe`, followed immediately by `ffa0dfcbdc7f779dc4fc6b671ebf4e4f5f7b4d19` correcting the placement of the prepared `Response.pm` and `Server::Connection.pm` blobs. Treat `ffa0df...` as the code-bearing cleanup state before this handoff update.
-- CI run `34165954005` was started for `ffa0df...`; check its final result before treating validation as complete.
+- The API/README cleanup was committed directly to `main` as `971c9f167dc8e11ed9c2d6976ea1d11377734bfe`, followed immediately by `ffa0dfcbdc7f779dc4fc6b671ebf4e4f5f7b4d19` correcting the placement of the prepared `Response.pm` and `Server::Connection.pm` blobs.
+- CI run `34165954005` on `ffa0df...` found one missed old API call in `t/20-response.t`; every other test in that run passed.
+- `t/20-response.t` was corrected in `2ba1ba7606f7d0c6c44866bcee3de0b9325e7dc5`.
+- Final code-bearing CI run `34166114475` passed: Perl 5.36, latest Perl, latest threaded Perl, end-to-end HTTP benchmark smoke, and distribution integrity were green. The cross-server diagnostic comparison remained intentionally skipped in normal CI.
 
 The README was substantially simplified. It now teaches the normal callback API first, explains `$conn`, `$req`, and `$res` immediately, and makes the key semantic distinction explicit: `$res->complete(...)` completes one HTTP response and normally does not close a persistent HTTP/1.1 connection. Request-body streaming, Connection subclassing, TLS, Upgrade, and native implementation details are progressively later/advanced material rather than front-loaded architecture.
 
@@ -188,28 +190,22 @@ Do not base it on HTTP::Tiny or LWP; their public request lifecycles are blockin
 
 Compatibility adapters for LWP, HTTP::Tiny, frameworks, or other ecosystems belong in separate adapter distributions. The native client should use `Linux::Event::HTTP::Client` / `Client::Connection` and share private HTTP wire machinery only where semantics are genuinely common with the server.
 
-## Validation expectations for the completion rename
+## Validation of the completion rename
 
-The cleanup updates the implementation, POD/docs, normal server/TLS/Upgrade examples, request-body tests, response-streaming tests, final-response tests, end-to-end benchmark adapter, focused response-finalization benchmark, and transaction-ladder benchmark terminology.
+The cleanup updated the implementation, POD/docs, normal server/TLS/Upgrade examples, request-body tests, response-streaming tests, final-response tests, end-to-end benchmark adapter, focused response-finalization benchmark, and transaction-ladder benchmark terminology.
 
-`t/00-load.t` explicitly asserts:
+`t/00-load.t` explicitly asserts that `Response` exposes `complete` and `is_complete`, and does not expose `end` or `is_ended`. This is deliberate: do not add compatibility aliases later without an explicit new decision.
 
-```text
-Response can complete
-Response can is_complete
-Response cannot end
-Response cannot is_ended
-```
+The first corrected-code CI run (`34165954005`, head `ffa0df...`) exposed one stale `$unbound->end(...)` in `t/20-response.t`; all other tests in that run passed. The stale test was changed to `$unbound->complete(...)` in `2ba1ba7606f7d0c6c44866bcee3de0b9325e7dc5`.
 
-This is deliberate: do not add compatibility aliases later without an explicit new decision.
+Final code-bearing CI validation is run `34166114475` on `2ba1ba...`:
 
-After the code commit, verify at minimum:
-
-- normal CI Perl matrix
-- threaded Perl CI
-- HTTP benchmark smoke
-- distribution integrity
-- no stale public `Response->end` / `is_ended` examples remain
+- Perl 5.36: success
+- latest Perl: success
+- latest threaded Perl: success
+- end-to-end benchmark smoke: success
+- distribution integrity: success
+- cross-server diagnostic comparison: intentionally skipped
 
 Heavy cross-server performance diagnostics remain manual/workflow-dispatch work and are not ordinary CI performance claims.
 
@@ -231,8 +227,7 @@ Do not keep merged or abandoned working branches merely as history; Git already 
 
 ## Next substantive steps
 
-1. Finish validation of the `Response->complete` / README cleanup and record the final CI run/result here.
-2. Native HTTP client work can then begin as a separate feature under `Linux::Event::HTTP::Client` / `Client::Connection` if desired.
-3. Keep HTTP protocol work within the charter: correctness and simple protocol APIs first; move reusable low-level performance primitives into Linux::Event core when appropriate.
-4. Do not add PSGI/PAGI/framework responsibilities to this distribution.
-5. Keep `handoff.md` current after each major test or architectural conclusion.
+1. Native HTTP client work can begin as a separate feature under `Linux::Event::HTTP::Client` / `Client::Connection` if desired.
+2. Keep HTTP protocol work within the charter: correctness and simple protocol APIs first; move reusable low-level performance primitives into Linux::Event core when appropriate.
+3. Do not add PSGI/PAGI/framework responsibilities to this distribution.
+4. Keep `handoff.md` current after each major test or architectural conclusion.
