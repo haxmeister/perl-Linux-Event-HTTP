@@ -32,8 +32,15 @@ Updated: 2026-09-06 (America/Chicago)
 - `64771bc` - `Split HTTP request-check microcosts`
 - `bd11439` - `Add semantic bodyless driver benchmark stage`
 - `a0be02c` - `Measure semantic bodyless HTTP driver candidate`
+- `f455a29` - `Checkpoint semantic bodyless driver result`
+- `60bfeca` - `Add libh2o benchmark server`
+- `1ea8d91` - `Add libh2o comparison target`
+- `cb99a0c` - `Benchmark libh2o upper bound in PR CI`
+- `4fa08af` - `Build libh2o benchmark against evloop API`
 
 `bd11439` and `a0be02c` are benchmark-only changes. They do not change the production HTTP driver.
+
+The libh2o commits are also benchmark/diagnostic-only. They do not make libh2o a distribution dependency and do not change production request handling.
 
 ## Native final-response result
 
@@ -141,6 +148,40 @@ GitHub runner absolute throughput varies heavily. Use same-run ratios and within
 
 CI run `34079490485` is fully green, including latest threaded Perl.
 
+## libh2o feasibility spike - in progress
+
+The smallest useful upper-bound experiment is now implemented as an explicit-only benchmark competitor:
+
+- `bench/servers/libh2o-http.c` embeds libh2o directly.
+- H2O owns HTTP parsing, keep-alive, protocol transaction state, and response serialization.
+- The handler only sets a 200 response and fixed payload and calls `h2o_send_inline`.
+- The existing raw shared benchmark client is reused unchanged.
+- `bench/run-http-comparison.pl --servers=...,h2o` builds the C server with `pkg-config --cflags --libs libh2o-evloop`.
+- H2O is not in the default competitor list and is not a project/runtime dependency.
+- PR diagnostic CI installs Ubuntu 24.04 `libh2o-evloop-dev` and includes H2O in smoke/directional comparisons.
+
+### First libh2o CI attempt - run 34080016461
+
+All normal project jobs, including latest threaded Perl, were green. The comparison job reached the H2O smoke and failed while compiling only the new benchmark server:
+
+`/usr/include/h2o/socket/uv-binding.h:25:10: fatal error: uv.h: No such file or directory`
+
+This was not a Linux::Event::Net::HTTP failure. Ubuntu's `libh2o-evloop.pc` supplies include/link flags but does not define the H2O backend macro; H2O headers therefore defaulted to libuv. Commit `4fa08af` fixes the benchmark by explicitly defining `H2O_USE_LIBUV 0` before including `h2o.h`.
+
+Corrected CI run `34080176589` is currently in progress. Do not treat the failed first smoke as a performance result.
+
+### libh2o architecture finding already established
+
+H2O's evloop is not a generic externally-driven readiness callback abstraction. On Linux its evloop backend directly owns socket polling state and invokes `epoll_ctl` / `epoll_wait` itself. Therefore libh2o does **not** drop cleanly into the existing Linux::Event reactor as a parser-only replacement.
+
+If the upper-bound performance is compelling, the next decision must explicitly address loop ownership. Plausible choices are:
+
+1. H2O owns the HTTP loop and Linux::Event is integrated/nested around it.
+2. Build a deliberate small socket/backend adapter for H2O and accept that native maintenance burden.
+3. Reject libh2o integration if preserving Linux::Event as the reactor would require too much private/backend-specific glue.
+
+Do not assume libh2o is a production solution merely because its standalone benchmark is fast.
+
 ## Current conclusions
 
 1. Native default-final response remains the worthwhile production candidate from this experiment.
@@ -149,16 +190,13 @@ CI run `34079490485` is fully green, including latest threaded Perl.
 4. No remaining Perl-side micro-optimization has demonstrated enough gain to justify meaningful extra complexity.
 5. More bespoke HTTP XS/C is not justified by these measurements.
 6. The generic bodyless-driver experiment closes the current Perl-driver optimization path: the best semantic duplicate recovered only about `2.44%` versus full HTTP.
-7. The next architectural question is now `libh2o`: can it replace a growing custom HTTP native layer while keeping Linux::Event integration thin and maintainable?
+7. libh2o has a small embedding API, but its event-loop ownership is the main architectural integration concern.
+8. We need the corrected same-run libh2o number before deciding whether even a thin Perl bridge experiment is worth doing.
 
 ## Immediate next work
 
-1. Evaluate `libh2o` as an architecture, not yet as a production dependency:
-   - current embedding API and maintenance status
-   - HTTP/1, HTTP/2, HTTP/3 coverage
-   - event-loop integration requirements and whether Linux::Event/epoll can host it cleanly
-   - minimum C/XS bridge surface needed for Perl request callbacks and responses
-   - packaging/build implications for CPAN/Linux distributions
-2. Build the smallest useful benchmark feasibility spike if practical. Prefer a benchmark-only external/native H2O comparison or thin bridge over production integration.
-3. Use that spike to answer whether `libh2o` materially closes the Feersum/Go gap without recreating a large custom C HTTP implementation.
-4. Keep PR #13 and PR #11 unmerged until explicit authorization.
+1. Finish corrected CI run `34080176589` and capture the same-run libh2o/Linux::Event/Feersum/Go directional result.
+2. If H2O's native ceiling is materially higher, estimate/measure the smallest Perl callback bridge cost before considering production integration.
+3. Evaluate whether Linux::Event can host or nest H2O without duplicating epoll ownership or creating a large custom socket backend.
+4. If the loop integration cost is large, prefer retaining the current pico-based architecture rather than trading custom HTTP code for a fragile H2O integration layer.
+5. Keep PR #13 and PR #11 unmerged until explicit authorization.
