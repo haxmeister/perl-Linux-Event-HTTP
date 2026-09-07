@@ -26,7 +26,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
     }
 
     sub on_data ($self, $bytes) {
-        $self->{_bench_input} .= $bytes;
+        ($self->{_bench_input} //= '') .= $bytes;
 
         while (length($self->{_bench_input})) {
             my $request = $PARSER->parse_request(
