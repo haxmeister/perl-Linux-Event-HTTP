@@ -5,9 +5,9 @@ use warnings;
 
 use Linux::Event::Loop;
 use Linux::Event::IO::Sock::Listener;
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Response;
-use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Response;
+use Linux::Event::HTTP::_HTTP1 ();
 
 my $port = $ENV{BENCH_PORT} // die "BENCH_PORT is required\n";
 my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
@@ -20,11 +20,11 @@ my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 
 {
-    package Linux::Event::Net::HTTP::Bench::TransactionStageConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::TransactionStageConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
     use Scalar::Util qw(refaddr);
 
-    my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+    my $PARSER = 'Linux::Event::HTTP::_HTTP1';
     my $MAX_HEADERS = 100;
     my $MAX_REQUEST_HEAD = 65_536;
     my $NOOP = sub ($connection, $request, $response) { return };
@@ -43,7 +43,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
     sub on_request ($self, $request, $response) { return }
 
     sub native_default_context ($self, $response) {
-        return if ref($response) ne 'Linux::Event::Net::HTTP::Response';
+        return if ref($response) ne 'Linux::Event::HTTP::Response';
         return if $response->{status} != 200 || defined($response->{reason});
         return if @{$response->{headers}};
         return if $self->{_http_closing} || $self->is_closed;
@@ -103,7 +103,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             }
             substr($self->{_bench_input}, 0, $consumed, '');
 
-            my $expect = Linux::Event::Net::HTTP::Connection::_expect_continue(
+            my $expect = Linux::Event::HTTP::Server::Connection::_expect_continue(
                 $request,
             );
             if ($expect < 0) {
@@ -111,7 +111,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 last;
             }
 
-            my $response = Linux::Event::Net::HTTP::Response->_new_bound(
+            my $response = Linux::Event::HTTP::Response->_new_bound(
                 $self, $request,
             );
             my $body_mode = $request->body_mode;
@@ -202,7 +202,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 
             my $expect = 0;
             if ($main::STAGE eq 'checked') {
-                $expect = Linux::Event::Net::HTTP::Connection::_expect_continue(
+                $expect = Linux::Event::HTTP::Server::Connection::_expect_continue(
                     $request,
                 );
                 if ($expect < 0) {
@@ -216,7 +216,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            my $response = Linux::Event::Net::HTTP::Response->_new_bound(
+            my $response = Linux::Event::HTTP::Response->_new_bound(
                 $self, $request,
             );
 
@@ -241,7 +241,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 delete $request_state->{close_after_response};
             } else {
                 $request_state
-                    = Linux::Event::Net::HTTP::Connection::_new_request_state(
+                    = Linux::Event::HTTP::Server::Connection::_new_request_state(
                         $request, $body_mode,
                     );
             }
@@ -251,12 +251,12 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             $self->{_http_request_state} = $request_state;
             $self->{_http_response_state} = undef;
 
-            if ($expect && Linux::Event::Net::HTTP::Connection::_body_pending($request_state)) {
+            if ($expect && Linux::Event::HTTP::Server::Connection::_body_pending($request_state)) {
                 $self->write("HTTP/1.1 100 Continue\r\n\r\n");
             }
 
             if ($main::STAGE eq 'state') {
-                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
                 next;
             }
@@ -294,13 +294,13 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             }
 
             if ($main::STAGE eq 'callbacks') {
-                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
                 next;
             }
 
             if ($main::STAGE eq 'fused') {
-                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
                 next;
             }
@@ -311,12 +311,12 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 or die "native default response unexpectedly ineligible\n";
 
             if ($main::STAGE eq 'eligibility') {
-                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
                 next;
             }
 
-            my $native_wire = Linux::Event::Net::HTTP::_Native::Response1
+            my $native_wire = Linux::Event::HTTP::_HTTP1
                 ->build_default_final(
                     $native_request, $self->data->{payload},
                 );
@@ -324,7 +324,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 if !defined $native_wire;
 
             if ($main::STAGE eq 'build') {
-                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
                 $self->write($native_wire);
                 next;
             }
@@ -334,7 +334,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             $self->{_http_response_state} = undef;
 
             if ($main::STAGE eq 'mark') {
-                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
                 $self->write($native_wire);
                 next;
             }
@@ -353,7 +353,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 my $loop = Linux::Event::Loop->new;
 my $server = Linux::Event::IO::Sock::Listener->new(
     loop         => $loop,
-    stream_class => 'Linux::Event::Net::HTTP::Bench::TransactionStageConnection',
+    stream_class => 'Linux::Event::HTTP::Bench::TransactionStageConnection',
     host         => '127.0.0.1',
     port         => 0 + $port,
     data         => {

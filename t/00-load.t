@@ -4,10 +4,10 @@ use warnings;
 
 use Test::More;
 
-use_ok('Linux::Event::Net::HTTP');
-use_ok('Linux::Event::Net::HTTP::Server');
-use_ok('Linux::Event::Net::HTTP::Connection');
-use_ok('Linux::Event::Net::HTTP::Request');
-use_ok('Linux::Event::Net::HTTP::Response');
+use_ok('Linux::Event::HTTP');
+use_ok('Linux::Event::HTTP::Server');
+use_ok('Linux::Event::HTTP::Server::Connection');
+use_ok('Linux::Event::HTTP::Request');
+use_ok('Linux::Event::HTTP::Response');
 
 done_testing;

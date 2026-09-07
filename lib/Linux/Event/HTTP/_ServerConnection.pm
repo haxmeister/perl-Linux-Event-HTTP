@@ -1,9 +1,9 @@
-package Linux::Event::Net::HTTP::_ServerConnection;
+package Linux::Event::HTTP::_ServerConnection;
 use v5.36;
 use strict;
 use warnings;
 
-use parent 'Linux::Event::Net::HTTP::Connection';
+use parent 'Linux::Event::HTTP::Server::Connection';
 
 use Carp qw(croak);
 
@@ -21,7 +21,7 @@ sub new ($class, %option) {
     $option{data} = $state->{data};
 
     my $callbacks = $state->{callbacks};
-    for my $name (qw(on_request on_body on_request_end on_request_final)) {
+    for my $name (qw(on_request on_body on_request_end)) {
         $option{$name} = $callbacks->{$name}
             if exists $callbacks->{$name};
     }

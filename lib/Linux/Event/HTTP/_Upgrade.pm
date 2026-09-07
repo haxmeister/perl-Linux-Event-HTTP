@@ -1,4 +1,4 @@
-package Linux::Event::Net::HTTP::_Upgrade;
+package Linux::Event::HTTP::_Upgrade;
 use v5.36;
 use strict;
 use warnings;

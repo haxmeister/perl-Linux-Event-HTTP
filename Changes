@@ -1,9 +1,11 @@
-Revision history for Linux-Event-Net-HTTP
+Revision history for Linux-Event-HTTP
 
 0.001  UNRELEASED
     - Initial distribution scaffold.
     - Establish HTTP protocol, transport, and message-layer boundaries.
-    - Reserve Server, Connection, Request, and Response public namespaces.
+    - Use the flat Linux::Event::HTTP namespace and make the server-side transport
+      class Linux::Event::HTTP::Server::Connection, leaving native Client support
+      for a later feature milestone.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.
@@ -11,8 +13,8 @@ Revision history for Linux-Event-Net-HTTP
     - Validate HTTP/1 Host, Content-Length, Transfer-Encoding, body framing, and persistence.
     - Reject ambiguous TE/CL framing and unsupported request transfer codings.
     - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
-    - Bind HTTP Connection directly to Linux::Event::IO::Sock::Stream.
-    - Pair general-path dispatched Requests with a connection-created Response object.
+    - Bind HTTP Server::Connection directly to Linux::Event::IO::Sock::Stream.
+    - Pair every dispatched server Request with a connection-created Response object.
     - Move response completion to Response->end and fixed-length output to Response->write.
     - Lock response status and headers once output begins.
     - Stream Content-Length request bodies through cached on_body callbacks.
@@ -22,13 +24,13 @@ Revision history for Linux-Event-Net-HTTP
     - Add automatic HTTP/1.1 chunked response streaming when Content-Length is unknown.
     - Fall back to close-delimited streaming for unknown-length HTTP/1.0 responses.
     - Add HTTP::Server as a thin Listener convenience with retained constructor callbacks,
-      application data propagation, and configurable HTTP Connection subclasses.
+      application data propagation, and configurable Server::Connection subclasses.
     - Preserve constructor-callback override semantics through Server acceptance without
       allocating per-connection wrapper closures or adding per-request Server dispatch.
     - Integrate HTTPS through Linux::Event declarative TLS policy on the configured
-      HTTP Connection subclass, including server-handshake validation and HTTP/1.1 ALPN.
+      Server::Connection subclass, including server-handshake validation and HTTP/1.1 ALPN.
     - Verify TLS readiness precedes HTTP dispatch and expose negotiated ALPN, protocol,
-      and cipher through the ordinary Connection transport accessors.
+      and cipher through ordinary Server::Connection transport accessors.
     - Add Response->upgrade for validated HTTP/1.1 101 handoff to another compatible
       Linux::Event stream-socket protocol while preserving live transport state.
     - Preserve same-read post-HTTP bytes across Upgrade, keep the normal request-end
@@ -38,9 +40,12 @@ Revision history for Linux-Event-Net-HTTP
       Linux::Event loop profiling.
     - Add a reproducible cross-server comparison harness for Linux::Event, Feersum,
       Mojolicious, Node.js, Go, aiohttp, and optional libh2o reference runs.
-    - Add optional on_request_final($connection, $request) for validated bodyless
-      complete responses while retaining on_request as the required general fallback.
-    - Add a narrow native default-final response builder and focused final-response
-      benchmark, with ordinary Response fallback for HEAD, HTTP/1.0, and body-bearing requests.
+    - Keep on_request -> Response as the single server request API while transparently
+      optimizing eligible scalar Response->end completions with a narrow native builder.
+    - Consolidate request parsing, chunked decoding, response serialization, and the
+      default-final builder into one private Linux::Event::HTTP::_HTTP1 extension.
+    - Remove the benchmark-oriented on_request_final public shortcut while retaining its
+      useful optimization lesson inside the ordinary Response->end implementation.
+    - Keep a focused response-finalization benchmark for supported callback shapes.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.

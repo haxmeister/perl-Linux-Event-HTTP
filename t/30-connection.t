@@ -7,11 +7,11 @@ use Test::More;
 use Linux::Event::Loop;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Net::HTTP::Connection;
+use Linux::Event::HTTP::Server::Connection;
 
 {
     package T::HTTPConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
     use Scalar::Util qw(refaddr);
 
     sub on_request ($self, $request, $response) {
@@ -154,7 +154,7 @@ like(
 
 {
     package T::DeferredHTTPConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
     use Linux::Event::Kernel::Timer;
 
     sub on_request ($self, $request, $response) {
@@ -240,5 +240,15 @@ like(
     qr/Content-Length: 6\r\nConnection: close\r\n\r\nlater\n\z/s,
     'Response can complete its request from a later event',
 );
+
+my $removed_ok = eval {
+    Linux::Event::HTTP::Server::Connection->new(
+        on_request => sub { },
+        on_request_final => sub { return "old\n" },
+    );
+    1;
+};
+ok(!$removed_ok, 'direct Connection rejects removed on_request_final option');
+like($@, qr/on_request_final was removed/, 'Connection gives migration guidance');
 
 done_testing;

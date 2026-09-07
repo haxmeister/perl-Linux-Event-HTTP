@@ -4,7 +4,7 @@ use warnings;
 
 use Benchmark qw(cmpthese);
 use Getopt::Long qw(GetOptions);
-use Linux::Event::Net::HTTP::_Parser::HTTP1;
+use Linux::Event::HTTP::_HTTP1;
 
 my $seconds = 1;
 my $iterations;
@@ -18,7 +18,7 @@ die "--iterations must be positive\n"
     if defined($iterations) && $iterations < 1;
 
 my $count = defined($iterations) ? $iterations : -$seconds;
-my $parser = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+my $parser = 'Linux::Event::HTTP::_HTTP1';
 my $sink = 0;
 
 say "picohttpparser ", $parser->pico_version;
@@ -28,7 +28,7 @@ for my $header_count (4, 16, 64) {
     my @lines = (
         "GET /api/resource?x=1 HTTP/1.1\r\n",
         "Host: example.test\r\n",
-        "User-Agent: Linux-Event-Net-HTTP-Bench\r\n",
+        "User-Agent: Linux-Event-HTTP-Bench\r\n",
         "Accept: */*\r\n",
         "Connection: keep-alive\r\n",
     );

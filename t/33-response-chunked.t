@@ -8,11 +8,11 @@ use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Net::HTTP::Connection;
+use Linux::Event::HTTP::Server::Connection;
 
 {
     package T::ChunkedResponseHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
         push @{$self->data->{targets}}, $req->target;
@@ -113,7 +113,7 @@ like(
 
 {
     package T::HTTP10Streaming;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
         $res->header('Content-Type', 'text/plain');

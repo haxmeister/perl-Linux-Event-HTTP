@@ -58,7 +58,7 @@ my %case = (
         label => '3g + native wire build',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'build',
-        description => 'Native eligibility plus Response1 build_default_final; generated response write',
+        description => 'Native eligibility plus _HTTP1 build_default_final; generated response write',
     },
     mark => {
         label => '3h + response marking',
@@ -76,7 +76,7 @@ my %case = (
         label => '3j + guarded public Response end',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'end',
-        description => 'Two production-style guarded request callbacks with public Response->end through the native default-final fast path',
+        description => 'Two production-style guarded request callbacks with public Response->end through the private native default-final path',
     },
     checked => {
         label => '3k + production request checks',
@@ -93,7 +93,7 @@ my %case = (
     http => {
         label => '4 Full HTTP transaction',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
-        description => 'Current Connection::_drive_http1 request/response lifecycle with native default-final experiment enabled',
+        description => 'Current Server::Connection::_drive_http1 request/response lifecycle with the private native default-final optimization enabled',
     },
 );
 
@@ -147,7 +147,7 @@ my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
 my @names = qw(parse bound state callbacks fused eligibility build mark commit end checked bodyless http);
 my @records;
 
-say 'Linux::Event::Net::HTTP transaction lifecycle ladder';
+say 'Linux::Event::HTTP transaction lifecycle ladder';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats read_budget_bytes=$read_budget_bytes";
 say 'mode=single-process loopback-tcp shared-client cumulative-stages';
 
@@ -195,16 +195,16 @@ for my $i (1 .. $#summary) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my %contract = map { $_ => $case{$_}{description} } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; parse through checked are cumulative staged costs; bodyless is a semantic-safety common-path candidate; full HTTP uses Connection::_drive_http1';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; parse through checked are cumulative staged costs; bodyless is a semantic-safety common-path candidate; full HTTP uses Server::Connection::_drive_http1';
 
     my $report = {
-        benchmark => 'linux-event-net-http-transaction-ladder',
+        benchmark => 'linux-event-http-transaction-ladder',
         benchmark_contract_version => 5,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
             linux_event => capture($^X, '-MLinux::Event', '-e', 'print $Linux::Event::VERSION'),
-            picohttpparser => capture($^X, '-Mblib', '-MLinux::Event::Net::HTTP::_Parser::HTTP1', '-e', 'print Linux::Event::Net::HTTP::_Parser::HTTP1->pico_version'),
+            picohttpparser => capture($^X, '-Mblib', '-MLinux::Event::HTTP::_HTTP1', '-e', 'print Linux::Event::HTTP::_HTTP1->pico_version'),
             os => $sysname,
             kernel => $release,
             machine => $machine,
@@ -437,7 +437,6 @@ sub fill_pipeline ($state, $wire, $depth, $measure) {
         ++$state->{sent};
     }
 }
-
 sub write_all ($fh, $bytes) {
     my $offset = 0;
     while ($offset < length($bytes)) {
@@ -525,10 +524,10 @@ Options:
   --help                  show this help
 
 The stages cumulatively decompose the cost between a parsed Request with a
-prebuilt response and the full Connection::_drive_http1 lifecycle. The bodyless
-stage is a benchmark-only semantic-safety candidate for the persistent no-body
-request common path. All stages use the same raw client and Linux::Event Stream
-transport; this benchmark adds no new XS/C implementation.
+prebuilt response and the full Server::Connection::_drive_http1 lifecycle. The
+bodyless stage is a benchmark-only semantic-safety candidate for the persistent
+no-body request common path. All stages use the same raw client and Linux::Event
+Stream transport; this benchmark adds no new XS/C implementation.
 USAGE
     exit $exit;
 }

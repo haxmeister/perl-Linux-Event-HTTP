@@ -3,9 +3,9 @@ use strict;
 use warnings;
 
 use Test::More;
-use Linux::Event::Net::HTTP::Response;
+use Linux::Event::HTTP::Response;
 
-my $class = 'Linux::Event::Net::HTTP::Response';
+my $class = 'Linux::Event::HTTP::Response';
 ok(!$class->can('new'), 'Response objects are created by the HTTP connection');
 
 my $response = $class->_new(status => 200);

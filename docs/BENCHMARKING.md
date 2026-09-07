@@ -1,4 +1,4 @@
-# Linux::Event::Net::HTTP benchmarking
+# Linux::Event::HTTP benchmarking
 
 The distribution keeps parser microbenchmarks and full HTTP transaction
 benchmarks separate. The parser benchmark answers questions about pico and the
@@ -72,7 +72,7 @@ perl -Mblib bench/run-http-comparison.pl
 
 The primary comparison set is:
 
-- Linux::Event::Net::HTTP;
+- Linux::Event::HTTP;
 - Feersum using its native HTTP interface;
 - Mojolicious using Mojo::Server::Daemon;
 - Node.js built-in `http` server;

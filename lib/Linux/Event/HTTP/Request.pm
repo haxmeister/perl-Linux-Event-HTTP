@@ -1,9 +1,9 @@
-package Linux::Event::Net::HTTP::Request;
+package Linux::Event::HTTP::Request;
 use v5.36;
 use strict;
 use warnings;
 
-use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
+use Linux::Event::HTTP::_HTTP1 ();
 
 our $VERSION = '0.001';
 
@@ -15,7 +15,7 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Request - HTTP request representation
+Linux::Event::HTTP::Request - HTTP request representation
 
 =head1 DESCRIPTION
 
@@ -31,7 +31,7 @@ Request message framing is validated before the object is returned. Ambiguous
 framing such as conflicting C<Content-Length> values or a request containing
 both C<Transfer-Encoding> and C<Content-Length> is rejected.
 
-Bodies are fundamentally streamed by L<Linux::Event::Net::HTTP::Connection>.
+Bodies are fundamentally streamed by L<Linux::Event::HTTP::Server::Connection>.
 C<on_request> receives this Request and its paired Response after the request
 head is available. Optional C<on_body> callbacks receive body byte strings, and
 C<on_request_end> marks the complete request input boundary. Content-Length and

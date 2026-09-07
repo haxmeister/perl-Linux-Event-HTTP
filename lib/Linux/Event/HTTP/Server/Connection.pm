@@ -1,4 +1,4 @@
-package Linux::Event::Net::HTTP::Connection;
+package Linux::Event::HTTP::Server::Connection;
 use v5.36;
 use strict;
 use warnings;
@@ -9,15 +9,13 @@ use Carp qw(croak);
 use Scalar::Util qw(refaddr);
 use utf8 ();
 
-use Linux::Event::Net::HTTP::_Native::Response1 ();
-use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
-use Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked ();
-use Linux::Event::Net::HTTP::Response;
+use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::Response;
 
 our $VERSION = '0.001';
 
-my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
-my $CHUNKED = 'Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked';
+my $PARSER = 'Linux::Event::HTTP::_HTTP1';
+my $CHUNKED = 'Linux::Event::HTTP::_HTTP1::Chunked';
 my $MAX_REQUEST_HEAD = 65_536;
 my $MAX_HEADERS = 100;
 my %CLASS_HANDLER;
@@ -42,14 +40,13 @@ sub new ($class, %option) {
         if exists $option{on_data};
     croak 'new(): Connection cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
+    croak 'new(): on_request_final was removed; use on_request and Response->end'
+        if exists $option{on_request_final};
 
     my $loop = delete $option{loop};
     my $on_request = _take_http_handler($class, 'on_request', \%option);
     my $on_body = _take_http_handler($class, 'on_body', \%option);
     my $on_request_end = _take_http_handler($class, 'on_request_end', \%option);
-    my $on_request_final = _take_http_handler(
-        $class, 'on_request_final', \%option,
-    );
 
     croak 'new(): HTTP Connection requires on_request callback or method'
         if !$on_request;
@@ -58,7 +55,6 @@ sub new ($class, %option) {
     $self->{_http_on_request} = $on_request;
     $self->{_http_on_body} = $on_body;
     $self->{_http_on_request_end} = $on_request_end;
-    $self->{_http_on_request_final} = $on_request_final;
     $self->{_http_input} = '';
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
@@ -73,7 +69,7 @@ sub new ($class, %option) {
 }
 
 sub connect ($class, %option) {
-    croak 'connect(): HTTP client support is not implemented by Linux::Event::Net::HTTP::Connection';
+    croak 'connect(): HTTP client support is not implemented by Linux::Event::HTTP::Server::Connection';
 }
 
 sub on_data ($self, $bytes) {
@@ -138,24 +134,6 @@ sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
     return 1 if $ok;
     $self->_fail_active_transaction(500, $request, $response);
     return 0;
-}
-
-sub _invoke_request_final ($self, $request) {
-    my ($ok, $body);
-    {
-        local $self->{_http_dispatching} = 1;
-        $ok = eval {
-            $body = $self->{_http_on_request_final}->($self, $request);
-            1;
-        };
-    }
-
-    if (!$ok) {
-        $self->_protocol_error(500, $request->http_version);
-        return (0, undef);
-    }
-
-    return (1, $body);
 }
 
 sub _clear_transaction ($self) {
@@ -304,33 +282,6 @@ sub _finalize_transaction ($self) {
     return;
 }
 
-sub _complete_request_final_fallback ($self, $request, $body) {
-    my $response
-        = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
-    my $request_state = $self->{_http_bodyless_state} //= {
-        mode      => 'none',
-        body_done => 1,
-    };
-    $request_state->{body_done} = 1;
-    delete $request_state->{close_after_response};
-
-    $self->{_http_active_request} = $request;
-    $self->{_http_active_response} = $response;
-    $self->{_http_request_state} = $request_state;
-    $self->{_http_response_state} = undef;
-
-    my $ok = eval {
-        $response->end($body);
-        1;
-    };
-    if (!$ok) {
-        $self->_fail_active_transaction(500, $request, $response);
-        return 0;
-    }
-
-    return 1;
-}
-
 sub _drive_http1 ($self) {
     return if $self->{_http_driving} || $self->{_http_closing}
         || $self->is_closed;
@@ -403,37 +354,9 @@ sub _drive_http1 ($self) {
         my $body_mode = $request->body_mode;
         my $bodyless = $body_mode eq 'none';
 
-        if ($bodyless && $self->{_http_on_request_final}) {
-            my ($ok, $body) = $self->_invoke_request_final($request);
-            last if !$ok;
-            last if $self->{_http_closing} || $self->is_closed;
-
-            if (defined $body) {
-                my $wire;
-                my $built = eval {
-                    $wire = Linux::Event::Net::HTTP::_Native::Response1
-                        ->build_default_final($request, $body);
-                    1;
-                };
-                if (!$built) {
-                    $self->_protocol_error(500, $request->http_version);
-                    last;
-                }
-
-                if (defined $wire) {
-                    $self->write($wire);
-                    next;
-                }
-
-                last if !$self->_complete_request_final_fallback(
-                    $request, $body,
-                );
-                next;
-            }
-        }
 
         my $response
-            = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
+            = Linux::Event::HTTP::Response->_new_bound($self, $request);
         my $request_state;
         if ($bodyless) {
             $request_state = $self->{_http_bodyless_state} //= {
@@ -738,7 +661,7 @@ sub _protocol_error ($self, $status, $version = '1.1') {
 
     $version = '1.1' if $version ne '1.0' && $version ne '1.1';
 
-    my $response = Linux::Event::Net::HTTP::Response->_new(
+    my $response = Linux::Event::HTTP::Response->_new(
         status => $status,
         headers => [
             [ 'Content-Length', '0' ],
@@ -772,12 +695,12 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
+Linux::Event::HTTP::Server::Connection - HTTP/1 connection protocol state
 
 =head1 SYNOPSIS
 
     package UploadHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
         $self->data->{body} = '';
@@ -808,23 +731,21 @@ Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
 
 =head1 DESCRIPTION
 
-C<Linux::Event::Net::HTTP::Connection> is a
+C<Linux::Event::HTTP::Server::Connection> is a
 L<Linux::Event::IO::Sock::Stream> subclass. Linux::Event continues to own the
 socket, TLS transport, readiness, ordered-byte reads and writes, buffering, and
 backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
 request sequencing, response serialization, and persistence policy.
 
 C<on_data> is the cached Linux::Event Stream callback for the protocol engine.
-Applications use C<on_request>, optional C<on_body>, optional
-C<on_request_end>, and optionally C<on_request_final>. Named methods are
-resolved and cached by connection class. Direct construction may supply the same
-names as constructor callbacks when lexical application scope is preferable.
+Applications use C<on_request>, optional C<on_body>, and optional
+C<on_request_end>. Named methods are resolved and cached by connection class.
+Direct construction may supply the same names as constructor callbacks when
+lexical application scope is preferable.
 
-Ordinary request handling pairs each Request with one
-L<Linux::Event::Net::HTTP::Response> created by Connection, and the same Request
-and Response objects are passed to the ordinary callbacks for that transaction.
-A defined C<on_request_final> result may complete a bodyless request before a
-Response object is allocated.
+Every dispatched Request is paired with one L<Linux::Event::HTTP::Response>
+created by Connection, and the same Request and Response objects are passed to
+the callbacks for that transaction.
 
 =head1 REQUEST BODY STREAMING
 
@@ -845,34 +766,6 @@ C<Content-Length: 0>, immediately after C<on_request> returns on the ordinary
 Response path.
 
 =head1 CALLBACKS
-
-=head2 on_request_final
-
-    sub on_request_final ($self, $req) {
-        return "ok\n" if $req->target eq '/health';
-        return undef;
-    }
-
-Optional complete final-response callback for applications with a common
-bodyless request that can be answered by a default C<200 OK> scalar body. It
-runs after request-head and Expect validation but before Response allocation.
-It is never invoked for a request carrying a message body.
-
-A defined scalar return lets Connection attempt its narrow native default-final
-serialization directly. C<undef> declines the shortcut and falls through to
-ordinary C<on_request>. HEAD, HTTP/1.0, non-persistent requests, and other cases
-that cannot use native default serialization still preserve a defined returned
-body through the ordinary Response machinery without invoking C<on_request>
-again.
-
-The returned body must be a scalar byte string. Callback exceptions or invalid
-returned bodies fail the request with a protocol-safe 500 response. The callback
-cannot set status or headers and is not a streaming API; use C<on_request> and
-Response for those cases.
-
-C<on_request> remains required even when this callback exists because it is the
-general fallback and handles body-bearing requests, custom responses, streaming,
-and deferred completion.
 
 =head2 on_request
 
@@ -909,12 +802,8 @@ still active, Connection pauses reads so a later request cannot overtake it.
 
 A direct/adopted connection may use constructor callbacks instead:
 
-    my $conn = Linux::Event::Net::HTTP::Connection->new(
+    my $conn = Linux::Event::HTTP::Server::Connection->new(
         fh => $connected_socket,
-        on_request_final => sub ($conn, $req) {
-            return "ok\n" if $req->target eq '/health';
-            return undef;
-        },
         on_request => sub ($conn, $req, $res) {
             ...
         },
@@ -942,9 +831,9 @@ completion:
     $res->header('Content-Type', 'text/plain');
     $res->end("hello\n");
 
-For the narrower bodyless/default-C<200 OK> case, C<on_request_final> may return
-the complete scalar body before a Response object is constructed. This is an
-optional performance path; it does not replace the Response API.
+Scalar C<end> is the ordinary complete-response path. Eligible default scalar
+responses may use a private native finalization path transparently; applications
+do not select a separate performance API.
 
 A scalar C<end> automatically supplies Content-Length. Streaming can declare a
 known Content-Length explicitly:
@@ -982,7 +871,7 @@ HTTP protocol tuning rather than implicit accumulation.
 
 =head1 SEE ALSO
 
-L<Linux::Event::Net::HTTP::Request>, L<Linux::Event::Net::HTTP::Response>,
+L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Response>,
 L<Linux::Event::IO::Sock::Stream>, L<Linux::Event::IO::Sock::Listener>.
 
 =cut
