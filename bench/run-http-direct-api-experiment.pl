@@ -146,8 +146,10 @@ our $STAGE = 'direct';
                 if $body_mode ne 'none';
 
             if ($main::STAGE eq 'checked') {
-                my $expect = Linux::Event::Net::HTTP::Connection
-                    ::_expect_continue($request);
+                my $expect =
+                    Linux::Event::Net::HTTP::Connection::_expect_continue(
+                        $request,
+                    );
                 if ($expect < 0) {
                     $self->_protocol_error(417, $request->http_version);
                     last;
