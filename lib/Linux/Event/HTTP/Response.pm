@@ -6,7 +6,6 @@ use warnings;
 use Scalar::Util qw(refaddr weaken);
 
 use Linux::Event::HTTP::_HTTP1 ();
-use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
