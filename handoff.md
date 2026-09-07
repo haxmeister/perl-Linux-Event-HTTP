@@ -38,10 +38,14 @@ Updated: 2026-09-06 (America/Chicago)
 - `cb99a0c` - `Benchmark libh2o upper bound in PR CI`
 - `4fa08af` - `Build libh2o benchmark against evloop API`
 - `b9f6ba7` - `Checkpoint libh2o feasibility spike`
+- `d5c895b` - `Record libh2o upper-bound result`
+- `b753467` - `Benchmark direct request-response API shape`
+- `e8f0a22` - `Run direct HTTP API-shape diagnostic`
+- `e18fcf1` - `Fix direct API benchmark syntax`
 
 `bd11439` and `a0be02c` are benchmark-only changes. They do not change the production HTTP driver.
 
-The libh2o commits are also benchmark/diagnostic-only. They do not make libh2o a distribution dependency and do not change production request handling.
+The libh2o and direct-API commits are also benchmark/diagnostic-only. They do not make libh2o a distribution dependency and do not change production request handling.
 
 ## Native final-response result
 
@@ -172,19 +176,63 @@ The transaction ladder in the same CI run measured:
 - fused callbacks: `70,414.9 req/s`
 - full HTTP transaction: `51,533.5 req/s`
 
-This is the strongest architectural result so far:
-
-- the existing pico parser + Linux::Event transport baseline is already about `89.9%` of libh2o and `88.9%` of Feersum on the same runner;
-- therefore replacing pico or Linux::Event's socket loop with libh2o cannot explain most of the current full-stack gap;
-- most of the gap appears after parsing, in Perl transaction/API machinery: Response binding, active transaction state, guarded callback boundaries, response eligibility/build/mark/commit work, and generic lifecycle semantics.
+This established that the existing pico parser + Linux::Event transport baseline is already close to native H2O/Feersum, while most of the full-stack gap appears after parsing in Perl transaction/API machinery.
 
 ### libh2o architecture finding
 
 H2O's evloop is not a generic externally-driven readiness callback abstraction. On Linux its evloop backend directly owns socket polling state and invokes `epoll_ctl` / `epoll_wait` itself. Therefore libh2o does **not** drop cleanly into the existing Linux::Event reactor as a parser-only replacement.
 
-Because standalone libh2o merely ties Feersum before any Perl callback bridge or Linux::Event integration cost, and our current parser/transport baseline is already within roughly 10% of it, **do not pursue production libh2o integration now**. It would trade our current small pico/parser native surface for substantial event-loop integration complexity without attacking the largest measured cost bucket.
+Because standalone libh2o merely ties Feersum before any Perl callback bridge or Linux::Event integration cost, and our current parser/transport baseline is already within roughly 10% of it, **do not pursue production libh2o integration now**. It would add event-loop integration complexity without attacking the largest measured cost bucket.
 
 libh2o remains useful as a benchmark upper bound and as a future HTTP/2/HTTP/3 architecture reference, but it is not currently justified as the HTTP/1 performance solution.
+
+## Direct request-only API-shape experiment - CI run 34080762331
+
+Commits `b753467`, `e8f0a22`, and syntax-fix `e18fcf1` add a benchmark-only request-only transaction path. The initial CI run `34080544027` failed only because the fully-qualified `_expect_continue` call was split across a newline in invalid Perl syntax. All production tests in that run were green. Commit `e18fcf1` fixed only that benchmark syntax.
+
+Corrected CI run `34080762331` is fully green, including Perl 5.36, latest Perl, latest threaded Perl, disttest, direct-path smoke, direct-path diagnostic, H2O smoke, and the cross-server comparison.
+
+The direct experiment deliberately removes the separately bound Response object and generic active transaction state. It keeps pico Request parsing, Linux::Event transport, bodyless eligibility, and the existing native default-final response builder. Two stages were measured:
+
+- `direct`: parse + bodyless eligibility + one guarded direct-response method call + native default-final write
+- `checked`: the same shape plus production parser `eval`/error boundary, request-head-size guard, and Expect validation
+
+Same-run 20k measured, 2k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
+
+- request-only direct final: `56,118.4 req/s`
+- request-only checked final: `52,986.8 req/s`
+- transaction-ladder parsed Request + prebuilt write: `71,633.3 req/s`
+- full HTTP transaction: `34,275.5 req/s`
+
+Within-run implications:
+
+- checked request-only vs full HTTP: about `+54.6%` throughput (`1.55x`).
+- unchecked request-only vs full HTTP: about `+63.7%` throughput (`1.64x`).
+- checked request-only reaches about `74.0%` of the parsed/prebuilt ceiling.
+- unchecked request-only reaches about `78.3%` of the parsed/prebuilt ceiling.
+- production parser/error/head-size/Expect checks cost only about `5.6%` relative to this stripped API shape (`56.1k -> 53.0k`).
+
+Same-run cross-server directional medians from the same CI job:
+
+- Linux::Event::Net::HTTP production: `31,959.6 req/s`
+- Feersum: `76,406.5 req/s`
+- libh2o evloop: `75,007.4 req/s`
+- Go net/http: `60,922.5 req/s`
+- Node.js: `23,382.8 req/s`
+- aiohttp: `19,906.9 req/s`
+- Mojolicious: `1,842.2 req/s`
+
+The direct diagnostic and cross-server benchmark are separate workloads within the same job, so do not treat their absolute req/s as perfectly interchangeable. Directionally, however, the request-only checked path is already much closer to Go/Feersum/H2O than the production transaction path.
+
+### Direct-API conclusion
+
+**The transaction/API shape is now a proven major performance lever.**
+
+A simpler complete-response path can recover roughly half again as much throughput as the current full transaction path without replacing pico, replacing Linux::Event, or adding native code. This is far larger than the 2-6% gains from individual micro-optimizations and validates further API/control-flow experimentation.
+
+Do not implement the current benchmark path verbatim as production code. It is intentionally bodyless/default-final only and does not yet model a general public API, streaming, custom status/headers, HTTP/1.0/close fallbacks, HEAD, or body-bearing request handling.
+
+The next experiment should model an actual public-facing one-callback-return shape rather than having the benchmark driver directly perform response construction inside its guarded method. That will quantify the cost of a realistic API boundary before any production API decision.
 
 ## Current conclusions
 
@@ -194,14 +242,19 @@ libh2o remains useful as a benchmark upper bound and as a future HTTP/2/HTTP/3 a
 4. No remaining small Perl micro-optimization has demonstrated enough gain by itself to justify complexity.
 5. More bespoke HTTP XS/C is not justified by these measurements.
 6. The generic bodyless-driver experiment closes the duplicated-driver path: the semantic duplicate recovered only about `2.44%` in the controlled run.
-7. libh2o's standalone ceiling is real but essentially identical to Feersum's and only about 11% above our parser+raw-write stage.
-8. The largest remaining opportunity is architectural simplification of the Perl transaction API/control path, not replacing pico or the Linux::Event reactor.
-9. PR #13 and PR #11 remain unmerged.
+7. libh2o's standalone ceiling is essentially identical to Feersum's and does not justify replacing pico/Linux::Event for HTTP/1 performance.
+8. Architectural simplification of the Perl transaction API/control path is now experimentally validated: a request-only checked direct-final shape was about `1.55x` the full HTTP transaction on the same runner.
+9. Production API design is now the highest-value performance question.
+10. PR #13 and PR #11 remain unmerged.
 
 ## Immediate next work
 
-1. Add a benchmark-only Feersum-shaped path: one parsed Request object, one guarded Perl application callback, and a direct default-final response operation, omitting the separately allocated/bound Response object and generic active-transaction machinery.
-2. Keep normal parser/error/size/Expect checks in a second semantic version of that stage if the first ceiling is promising.
-3. Compare it against the existing `87.6k` parsed/write baseline, `70.4k` fused-callback stage, `51.5k` full HTTP, `97.4k` libh2o, and `98.6k` Feersum.
-4. Use that result to decide whether a lower-overhead public API shape could recover meaningful performance without adding native code. Do not change the production API until the benchmark proves the value and semantics are reviewed.
-5. Keep PR #13 and PR #11 unmerged until explicit authorization.
+1. Extend the benchmark-only direct API experiment with a realistic application callback that returns a response body/value to the driver, rather than constructing/writing the response inside the guarded method.
+2. Measure at least:
+   - guarded callback returning a prebuilt response wire (callback/API ceiling),
+   - guarded callback returning the body followed by native default-final build/write,
+   - the same return-body path with production parser/error/head-size/Expect checks.
+3. Compare those stages within one run to the current direct (`56.1k`), checked direct (`53.0k`), parsed/prebuilt (`71.6k`), and full HTTP (`34.3k`) stages.
+4. If the realistic return-body path retains most of the direct-path gain, design the smallest coherent public API that can coexist with the general Response/streaming path and fall back cleanly when the fast-final constraints are not met.
+5. Do not add new XS/C for this API experiment.
+6. Keep PR #13 and PR #11 unmerged until explicit authorization.
