@@ -99,13 +99,6 @@ jobs:
           perl Makefile.PL
           make
 
-      - name: HTTP input-buffer strategy A/B
-        run: |
-          perl -Mblib bench/run-http-input-buffer-ab.pl \
-            --requests=300000 \
-            --warmup=30000 \
-            --repeats=5
-
       - name: HTTP object/state cost diagnostic
         run: |
           perl -Mblib bench/run-http-object-cost.pl \
