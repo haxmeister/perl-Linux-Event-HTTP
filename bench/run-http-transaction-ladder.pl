@@ -11,7 +11,8 @@ use Getopt::Long qw(GetOptions);
 use IO::Select;
 use IO::Socket::INET;
 use JSON::PP ();
-use POSIX qw(WNOH strftime uname);
+use POSIX qw(strftime uname);
+use POSIX ();
 use Time::HiRes qw(time sleep);
 
 $SIG{PIPE} = 'IGNORE';
@@ -144,21 +145,14 @@ for my $name (@names) {
 say '';
 say 'Step throughput changes';
 for my $i (1 .. $#summary) {
-    my $before = $summary[$i - 1];
-    my $after = $summary[$i];
-    next if !$before->{requests_per_second};
-    my $change = 100 * (
-        $after->{requests_per_second} / $before->{requests_per_second} - 1
-    );
-    printf "%-10s -> %-10s %+.2f%%\n",
-        $before->{case}, $after->{case}, $change;
+    my ($before, $after) = @summary[$i - 1, $i];
+    my $change = 100 * ($after->{requests_per_second} / $before->{requests_per_second} - 1);
+    printf "%-10s -> %-10s %+.2f%%\n", $before->{case}, $after->{case}, $change;
 }
 
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
-    my %contract = map {
-        $_ => $case{$_}{description}
-    } @names;
+    my %contract = map { $_ => $case{$_}{description} } @names;
     $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; stages parse through end use the same Connection subclass and are cumulative; full HTTP additionally uses Connection::_drive_http1';
 
     my $report = {
@@ -204,12 +198,9 @@ sub run_case ($name, $wire) {
     my (@socket, $latency, $wall);
     my $ok = eval {
         @socket = open_clients($port, $connections);
-        drive_phase(\@socket, $wire, $warmup, $pipeline, 0, $timeout)
-            if $warmup;
+        drive_phase(\@socket, $wire, $warmup, $pipeline, 0, $timeout) if $warmup;
         my $start = time;
-        $latency = drive_phase(
-            \@socket, $wire, $requests, $pipeline, 1, $timeout,
-        );
+        $latency = drive_phase(\@socket, $wire, $requests, $pipeline, 1, $timeout);
         $wall = time - $start;
         1;
     };
@@ -219,8 +210,7 @@ sub run_case ($name, $wire) {
     stop_server($pid);
 
     if (!$ok) {
-        my $detail = slurp_log('stdout', $stdout_path)
-            . slurp_log('stderr', $stderr_path);
+        my $detail = slurp_log('stdout', $stdout_path) . slurp_log('stderr', $stderr_path);
         unlink $stdout_path;
         unlink $stderr_path;
         die "$case{$name}{label} failed: $error$detail";
@@ -257,7 +247,7 @@ sub start_server ($name, $port) {
         }
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
-        child_exec(@{$case{$name}{command}});
+        exec @{$case{$name}{command}};
         POSIX::_exit(127);
     }
     return ($pid, $stdout_path, $stderr_path);
@@ -276,9 +266,8 @@ sub wait_ready ($name, $pid, $port, $stdout_path, $stderr_path) {
             close $fh;
             return;
         }
-        my $done = waitpid($pid, WNOHANG);
-        die server_failure($name, $stdout_path, $stderr_path)
-            if $done == $pid;
+        my $done = waitpid($pid, POSIX::WNOHANG());
+        die server_failure($name, $stdout_path, $stderr_path) if $done == $pid;
         sleep 0.01;
     }
     stop_server($pid);
@@ -307,7 +296,7 @@ sub stop_server ($pid) {
     kill 'TERM', $pid;
     my $deadline = time + 1;
     while (time < $deadline) {
-        my $done = waitpid($pid, WNOHANG);
+        my $done = waitpid($pid, POSIX::WNOHANG());
         return if $done == $pid || $done == -1;
         sleep 0.01;
     }
@@ -317,11 +306,8 @@ sub stop_server ($pid) {
 
 sub free_port () {
     my $fh = IO::Socket::INET->new(
-        LocalAddr => '127.0.0.1',
-        LocalPort => 0,
-        Proto => 'tcp',
-        Listen => 1,
-        ReuseAddr => 1,
+        LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
+        Listen => 1, ReuseAddr => 1,
     ) or die "allocate benchmark port: $!\n";
     my $port = $fh->sockport;
     close $fh;
@@ -332,9 +318,7 @@ sub open_clients ($port, $count) {
     my @socket;
     for (1 .. $count) {
         my $fh = IO::Socket::INET->new(
-            PeerAddr => '127.0.0.1',
-            PeerPort => $port,
-            Proto => 'tcp',
+            PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp',
         ) or die "connect 127.0.0.1:$port: $!\n";
         $fh->autoflush(1);
         push @socket, $fh;
@@ -354,12 +338,8 @@ sub drive_phase ($socket, $wire, $count, $depth, $measure, $phase_timeout) {
         next if !$quota;
         my $fh = $socket->[$i];
         $state{fileno($fh)} = {
-            fh => $fh,
-            quota => $quota,
-            sent => 0,
-            received => 0,
-            buffer => '',
-            sent_at => [],
+            fh => $fh, quota => $quota, sent => 0, received => 0,
+            buffer => '', sent_at => [],
         };
         $select->add($fh);
     }
@@ -371,11 +351,9 @@ sub drive_phase ($socket, $wire, $count, $depth, $measure, $phase_timeout) {
 
     while ($received < $count) {
         my $remaining = $deadline - time;
-        die "benchmark client timed out after $phase_timeout seconds\n"
-            if $remaining <= 0;
+        die "benchmark client timed out after $phase_timeout seconds\n" if $remaining <= 0;
         my @ready = $select->can_read($remaining);
-        die "benchmark client timed out after $phase_timeout seconds\n"
-            if !@ready;
+        die "benchmark client timed out after $phase_timeout seconds\n" if !@ready;
 
         for my $fh (@ready) {
             my $s = $state{fileno($fh)} or next;
@@ -385,8 +363,7 @@ sub drive_phase ($socket, $wire, $count, $depth, $measure, $phase_timeout) {
                 next if $! == EINTR;
                 die "client read failed: $!\n";
             }
-            die "server closed connection before benchmark phase completed\n"
-                if $n == 0;
+            die "server closed connection before benchmark phase completed\n" if $n == 0;
             $s->{buffer} .= $chunk;
 
             while (1) {
@@ -394,8 +371,7 @@ sub drive_phase ($socket, $wire, $count, $depth, $measure, $phase_timeout) {
                 last if $head_end < 0;
                 my $head_len = $head_end + 4;
                 my $head = substr($s->{buffer}, 0, $head_len);
-                die "benchmark response was not HTTP 200\n"
-                    if $head !~ /\AHTTP\/1\.[01] 200\b/;
+                die "benchmark response was not HTTP 200\n" if $head !~ /\AHTTP\/1\.[01] 200\b/;
                 die "benchmark response missing Content-Length\n"
                     if $head !~ /\r\nContent-Length:\s*(\d+)\r\n/i;
                 my $body_len = 0 + $1;
@@ -449,9 +425,7 @@ sub percentile_us ($values, $percent) {
 sub max_us ($values) {
     return 0 if !@$values;
     my $max = 0;
-    for my $value (@$values) {
-        $max = $value if $value > $max;
-    }
+    $max = $_ if $_ > $max for @$values;
     return $max * 1_000_000;
 }
 
@@ -459,19 +433,13 @@ sub median (@values) {
     return 0 if !@values;
     @values = sort { $a <=> $b } @values;
     my $mid = int(@values / 2);
-    return @values % 2
-        ? $values[$mid]
-        : ($values[$mid - 1] + $values[$mid]) / 2;
+    return @values % 2 ? $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
 }
 
 sub rotated_cases ($repeat, @list) {
     return @list if @list < 2;
     my $offset = ($repeat - 1) % @list;
     return (@list[$offset .. $#list], @list[0 .. $offset - 1]);
-}
-
-sub child_exec (@command) {
-    exec @command;
 }
 
 sub capture (@command) {
