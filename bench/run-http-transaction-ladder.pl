@@ -425,7 +425,9 @@ sub percentile_us ($values, $percent) {
 sub max_us ($values) {
     return 0 if !@$values;
     my $max = 0;
-    $max = $_ if $_ > $max for @$values;
+    for my $value (@$values) {
+        $max = $value if $value > $max;
+    }
     return $max * 1_000_000;
 }
 
