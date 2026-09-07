@@ -1,311 +1,131 @@
-# Linux::Event::Net::HTTP architecture
+# Architecture
 
-Linux::Event::Net::HTTP is a protocol implementation, not a web framework.
+Linux::Event::HTTP is the HTTP protocol layer for the Linux::Event ecosystem.
+Its job is to make HTTP communication correct, easy to use, maintainable, and
+composable without becoming a web application framework.
 
-## Boundaries
+## Layer boundary
 
-The design is divided into three layers:
+Linux::Event core owns reusable transport machinery:
 
-- **Transport** - Linux::Event owns sockets, TLS, readiness, buffering,
-  backpressure, deadlines, and event dispatch.
-- **Protocol** - this distribution owns HTTP parsing, serialization, protocol
-  state, message boundaries, keep-alive, transfer coding, limits, and upgrade.
-- **Message** - Request and Response expose application-facing HTTP semantics.
+- event dispatch
+- stream sockets and listeners
+- buffering and write queues
+- backpressure
+- connection lifecycle
+- timers and deadlines
+- TLS
+- protocol handoff primitives
 
-## Design rules
+Linux::Event::HTTP owns HTTP semantics above that transport:
 
-1. HTTP/1.1 is the first wire protocol, but application-facing Request and
-   Response APIs should not unnecessarily encode HTTP/1-specific details.
-2. Bodies are fundamentally streams. A convenience API may accumulate a small
-   body, but accumulation is not the protocol primitive.
-3. HTTP/1 request-head parsing uses vendored picohttpparser through a private XS
-   boundary. The application-facing Request keeps parsed spans in native state
-   and materializes Perl strings only when requested.
-4. Linux::Event transport tuning, buffering, TLS, and backpressure must be
-   reused rather than reimplemented here.
-5. HTTP Upgrade transfers the same live stream-socket resource to another
-   protocol class rather than detaching and rebuilding transport state.
-6. The canonical callback-scoping model should preserve Linux::Event's
-   subclass/cached-callback performance characteristics.
-7. Convenience APIs must not make streaming, backpressure, or protocol limits
-   second-class features.
-8. Vendored protocol code must have recorded provenance and license text and
-   must never require a network fetch during build, installation, or runtime.
-9. Ambiguous HTTP/1 message framing is rejected rather than normalized in ways
-   that can disagree with another HTTP implementation on the same path.
-10. Every successfully dispatched Request owns one corresponding Response
-    transaction. The protocol engine creates and binds that Response before
-    application dispatch; application code never has to construct or return it.
-11. A persistent connection advances only when both halves of the current
-    transaction are complete: the full request input boundary has been consumed
-    and the Response has ended.
-12. HTTPS is HTTP over Linux::Event TLS transport, not a separate HTTP
-    Connection hierarchy. TLS declaration and handshake policy stay on the
-    accepted Connection subclass.
+- request parsing and validation
+- HTTP message framing
+- request body delivery
+- response metadata and serialization
+- keep-alive semantics
+- Expect handling
+- HTTP Upgrade validation and handoff
 
-## HTTP/1 parser and request state
+The HTTP distribution should not duplicate lower-level transport capabilities
+that belong in Linux::Event core.
 
-picohttpparser is vendored at a recorded upstream commit and compiled as part of
-this distribution. The parser package is private; applications receive
-Linux::Event::Net::HTTP::Request objects rather than parser offsets or pico
-structures.
+## Public object model
 
-A native Request allocation contains request metadata, header slices, stable
-request-head bytes, and validated framing state. Header names are compared in C
-using ASCII case-insensitive semantics. Original spelling and duplicate fields
-are preserved. Perl strings are created only for fields the application
-accesses.
+The supported public API consists of:
 
-Strict protocol policy belongs above pico. The HTTP layer rejects obsolete
-folded headers, imposes explicit header-count limits, requires exactly one Host
-field for HTTP/1.1, validates Content-Length agreement, rejects
-Transfer-Encoding plus Content-Length, requires chunked to be the final request
-transfer coding, and derives connection persistence from HTTP version and
-Connection options.
+    Linux::Event::HTTP::Server
+    Linux::Event::HTTP::Connection
+    Linux::Event::HTTP::Request
+    Linux::Event::HTTP::Response
 
-The Request API exposes the resulting framing decision through `body_mode`,
-`content_length`, and `keep_alive`; it does not expose parser internals.
+`Server` is a convenience over a Linux::Event listener. `Connection` owns one
+HTTP protocol session. `Request` represents received request metadata.
+`Response` is the writable handle for the paired response transaction.
 
-## HTTP/1 request body streaming
+The API should remain stable even if internal parsing or serialization
+libraries change.
 
-The Connection dispatches `on_request($self, $req, $res)` as soon as the
-validated request head is available. Body bytes are then delivered with cached
-callbacks:
+## Request lifecycle
 
-```perl
-sub on_body ($self, $req, $res, $bytes) {
-    ...
-}
+For a new request, the protocol layer:
 
-sub on_request_end ($self, $req, $res) {
-    ...
-}
-```
+1. parses and validates the request head
+2. establishes body framing and persistence semantics
+3. creates the Request and paired Response handles
+4. invokes `on_request`
+5. streams request body bytes through `on_body` when configured
+6. invokes `on_request_end` once the complete request boundary is consumed
 
-Content-Length bodies are consumed directly from the Connection input buffer.
-No whole-body scalar is built by the protocol engine. If no `on_body` callback
-is installed, bytes are drained and discarded so framing and keep-alive remain
-correct without forcing an allocation path on applications that do not consume
-the body. `on_request_end` runs once after the full request input boundary has
-been consumed, including requests with no body.
+If the application does not consume body bytes, the protocol layer drains them
+so framing and keep-alive remain correct.
 
-Chunked request bodies use a private XS wrapper around picohttpparser's stateful
-chunk decoder. Chunk framing is removed before Perl sees body bytes. The decoder
-retains partial chunk state across reads and preserves bytes after the terminal
-chunk so a pipelined request can remain in the same transport buffer. Chunk
-extensions are accepted. Trailer sections are consumed to establish the body
-boundary but are not yet exposed to applications.
+The common API should not require applications to understand chunk syntax or
+other HTTP/1 wire details.
 
-For HTTP/1.1 requests with a body and `Expect: 100-continue`, Connection emits
-`100 Continue` after validating the request head. Unsupported expectations are
-rejected with 417 before application dispatch.
+## Response lifecycle
 
-## HTTP/1 response serialization and streaming
+Applications write through the Response object.
 
-Connection creates one Response before invoking `on_request`:
+Status and headers remain mutable until output begins. `write` starts or
+continues response output; `end` completes it. The protocol layer selects and
+emits the required HTTP transfer framing.
 
-```perl
-sub on_request ($self, $req, $res) {
-    $res->status(200);
-    $res->header('Content-Type', 'text/plain');
-    $res->end("hello\n");
-}
-```
+The same API should support complete, streamed, and deferred responses rather
+than exposing separate public object models for benchmark-specific cases.
 
-Response is the transaction-scoped writable output handle. It is bound to the
-persistent Connection and paired Request, while status, headers, and response
-completion remain specific to that one transaction.
+## TLS
 
-Response keeps application-supplied status and ordered field pairs while the
-HTTP/1 response head is serialized in XS. Output validation rejects invalid
-field-name tokens and control characters that could permit response splitting.
-The serializer also refuses ambiguous framing fields, including multiple
-Content-Length fields and Transfer-Encoding combined with Content-Length.
+HTTPS is HTTP over a TLS-enabled Linux::Event transport. There is no separate
+HTTPS protocol class.
 
-The first body operation commits the response head and freezes status/header
-metadata. `end($bytes)` remains the scalar convenience path and adds
-Content-Length automatically when it is the first body operation.
+TLS policy belongs to the Connection subclass through Linux::Event. HTTP sees
+application bytes after handshake and sends response bytes through the same
+transport.
 
-Streaming uses `write` followed by `end`:
+## Upgrade and protocol bridging
 
-```perl
-$res->write("one\n");
-$res->write("two\n");
-$res->end("three\n");
-```
+HTTP Upgrade is an explicit bridge to another protocol. The HTTP layer validates
+and sends the switching response, then hands the same live Linux::Event stream
+to the target protocol class.
 
-If Content-Length was declared before the first write, Connection enforces that
-fixed-length framing exactly. If HTTP/1.1 streaming starts without
-Content-Length, Connection automatically adds `Transfer-Encoding: chunked`,
-frames each nonempty write, and emits the terminal zero chunk from `end`.
-An empty write emits no chunk and never terminates a response.
+The target retains transport state, backpressure, deadlines, TLS, application
+data, and bytes already read beyond the HTTP boundary.
 
-HTTP/1.0 cannot use chunked transfer coding. Unknown-length streaming therefore
-falls back to close-delimited response framing, which forces connection close
-after the response and current request input both complete.
+This keeps upgraded protocols such as WebSocket in their own distributions.
 
-Chunk encoding currently occurs in the Perl protocol layer around the existing
-Linux::Event write path. This keeps the API and framing semantics correct first;
-per-chunk native encoding is a benchmark-driven optimization rather than a
-requirement of the public API.
+## Parser and serializer policy
 
-## HTTP/1 connection
+HTTP parser, serializer, compression, and standards-support libraries are
+implementation details. Linux::Event::HTTP owns the public API.
 
-`Linux::Event::Net::HTTP::Connection` is itself a
-`Linux::Event::IO::Sock::Stream` subclass. Its cached `on_data` callback is the
-HTTP protocol engine, so there is no wrapper object between Linux::Event byte
-I/O and HTTP parsing. Linux::Event continues to own transport, TLS, write
-queuing, backpressure, and deadlines.
+The current HTTP/1 parser uses picohttpparser plus additional validation for
+HTTP framing and security semantics. See `docs/HTTP1-PARSER.md`.
 
-Each parsed request creates one transaction consisting of the Request, its
-bound Response, request-body framing state, and response-output state. The next
-pipelined request cannot dispatch until the request input has reached its wire
-boundary and the Response has ended. If the request finishes first, reads pause
-while the application retains the Response. If the Response finishes first,
-the connection continues consuming the current request before advancing.
+Existing native code is not automatically considered permanent. It should be
+kept when it materially supports correctness, safe framing, or a demonstrated
+realistic bottleneck. Community libraries should be preferred when they provide
+the required behavior and can be wrapped cleanly.
 
-## HTTP Server convenience
+## Performance policy
 
-`Linux::Event::Net::HTTP::Server` is a control-plane convenience around
-`Linux::Event::IO::Sock::Listener`; it is not another protocol or transport
-engine. The layering remains:
+Performance is important, but protocol-level benchmark leadership is not a
+project goal.
 
-```text
-HTTP::Server
-    -> Linux::Event::IO::Sock::Listener
-        -> HTTP::Connection
-            -> Request + Response
-```
+Aggressive reusable optimization belongs in Linux::Event core. HTTP-specific
+optimization should be considered only after realistic measurement identifies a
+material bottleneck that cannot reasonably be solved in a reusable lower layer.
 
-The simple callback form retains one callback CV per supplied HTTP callback and
-reuses those same CVs for every accepted Connection. A fixed private acceptance
-adapter injects the retained callbacks into the configured Connection
-constructor. The adapter creates no closure per accepted connection and adds no
-Server method dispatch to the steady-state request/body callback path.
+Do not add public fast-path APIs merely to avoid allocations or win a synthetic
+benchmark. One coherent request/response API is preferable to multiple
+performance-specialized application paths.
 
-The configured `connection_class` defaults to `HTTP::Connection` and may name a
-subclass. Constructor callbacks supplied to Server retain the same precedence as
-direct Connection construction: they override same-named class methods for the
-accepted instance. Application `data` is restored before the real Connection is
-constructed, so the private Server acceptance state never leaks through
-`$conn->data`.
+## Non-goals
 
-Listener socket source and acceptance tuning remain owned by Linux::Event.
-Server delegates host/port/Unix/adopted-listener construction and methods such
-as `port`, `pause`, `resume`, and `close` rather than duplicating them.
+This distribution does not define application architecture. Routing frameworks,
+templates, controllers, ORM integration, and framework-wide middleware systems
+belong elsewhere.
 
-## TLS transport integration
-
-HTTPS uses the same `HTTP::Server`, `HTTP::Connection`, Request, and Response
-classes. A secure accepted Connection is declared in exactly the same place as
-other Linux::Event Stream policy:
-
-```perl
-package SecureHTTP;
-use parent 'Linux::Event::Net::HTTP::Connection';
-use Linux::Event::TLS
-    cert_file => '/etc/myapp/server-cert.pem',
-    key_file  => '/etc/myapp/server-key.pem',
-    alpn      => ['http/1.1'];
-```
-
-`HTTP::Server` validates the configured Connection's accepted-stream policy at
-construction time. Linux::Event then sees `_accepted => 1` on the real
-Connection subclass and creates server-side TLS transport before the HTTP input
-engine receives bytes. No HTTPS-specific wrapper object is inserted.
-
-TLS `on_ready` runs only after the handshake and verification state is complete.
-The HTTP parser therefore consumes decrypted application bytes, while Response
-writes pass through Linux::Event's TLS transport and shutdown semantics.
-Negotiated `selected_alpn`, `tls_protocol`, `tls_cipher`, and `tls_stats` remain
-available on the same HTTP Connection object.
-
-HTTP/1.1 ALPN is ordinary Linux::Event TLS policy. The current HTTP engine is
-HTTP/1.x only, so deployments using ALPN should advertise `http/1.1`; future
-HTTP/2 support will require protocol selection and a separate HTTP/2 engine,
-not reinterpretation of HTTP/1 bytes.
-
-## HTTP Upgrade handoff
-
-Upgrade is a transaction boundary, not a second transport acquisition step. The
-application or target protocol layer prepares the protocol-specific response
-fields and asks the bound Response to hand the live connection to another
-stream-socket protocol:
-
-```perl
-$res->header('Upgrade', 'websocket');
-$res->header('Sec-WebSocket-Accept', $accept);
-$res->upgrade('MyWebSocketConnection');
-```
-
-The HTTP layer validates HTTP/1.1 Upgrade framing: the request must contain
-`Connection: Upgrade`, must offer the selected Upgrade protocol, must remain
-persistent, and in the initial contract must have no request message body. The
-switching response cannot contain Content-Length or Transfer-Encoding.
-`Response->upgrade` normalizes the status to 101 and adds `Connection: Upgrade`
-when the response did not already supply it.
-
-The handoff is deliberately deferred to the next Loop turn. This lets the
-ordinary `on_request` and `on_request_end` stack unwind before the object changes
-class. While the handoff is pending, Response metadata and ordinary body output
-are locked and HTTP reads remain paused after the request input boundary.
-
-Immediately before transition, HTTP queues the complete 101 response. It then
-removes the finished HTTP transaction, passes any bytes already read beyond the
-HTTP head as explicit preserved input, and calls Linux::Event `transition_to()`.
-The target protocol therefore receives the same Perl object and the same native
-ordered-byte state. The socket or socketpair, TLS provider, queued output,
-backpressure state, deadlines, watcher registrations, and application data all
-remain in place. Target-protocol writes append after the already-queued 101.
-
-This is the intended integration boundary for a separate
-`Linux::Event::Net::WebSocket` distribution. WebSocket handshake calculations
-and frame semantics belong there; HTTP owns only the validated 101 transaction
-and protocol handoff.
-
-## Measurement tooling
-
-Parser microbenchmarks and full HTTP transaction benchmarks are intentionally
-separate. `bench/pico-parser.pl` isolates request-head parsing and Request
-representation costs. `bench/run-http-end-to-end.pl` runs the HTTP server in a
-forked process and drives it from a separate client process over loopback TCP,
-covering the combined transport, parsing, Request/Response, callback,
-serialization, persistence, and client-visible round-trip path.
-
-The end-to-end harness supports persistent connections, HTTP/1.1 pipelining,
-request-body and response-body size variations, latency percentiles, JSON
-reports, server process CPU accounting, Linux::Event loop statistics, and an
-explicit profiling mode. Ordinary benchmark runs leave native nanosecond timing
-disabled; profiling runs enable it deliberately and are compared only with
-other profiling runs.
-
-Shared CI runs execute only a tiny smoke workload to protect the benchmark
-contract. GitHub-hosted runner throughput is not a performance claim. Reusable
-measurement rules and example commands are documented in `docs/BENCHMARKING.md`.
-
-## Implementation order
-
-Completed foundation:
-
-1. HTTP/1 request-head parser.
-2. Native lazy Request representation.
-3. HTTP/1 request message-framing validation and persistence policy.
-4. Native HTTP/1 response-head serialization.
-5. HTTP Connection bound directly to Linux::Event stream transport.
-6. Ordered sequential keep-alive and pipelined request dispatch.
-7. Bound Request/Response transaction API with scalar and fixed-length response
-   output.
-8. Streaming Content-Length request bodies.
-9. Native chunked request decoding and request-end callbacks.
-10. HTTP/1.1 Expect: 100-continue handling.
-11. Automatic HTTP/1.1 chunked response streaming with HTTP/1.0 close-delimited
-    fallback.
-12. HTTP Server/listener convenience layer with retained Connection callbacks.
-13. TLS transport integration through declarative Connection policy and
-    HTTP/1.1 ALPN coverage.
-14. Atomic HTTP/1.1 Upgrade handoff through Linux::Event protocol transition.
-15. Reproducible end-to-end HTTP benchmark and Linux::Event profiling harness.
-
-Routing, middleware, sessions, templates, PSGI/PAGI adapters, compression,
-WebSocket, HTTP/2, and HTTP clients are intentionally outside the initial
-scope.
+The boundary test is simple: features that help endpoints communicate are in
+scope; features that tell the programmer how to structure the application are
+usually not.

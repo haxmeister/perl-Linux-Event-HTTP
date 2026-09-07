@@ -1,87 +1,85 @@
-# Linux::Event::Net::HTTP handoff
+# Linux::Event::HTTP handoff
 
 Updated: 2026-09-07 (America/Chicago)
 
-## Start here next session
+## Current direction
 
-- Repo: `haxmeister/perl-Linux-Event-Net-HTTP`
-- Working branch: `main`
-- PR #11 (`Add cross-server HTTP comparison benchmarks`) was merged into `main` as `96b7003ad4481a9024d0476a5fc7a2131e32e8a0`.
-- PR #13 (`Add optimized final-response path`) was merged into `main` as `c2098c14801b3f446c9bc381d1ac63b1589ac925`.
-- There are no active feature PRs left from today's HTTP work.
-- Heavy cross-server/performance CI is now `workflow_dispatch` only. Ordinary CI still covers Perl 5.36, latest Perl, latest threaded Perl, benchmark smoke, and `disttest`.
+Repository: `haxmeister/perl-Linux-Event-HTTP`
 
-## What landed
+Working branch: `refactor/ecosystem-charter`
 
-### Cross-server benchmark harness
+The project has adopted `docs/ECOSYSTEM-CHARTER.md` from the Linux::Event core
+repository as an architectural constraint.
 
-The repository now has a reproducible shared-client comparison harness for Linux::Event::Net::HTTP, Feersum, Mojolicious, Node.js, Go, aiohttp, and optional libh2o reference runs. GitHub-hosted absolute throughput is treated as directional only; same-run ratios are the useful signal.
+For protocol-layer work the priority order is:
 
-### Optimized bodyless final-response API
+1. correctness
+2. ease of correct use
+3. clear and consistent public API
+4. maintainability
+5. composability and bridgeability
+6. good performance
 
-`Connection` and `Server` support:
+Aggressive reusable performance work belongs in Linux::Event core. Do not add
+protocol-specific complexity or public fast-path APIs merely to win a
+microbenchmark.
 
-    on_request_final($connection, $request)
+## Namespace
 
-For a validated bodyless request, a defined scalar return can complete the default response before allocating the general Response transaction machinery. `on_request` remains required as the general fallback for request bodies, custom response metadata, streaming, deferred responses, and declined/ineligible final-response cases.
+The supported namespace is now `Linux::Event::HTTP`, not
+`Linux::Event::Net::HTTP`.
 
-Semantics retained by tests:
+The first migration stage introduces public facade packages under:
 
-- `undef` falls through to ordinary `on_request`.
-- HEAD and HTTP/1.0 preserve the returned body through ordinary Response serialization without invoking the application twice.
-- Body-bearing requests remain on the normal streaming path.
-- Invalid returned bodies and callback exceptions become protocol-safe 500 responses.
-- Invalid `Expect` is rejected before application final-response dispatch.
+- `Linux::Event::HTTP`
+- `Linux::Event::HTTP::Server`
+- `Linux::Event::HTTP::Connection`
+- `Linux::Event::HTTP::Request`
+- `Linux::Event::HTTP::Response`
 
-The focused regression benchmark is `bench/run-http-final-response.pl`. The cumulative transaction diagnostic is `bench/run-http-transaction-ladder.pl` with helper `bench/servers/linuxevent-transaction-stage.pl`.
+The existing Net-prefixed implementation is temporarily retained underneath so
+behavior can stay stable during migration. It is marked non-public/no_index and
+should be removed or renamed internally in a later cleanup once the public
+facade is green.
 
-### Native response builder
+## Benchmark policy
 
-A narrow `Linux::Event::Net::HTTP::_Native::Response1` builder handles the eligible default-final response shape. Its ordinary non-magical byte-scalar path avoids a temporary body copy. A same-run A/B measured about 48 ns saved for a 32-byte response body. This is a worthwhile local optimization, not the explanation for the whole server-level gain.
+Competitive and exploratory HTTP benchmarking belongs in
+`haxmeister/perl-Benchmark-Web`.
 
-## Performance conclusion
+The HTTP repository should not carry cross-server comparison machinery,
+transaction ladders, parser microbenchmarks, or CI jobs whose purpose is
+benchmark leadership. Protocol-local measurement should return only when a
+realistic workload demonstrates a material bottleneck.
 
-The final-response path repeatedly beat optimized natural `on_request -> Response->end` in real-Connection tests:
+## Current implementation review
 
-- focused runs: roughly +24% to +34%
-- one fast shared-harness run: about +21%
+The existing engine includes benchmark-driven complexity from the previous
+performance-first phase, notably `on_request_final` and the native default-final
+response builder. These remain under review and are intentionally omitted from
+the newly documented supported API.
 
-The conclusion is architectural: avoiding eager general Response/transaction machinery is materially valuable for the simple complete-response case. The measurements still do not justify replacing the HTTP engine with a broad native C/XS driver or libh2o integration.
+Do not optimize them further. The next cleanup pass should determine whether to
+remove them entirely in favor of the ordinary `on_request -> Response` path.
 
-## Closed experiments
+The current picohttpparser integration remains for now because request framing
+and security behavior must not be destabilized during the policy transition.
+Parser choice is an implementation detail and should later be reevaluated under
+the ecosystem dependency policy rather than benchmark results.
 
-Do not reopen these without a new measurement reason:
+## Next steps
 
-- Duplicated bodyless Perl driver: only a small gain over full HTTP; rejected.
-- HTTP input-buffer COW/adopt/clear: about +2% in one shape but regressions for coalesced/split reads; rejected.
-- libh2o as the HTTP/1 engine: keep as a reference competitor, not an integration direction.
-- Splitting ordinary HTTP head/body writes: likely trades memcpy for another syscall; requires a measured segmented-submit primitive before reconsideration.
+1. Get the namespace/policy transition branch green.
+2. Remove the old benchmark directory and benchmark-era documentation from this
+   repository; retain benchmark work in perl-Benchmark-Web.
+3. Remove or simplify benchmark-specific public/implementation fast paths,
+   starting with `on_request_final`, if behavioral tests confirm no correctness
+   dependency.
+4. Rename the remaining internal Net-prefixed implementation packages to the
+   direct `Linux::Event::HTTP` namespace once the public migration is stable.
+5. Review the API for easy common-case use, bridgeability, and unnecessary
+   framework-like or performance-specific complexity.
+6. Evaluate community HTTP parsing/standards libraries only after the public API
+   is stable; dependencies must remain hidden implementation details.
 
-## Branch cleanup
-
-The GitHub connector used in this session cannot delete branch refs. Every non-main branch currently in this repository is historical/merged work and can be deleted manually:
-
-- `experiment/native-final-response`
-- `experiment/picohttpparser`
-- `feature/bound-response`
-- `feature/chunked-response-streaming`
-- `feature/e2e-benchmark`
-- `feature/http1-connection`
-- `feature/http1-framing-response`
-- `feature/http-comparison-benchmarks`
-- `feature/http-server`
-- `feature/request-body-streaming`
-- `feature/tls-integration`
-- `feature/upgrade-handoff`
-- `fix/threaded-perl-xs-context`
-- `refactor/on-request-end`
-
-After removing those historical refs, `main` should be the only branch needed from today's work.
-
-## Next session
-
-1. `git switch main && git pull` locally.
-2. Verify the latest `main` CI is green.
-3. Review README/Changes for release-facing presentation of `on_request_final`; implementation/POD/tests are already in place.
-4. If continuing performance work, start a fresh branch from `main` and require a measured hypothesis before adding more native code.
-5. The broad native-driver/libh2o direction is not justified by current measurements.
+Update this file whenever a policy conclusion or cleanup milestone is completed.

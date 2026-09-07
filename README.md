@@ -1,194 +1,159 @@
-# Linux::Event::Net::HTTP
+# Linux::Event::HTTP
 
-Native high-performance HTTP protocol support for [Linux::Event](https://github.com/haxmeister/perl-linux-event).
+HTTP protocol support for [Linux::Event](https://github.com/haxmeister/perl-linux-event).
 
 ## Status
 
-Early development. The initial target is HTTP/1.1 server protocol support.
+Early development. The current implementation focuses on HTTP/1.1 server
+support.
 
-This distribution is intended to provide the HTTP protocol layer, not a web
-framework. Linux::Event remains responsible for transport, TLS, buffering,
-backpressure, deadlines, and event dispatch.
+This distribution follows the Linux::Event ecosystem charter: protocol layers
+prioritize correctness, ease of correct use, a clear API, maintainability,
+composability, and then good performance. Linux::Event core remains the place
+for aggressive reusable performance work.
 
-The simplest server form hides Listener plumbing while retaining the same
-cached callback model used by Linux::Event:
+Linux::Event::HTTP is a communications library, not a web framework. It does
+not provide routing frameworks, templates, controllers, ORMs, or an application
+architecture.
+
+## Simple server
 
 ```perl
 use v5.36;
 use Linux::Event::Loop;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP::Server;
 
 my $loop = Linux::Event::Loop->new;
 
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop => $loop,
     host => '127.0.0.1',
     port => 8080,
-    on_request => sub ($conn, $req, $res) {
-        $res->header('Content-Type', 'text/plain');
-        $res->end("hello\n");
+    on_request => sub ($connection, $request, $response) {
+        $response->header('Content-Type', 'text/plain');
+        $response->end("hello\n");
     },
 );
 
 $loop->run;
 ```
 
-`HTTP::Server` is a thin convenience over `Linux::Event::IO::Sock::Listener`.
-It retains one callback CV and reuses it for accepted HTTP connections; it does
-not create a wrapper closure per connection or add another per-request dispatch
-layer.
-
-For simple bodyless requests that can return the default complete response in
-one scalar, an optional final-response callback avoids allocating the general
-Response transaction machinery:
+`Linux::Event::HTTP::Server` is a small convenience over
+`Linux::Event::IO::Sock::Listener`. A reusable connection subclass remains
+available when an application wants declarative socket, TLS, tuning, or callback
+policy:
 
 ```perl
-my $server = Linux::Event::Net::HTTP::Server->new(
-    loop => $loop,
-    host => '127.0.0.1',
-    port => 8080,
+package MyHTTP;
+use parent 'Linux::Event::HTTP::Connection';
 
-    on_request_final => sub ($conn, $req) {
-        return "hello\n" if $req->target eq '/';
-        return undef;  # use the general Response path
-    },
-
-    on_request => sub ($conn, $req, $res) {
-        $res->status(404);
-        $res->end("not found\n");
-    },
-);
-```
-
-`on_request_final` is deliberately narrow. It is considered only for validated
-bodyless requests and a defined scalar return represents the default final
-response body. Returning `undef` declines the shortcut. Requests with bodies,
-custom status or headers, streaming, deferred completion, and other general
-response work continue through `on_request`, which remains required. Cases
-such as HEAD or HTTP/1.0 preserve the returned body through ordinary Response
-serialization when the native default-final form is not eligible.
-
-A Connection subclass remains the declarative form for reusable protocol,
-tuning, socket, and TLS policy:
-
-```perl
-package HelloHTTP;
-use parent 'Linux::Event::Net::HTTP::Connection';
-
-sub on_request ($self, $req, $res) {
-    $res->status(200);
-    $res->header('Content-Type', 'text/plain');
-    $res->end("hello\n");
+sub on_request ($self, $request, $response) {
+    $response->status(200);
+    $response->header('Content-Type', 'text/plain');
+    $response->end("hello\n");
 }
 
 package main;
 
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '127.0.0.1',
     port             => 8080,
-    connection_class => 'HelloHTTP',
+    connection_class => 'MyHTTP',
 );
 ```
 
-HTTPS uses the same HTTP classes. TLS remains Linux::Event transport policy on
-the accepted Connection subclass rather than a separate HTTPS protocol class:
+## Request bodies
+
+Request input is streaming-first. `on_request` receives the request head and its
+paired response object. Optional `on_body` callbacks receive body bytes, and
+`on_request_end` marks the complete request boundary.
+
+```perl
+sub on_body ($self, $request, $response, $bytes) {
+    process_bytes($bytes);
+}
+
+sub on_request_end ($self, $request, $response) {
+    $response->end("done\n");
+}
+```
+
+If no body callback is installed, the protocol engine drains the body so message
+framing and keep-alive remain correct without forcing whole-body accumulation.
+
+## Response streaming
+
+The same Response object handles complete and streamed replies:
+
+```perl
+sub on_request ($self, $request, $response) {
+    $response->header('Content-Type', 'text/plain');
+    $response->write("one\n");
+    $response->write("two\n");
+    $response->end("three\n");
+}
+```
+
+HTTP/1.1 transfer framing is selected by the protocol layer. Applications should
+not have to manage chunk syntax themselves.
+
+## TLS
+
+HTTPS uses the same HTTP classes. TLS remains transport policy supplied by
+Linux::Event:
 
 ```perl
 package SecureHTTP;
-use parent 'Linux::Event::Net::HTTP::Connection';
+use parent 'Linux::Event::HTTP::Connection';
 use Linux::Event::TLS
     cert_file => '/etc/myapp/server-cert.pem',
     key_file  => '/etc/myapp/server-key.pem',
     alpn      => ['http/1.1'];
 
-sub on_request ($self, $req, $res) {
-    $res->end("secure\n");
-}
-
-package main;
-
-my $server = Linux::Event::Net::HTTP::Server->new(
-    loop             => $loop,
-    host             => '0.0.0.0',
-    port             => 443,
-    connection_class => 'SecureHTTP',
-);
-```
-
-Accepted TLS Connections use Linux::Event server-handshake semantics
-automatically. `on_ready` fires after the TLS handshake, and HTTP parsing sees
-only decrypted application bytes. The Connection can inspect negotiated
-`selected_alpn`, `tls_protocol`, and `tls_cipher` through Linux::Event.
-
-HTTP Upgrade hands the same live stream socket to another Linux::Event protocol
-class. HTTP performs the switching response and transport handoff; the target
-protocol remains a separate distribution or application class:
-
-```perl
-sub on_request ($self, $req, $res) {
-    return $res->end("not an upgrade\n")
-        if ($req->header('Upgrade') // '') ne 'my-protocol';
-
-    $res->header('Upgrade', 'my-protocol');
-    $res->upgrade('MyProtocolConnection');
+sub on_request ($self, $request, $response) {
+    $response->end("secure\n");
 }
 ```
 
-`upgrade()` sends a validated HTTP/1.1 `101 Switching Protocols` response and
-uses Linux::Event `transition_to()` after the HTTP request lifecycle has
-finished. The target retains the same socket, TLS transport, output queue,
-backpressure, deadlines, and application data. Bytes already read after the HTTP
-request head are preserved and become the target protocol's first input. This
-is the boundary intended for a separate `Linux::Event::Net::WebSocket`
-distribution.
+HTTP parsing sees decrypted application bytes after the Linux::Event TLS
+handshake. The HTTP distribution does not create a separate HTTPS object model.
 
-Applications use the Response object but do not construct it or pass it back to
-the Connection. Response is the writable handle for a general-path transaction
-and may be retained and completed from a later event.
+## Protocol handoff
 
-Streaming response output uses the same `write`/`end` shape. HTTP/1.1 adds
-chunked transfer coding automatically when no Content-Length was declared:
+HTTP Upgrade is a bridge to another communication protocol, not an excuse to
+fold that protocol into this distribution. A validated upgrade can transfer the
+same live Linux::Event stream to another compatible protocol class while
+preserving the transport and already-read bytes.
 
-```perl
-sub on_request ($self, $req, $res) {
-    $res->header('Content-Type', 'text/plain');
-    $res->write("one\n");
-    $res->write("two\n");
-    $res->end("three\n");
-}
-```
+This is the intended boundary for distributions such as
+`Linux::Event::WebSocket`.
 
-Request bodies are also streaming-first. Fixed-length and chunked bodies are
-delivered without whole-request accumulation:
+## Implementation policy
 
-```perl
-sub on_body ($self, $req, $res, $bytes) {
-    process_bytes($bytes);
-}
+The public API belongs to Linux::Event::HTTP. Internal parsers, serializers, and
+other third-party libraries are implementation details. Applications should not
+need to change merely because an implementation dependency changes.
 
-sub on_request_end ($self, $req, $res) {
-    $res->end("done\n");
-}
-```
+The current HTTP/1 request parser uses vendored picohttpparser plus additional
+HTTP framing and security validation. Its continued use is evaluated under the
+same ecosystem policy as any other dependency: correctness and API fit come
+before small benchmark differences.
 
-If no `on_body` callback is installed, the protocol engine drains the body so
-framing and keep-alive remain correct without building an unused body scalar.
-`on_request_end` runs once when the complete request input boundary has been
-consumed, including for requests with no body.
+Protocol-specific benchmark shortcuts are not part of the supported public API.
+When a realistic workload exposes a material bottleneck, the first question is
+whether the improvement belongs in a reusable Linux::Event primitive instead.
 
-HTTP/1 request-head parsing and chunked request decoding use
-[picohttpparser](https://github.com/h2o/picohttpparser), vendored directly in
-this distribution at a recorded upstream revision. Builds and installations do
-not depend on the upstream repository or any network fetch.
-Linux::Event::Net::HTTP keeps parsed request metadata in native state and
-materializes Perl strings only when application code asks for them.
+See [docs/PROJECT-POLICY.md](docs/PROJECT-POLICY.md),
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and
+[docs/HTTP1-PARSER.md](docs/HTTP1-PARSER.md).
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design constraints,
-[docs/BENCHMARKING.md](docs/BENCHMARKING.md) for the end-to-end benchmark and
-profiling contract, and
-[docs/PICOHTTPPARSER-EXPERIMENT.md](docs/PICOHTTPPARSER-EXPERIMENT.md) for parser
-provenance, design details, and parser microbenchmark results.
+## Benchmarking
+
+Competitive and exploratory server benchmarking lives in the separate
+[perl-Benchmark-Web](https://github.com/haxmeister/perl-Benchmark-Web)
+repository. This repository keeps correctness and regression tests focused on
+the HTTP protocol library itself.
 
 ## Contributing
 
