@@ -27,6 +27,7 @@ Relevant commits:
 - `aa8f991` - `Benchmark fused HTTP callback dispatch`
 - `cbda5d4` - `Match bodyless transaction benchmark to production state reuse`
 - `4bcdbb8` - `Run transaction ladder in PR diagnostics`
+- `195c6ce` - `Add HTTP object allocation cost benchmark`
 
 The transaction ladder is:
 
@@ -132,6 +133,25 @@ Do not compare these absolute CI numbers directly to older local-machine runs; u
 
 All three ordinary CI test jobs passed, including latest threaded Perl.
 
+## New object/state cost benchmark
+
+Commit `195c6ce` adds `bench/run-http-object-cost.pl` to isolate inexpensive pure-Perl design questions before any production rewrite.
+
+It measures:
+
+- benchmark loop/no-op floor
+- Response-shaped blessed hash allocation with a strong connection reference
+- the same hash plus `weaken(connection)`
+- production `Response->_new_bound`
+- an eight-slot blessed-array Response representation proxy, strong and weak variants
+- `_new_request_state` allocation for the bodyless GET
+- production-style cached bodyless-state reset
+- active transaction hash assignment/clear using cached objects
+
+The array cases are representation proxies only; no production Response methods have been ported. Their purpose is to determine whether an array-backed internal representation has enough allocation advantage to justify a real prototype.
+
+No production code is changed by this benchmark.
+
 ## Current conclusions
 
 1. We have made real headway: on this controlled CI runner the gap to Feersum is now under 2x, not the 3-5x picture seen in earlier local runs.
@@ -145,8 +165,8 @@ All three ordinary CI test jobs passed, including latest threaded Perl.
 
 ## Immediate next work
 
-1. Split `Response->_new_bound` into benchmark-only components: plain blessed-hash allocation vs `weaken(connection)` vs production constructor call.
-2. Add a benchmark for cached bodyless request-state reset vs `_new_request_state` allocation to quantify the benefit production already gets.
+1. Run `bench/run-http-object-cost.pl` on the same CI class and record medians.
+2. Use the result to decide whether `weaken`, hash representation, or state allocation deserves any production prototype.
 3. Inspect the real `_drive_http1` bodyless GET path for work absent from the `end` ladder stage: input-buffer handling, `_expect_continue`, body-mode accesses, driving/dispatch flags, repeated active-transaction checks, finalize/resume/loop control.
 4. Build cumulative benchmark rungs for those missing production-driver operations before changing production code.
 5. Prefer pure-Perl representation/control-flow changes first. Consider new custom XS only if a specific measured residual remains materially large.
