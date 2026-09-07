@@ -87,10 +87,27 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            my $request_state
-                = Linux::Event::Net::HTTP::Connection::_new_request_state(
-                    $request,
-                );
+            # Mirror Connection::_drive_http1 exactly for the benchmark's
+            # bodyless GET request.  The production path reuses one per-
+            # connection state hash instead of allocating _new_request_state
+            # for every bodyless transaction.
+            my $body_mode = $request->body_mode;
+            my $bodyless = $body_mode eq 'none';
+            my $request_state;
+            if ($bodyless) {
+                $request_state = $self->{_http_bodyless_state} //= {
+                    mode      => 'none',
+                    body_done => 0,
+                };
+                $request_state->{body_done} = 0;
+                delete $request_state->{close_after_response};
+            } else {
+                $request_state
+                    = Linux::Event::Net::HTTP::Connection::_new_request_state(
+                        $request, $body_mode,
+                    );
+            }
+
             $self->{_http_active_request} = $request;
             $self->{_http_active_response} = $response;
             $self->{_http_request_state} = $request_state;
