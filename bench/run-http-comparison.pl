@@ -17,7 +17,11 @@ use Time::HiRes qw(time sleep);
 $SIG{PIPE} = 'IGNORE';
 
 my $go_binary = "/tmp/le-http-bench-go-$$";
-END { unlink $go_binary if -e $go_binary }
+my $h2o_binary = "/tmp/le-http-bench-libh2o-$$";
+END {
+    unlink $go_binary if -e $go_binary;
+    unlink $h2o_binary if -e $h2o_binary;
+}
 
 my %server = (
     linuxevent => {
@@ -54,6 +58,25 @@ my %server = (
             die "failed to build Go benchmark server\n" if $? != 0;
         },
     },
+    h2o => {
+        label => 'libh2o evloop',
+        command => [$h2o_binary],
+        available => sub {
+            command_ok('cc', '--version')
+                && command_ok('pkg-config', '--exists', 'libh2o-evloop');
+        },
+        prepare => sub {
+            my $flags = capture(
+                'pkg-config', '--cflags', '--libs', 'libh2o-evloop',
+            );
+            die "failed to query libh2o-evloop build flags\n"
+                if !defined $flags;
+            my @flags = grep { length } split /\s+/, $flags;
+            system 'cc', '-O2', '-o', $h2o_binary,
+                "$Bin/servers/libh2o-http.c", @flags;
+            die "failed to build libh2o benchmark server\n" if $? != 0;
+        },
+    },
     aiohttp => {
         label => 'Python aiohttp',
         command => ['python3', "$Bin/servers/aiohttp-http.py"],
@@ -63,7 +86,8 @@ my %server = (
 
 # Twiggy remains available explicitly, but is not in the primary comparison
 # because current Twiggy closes the long-lived benchmark connections before the
-# requested keep-alive workload completes.
+# requested keep-alive workload completes. libh2o is also explicit-only because
+# it is an architecture experiment, not a project dependency.
 my @servers = qw(linuxevent feersum mojo node go aiohttp);
 my $requests = 20_000;
 my $warmup = 2_000;
@@ -179,7 +203,7 @@ if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my $report = {
         benchmark => 'linux-event-net-http-cross-server',
-        benchmark_contract_version => 1,
+        benchmark_contract_version => 2,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
@@ -188,6 +212,7 @@ if (defined $json_path) {
             twiggy => capture($^X, '-MTwiggy', '-e', 'print $Twiggy::VERSION'),
             node => capture('node', '--version'),
             go => capture('go', 'version'),
+            libh2o_evloop => capture('pkg-config', '--modversion', 'libh2o-evloop'),
             python => capture('python3', '--version'),
             aiohttp => capture('python3', '-c', 'import aiohttp; print(aiohttp.__version__)'),
             os => $sysname,
@@ -541,7 +566,7 @@ sub usage ($status) {
     print <<'USAGE';
 usage: bench/run-http-comparison.pl [options]
 
-  --servers=LIST           linuxevent,feersum,mojo,twiggy,node,go,aiohttp
+  --servers=LIST           linuxevent,feersum,mojo,twiggy,node,go,h2o,aiohttp
   --requests=N             measured requests per server/repeat (default 20000)
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)
