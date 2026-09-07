@@ -1,4 +1,4 @@
-# Linux::Event::Net::HTTP
+# Linux::Event::HTTP
 
 Native high-performance HTTP protocol support for [Linux::Event](https://github.com/haxmeister/perl-linux-event).
 
@@ -16,11 +16,11 @@ cached callback model used by Linux::Event:
 ```perl
 use v5.36;
 use Linux::Event::Loop;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP::Server;
 
 my $loop = Linux::Event::Loop->new;
 
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop => $loop,
     host => '127.0.0.1',
     port => 8080,
@@ -43,7 +43,7 @@ one scalar, an optional final-response callback avoids allocating the general
 Response transaction machinery:
 
 ```perl
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop => $loop,
     host => '127.0.0.1',
     port => 8080,
@@ -73,7 +73,7 @@ tuning, socket, and TLS policy:
 
 ```perl
 package HelloHTTP;
-use parent 'Linux::Event::Net::HTTP::Connection';
+use parent 'Linux::Event::HTTP::Server::Connection';
 
 sub on_request ($self, $req, $res) {
     $res->status(200);
@@ -83,7 +83,7 @@ sub on_request ($self, $req, $res) {
 
 package main;
 
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '127.0.0.1',
     port             => 8080,
@@ -96,7 +96,7 @@ the accepted Connection subclass rather than a separate HTTPS protocol class:
 
 ```perl
 package SecureHTTP;
-use parent 'Linux::Event::Net::HTTP::Connection';
+use parent 'Linux::Event::HTTP::Server::Connection';
 use Linux::Event::TLS
     cert_file => '/etc/myapp/server-cert.pem',
     key_file  => '/etc/myapp/server-key.pem',
@@ -108,7 +108,7 @@ sub on_request ($self, $req, $res) {
 
 package main;
 
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '0.0.0.0',
     port             => 443,
@@ -181,7 +181,7 @@ HTTP/1 request-head parsing and chunked request decoding use
 [picohttpparser](https://github.com/h2o/picohttpparser), vendored directly in
 this distribution at a recorded upstream revision. Builds and installations do
 not depend on the upstream repository or any network fetch.
-Linux::Event::Net::HTTP keeps parsed request metadata in native state and
+Linux::Event::HTTP keeps parsed request metadata in native state and
 materializes Perl strings only when application code asks for them.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design constraints,

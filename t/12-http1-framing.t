@@ -3,9 +3,9 @@ use strict;
 use warnings;
 
 use Test::More;
-use Linux::Event::Net::HTTP::_Parser::HTTP1;
+use Linux::Event::HTTP::_HTTP1;
 
-my $parser = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+my $parser = 'Linux::Event::HTTP::_HTTP1';
 
 sub parse_request ($wire) {
     return $parser->parse_request($wire);

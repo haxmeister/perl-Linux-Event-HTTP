@@ -25,7 +25,7 @@ END {
 
 my %server = (
     linuxevent => {
-        label => 'Linux::Event::Net::HTTP',
+        label => 'Linux::Event::HTTP',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
         available => sub { 1 },
     },
@@ -160,7 +160,7 @@ for my $name (@available) {
 my $request_wire = make_request($request_body_bytes);
 my @records;
 
-say 'Linux::Event::Net::HTTP cross-server comparison';
+say 'Linux::Event::HTTP cross-server comparison';
 say 'servers=' . join(',', @available);
 say 'skipped=' . join(',', @skipped) if @skipped;
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats";

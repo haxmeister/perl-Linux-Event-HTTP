@@ -8,11 +8,11 @@ use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Net::HTTP::Connection;
+use Linux::Event::HTTP::Server::Connection;
 
 {
     package T::BodyHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub stream_options ($class) {
         return read_size => 8;
@@ -128,7 +128,7 @@ like($state->{response}, qr{/fixed\n.*?/chunk\n.*?/done\n\z}s,
 
 {
     package T::ExpectHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
         $self->data->{requests}++;

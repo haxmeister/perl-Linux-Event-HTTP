@@ -8,8 +8,8 @@ use Scalar::Util qw(refaddr);
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Server;
 
 sub run_client ($loop, $server, $wire, $state, $done) {
     my $guard = Linux::Event::Kernel::Timer->new(
@@ -69,7 +69,7 @@ sub run_client ($loop, $server, $wire, $state, $done) {
 
 {
     package T::UpgradeHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
     use Scalar::Util qw(refaddr);
 
     sub on_request ($self, $req, $res) {
@@ -99,7 +99,7 @@ my $state = {
     request_end_hits => 0,
 };
 
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '127.0.0.1',
     port             => 0,
@@ -138,7 +138,7 @@ is($state->{target_class}, 'T::UpgradedProtocol',
     'same live stream object is reblessed to target protocol class');
 ok($state->{same_object},
     'protocol handoff retains object identity');
-is($state->{request_class}, 'Linux::Event::Net::HTTP::Request',
+is($state->{request_class}, 'Linux::Event::HTTP::Request',
     'HTTP request is parsed normally before handoff');
 is(
     $state->{wire},
@@ -153,7 +153,7 @@ is(
 
 {
     package T::BadUpgradeHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
         $res->header('Upgrade', 'other-proto');
@@ -163,7 +163,7 @@ is(
 
 $loop = Linux::Event::Loop->new;
 my $bad = { wire => '' };
-$server = Linux::Event::Net::HTTP::Server->new(
+$server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '127.0.0.1',
     port             => 0,
@@ -193,7 +193,7 @@ unlike($bad->{wire}, qr/101 Switching Protocols/,
 
 {
     package T::BodyUpgradeHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
         $res->header('Upgrade', 'test-proto');
@@ -203,7 +203,7 @@ unlike($bad->{wire}, qr/101 Switching Protocols/,
 
 $loop = Linux::Event::Loop->new;
 my $body = { wire => '' };
-$server = Linux::Event::Net::HTTP::Server->new(
+$server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '127.0.0.1',
     port             => 0,

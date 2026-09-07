@@ -12,14 +12,14 @@ use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep);
 
 use Linux::Event::Loop;
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Server;
 
 $SIG{PIPE} = 'IGNORE';
 
 {
-    package Linux::Event::Net::HTTP::Bench::OrdinaryRequestConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::OrdinaryRequestConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
         $response->end($self->data->{payload});
@@ -28,8 +28,8 @@ $SIG{PIPE} = 'IGNORE';
 }
 
 {
-    package Linux::Event::Net::HTTP::Bench::OrdinaryRequestEndConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::OrdinaryRequestEndConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
         return;
@@ -42,8 +42,8 @@ $SIG{PIPE} = 'IGNORE';
 }
 
 {
-    package Linux::Event::Net::HTTP::Bench::FastFinalConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::FastFinalConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request_final ($self, $request) {
         return $self->data->{payload};
@@ -106,13 +106,13 @@ my %label = (
     fast_final           => 'integrated fast-final return',
 );
 my %class = (
-    ordinary_request     => 'Linux::Event::Net::HTTP::Bench::OrdinaryRequestConnection',
-    ordinary_request_end => 'Linux::Event::Net::HTTP::Bench::OrdinaryRequestEndConnection',
-    fast_final           => 'Linux::Event::Net::HTTP::Bench::FastFinalConnection',
+    ordinary_request     => 'Linux::Event::HTTP::Bench::OrdinaryRequestConnection',
+    ordinary_request_end => 'Linux::Event::HTTP::Bench::OrdinaryRequestEndConnection',
+    fast_final           => 'Linux::Event::HTTP::Bench::FastFinalConnection',
 );
 my %records;
 
-say 'Linux::Event::Net::HTTP production-shaped fast-final experiment';
+say 'Linux::Event::HTTP production-shaped fast-final experiment';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats";
 say 'ordinary_request = real Connection on_request($conn,$req,$res) + Response->end with early bodyless completion';
 say 'ordinary_request_end = real Connection no-op on_request + on_request_end($conn,$req,$res) + Response->end';
@@ -203,7 +203,7 @@ sub start_server ($mode) {
     if ($pid == 0) {
         close $reader;
         my $loop = Linux::Event::Loop->new;
-        my $server = Linux::Event::Net::HTTP::Server->new(
+        my $server = Linux::Event::HTTP::Server->new(
             loop => $loop,
             host => '127.0.0.1',
             port => 0,

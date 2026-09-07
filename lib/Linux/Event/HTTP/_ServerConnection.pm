@@ -1,9 +1,9 @@
-package Linux::Event::Net::HTTP::_ServerConnection;
+package Linux::Event::HTTP::_ServerConnection;
 use v5.36;
 use strict;
 use warnings;
 
-use parent 'Linux::Event::Net::HTTP::Connection';
+use parent 'Linux::Event::HTTP::Server::Connection';
 
 use Carp qw(croak);
 

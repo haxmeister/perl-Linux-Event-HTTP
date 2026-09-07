@@ -10,9 +10,9 @@ use JSON::PP ();
 use POSIX qw(strftime uname);
 use Time::HiRes qw(time);
 
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Response;
-use Linux::Event::Net::HTTP::_Parser::HTTP1;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Response;
+use Linux::Event::HTTP::_HTTP1;
 
 my $iterations = 200_000;
 my $warmup = 20_000;
@@ -36,14 +36,14 @@ die "warmup must be >= 0\n" if $warmup < 0;
 die "repeats must be > 0\n" if $repeats <= 0;
 die "response-bytes must be >= 0\n" if $response_bytes < 0;
 
-my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+my $PARSER = 'Linux::Event::HTTP::_HTTP1';
 my $REQUEST_WIRE = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
 our $PAYLOAD = 'x' x $response_bytes;
 our $SINK = 0;
 
 {
-    package Linux::Event::Net::HTTP::Bench::HotPathConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::HotPathConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub is_closed ($self) { 0 }
 
@@ -88,7 +88,7 @@ our $SINK = 0;
 my $template_request = $PARSER->parse_request($REQUEST_WIRE, 0, 100)
     or die "failed to parse benchmark request\n";
 my $fake = new_fake_connection();
-my $noop_response = Linux::Event::Net::HTTP::Response->_new_bound(
+my $noop_response = Linux::Event::HTTP::Response->_new_bound(
     $fake, $template_request,
 );
 
@@ -129,7 +129,7 @@ my @case = (
         name => 'request_state',
         description => 'Per-request Perl transaction-state allocation',
         code => sub {
-            my $state = Linux::Event::Net::HTTP::Connection::_new_request_state(
+            my $state = Linux::Event::HTTP::Server::Connection::_new_request_state(
                 $template_request,
             );
             $SINK += length($state->{mode}) + $state->{body_done};
@@ -139,7 +139,7 @@ my @case = (
         name => 'response_new_bound',
         description => 'Per-request Response hash allocation plus weak connection binding',
         code => sub {
-            my $response = Linux::Event::Net::HTTP::Response->_new_bound(
+            my $response = Linux::Event::HTTP::Response->_new_bound(
                 $fake, $template_request,
             );
             $SINK += $response->status;
@@ -149,15 +149,15 @@ my @case = (
         name => 'callback_pair',
         description => 'Two guarded HTTP callback invocations through _invoke_http_callback',
         code => sub {
-            Linux::Event::Net::HTTP::Connection::_invoke_http_callback(
+            Linux::Event::HTTP::Server::Connection::_invoke_http_callback(
                 $fake,
-                \&Linux::Event::Net::HTTP::Bench::HotPathConnection::bench_on_request,
+                \&Linux::Event::HTTP::Bench::HotPathConnection::bench_on_request,
                 $template_request,
                 $noop_response,
             );
-            Linux::Event::Net::HTTP::Connection::_invoke_http_callback(
+            Linux::Event::HTTP::Server::Connection::_invoke_http_callback(
                 $fake,
-                \&Linux::Event::Net::HTTP::Bench::HotPathConnection::bench_on_request,
+                \&Linux::Event::HTTP::Bench::HotPathConnection::bench_on_request,
                 $template_request,
                 $noop_response,
             );
@@ -168,7 +168,7 @@ my @case = (
         name => 'response_serialize',
         description => 'Response allocation, Content-Length header creation, and XS response-head serialization',
         code => sub {
-            my $response = Linux::Event::Net::HTTP::Response->_new;
+            my $response = Linux::Event::HTTP::Response->_new;
             $response->header('Content-Length', length($PAYLOAD));
             my $head = $response->_serialize_head('1.1');
             $SINK += length($head);
@@ -197,7 +197,7 @@ my @case = (
     },
 );
 
-say 'Linux::Event::Net::HTTP hot-path decomposition';
+say 'Linux::Event::HTTP hot-path decomposition';
 say "picohttpparser=" . $PARSER->pico_version
     . " perl=$^V iterations=$iterations warmup=$warmup repeats=$repeats"
     . " request_bytes=" . length($REQUEST_WIRE)
@@ -287,9 +287,9 @@ END { $SINK = 0 if $SINK < 0 }
 
 sub new_fake_connection () {
     return bless {
-        _http_on_request => \&Linux::Event::Net::HTTP::Bench::HotPathConnection::bench_on_request,
+        _http_on_request => \&Linux::Event::HTTP::Bench::HotPathConnection::bench_on_request,
         _http_on_body => undef,
-        _http_on_request_end => \&Linux::Event::Net::HTTP::Bench::HotPathConnection::bench_on_request_end,
+        _http_on_request_end => \&Linux::Event::HTTP::Bench::HotPathConnection::bench_on_request_end,
         _http_input => '',
         _http_active_request => undef,
         _http_active_response => undef,
@@ -300,7 +300,7 @@ sub new_fake_connection () {
         _http_closing => 0,
         _bench_read_paused => 0,
         _bench_wire_bytes => 0,
-    }, 'Linux::Event::Net::HTTP::Bench::HotPathConnection';
+    }, 'Linux::Event::HTTP::Bench::HotPathConnection';
 }
 
 sub reset_fake_connection ($connection) {
@@ -318,11 +318,11 @@ sub reset_fake_connection ($connection) {
 
 sub prepare_active_transaction ($connection, $request, $body_done) {
     reset_fake_connection($connection);
-    my $response = Linux::Event::Net::HTTP::Response->_new_bound(
+    my $response = Linux::Event::HTTP::Response->_new_bound(
         $connection, $request,
     );
     my $request_state
-        = Linux::Event::Net::HTTP::Connection::_new_request_state($request);
+        = Linux::Event::HTTP::Server::Connection::_new_request_state($request);
     $request_state->{body_done} = $body_done ? 1 : 0;
     $connection->{_http_active_request} = $request;
     $connection->{_http_active_response} = $response;

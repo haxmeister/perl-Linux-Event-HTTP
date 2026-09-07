@@ -8,11 +8,11 @@ use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Net::HTTP::Connection;
+use Linux::Event::HTTP::Server::Connection;
 
 {
     package T::EarlyResponseHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
         my $target = $request->target;
@@ -98,7 +98,7 @@ like($state->{response}, qr/early\n.*?next\n\z/s,
 
 {
     package T::MalformedChunkHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
         $self->data->{requests}++;

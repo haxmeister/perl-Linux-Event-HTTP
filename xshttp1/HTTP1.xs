@@ -87,7 +87,7 @@ parse_request_strict(
 
     /*
      * RFC 9112 permits a server either to reject or normalize obs-fold.
-     * Linux::Event::Net::HTTP rejects it. pico marks continuation lines by
+     * Linux::Event::HTTP rejects it. pico marks continuation lines by
      * returning a header entry with name == NULL.
      */
     for (i = 0; i < *num_headers; ++i) {
@@ -552,8 +552,8 @@ request_state_from_object(pTHX_ SV *self)
     SV *inner;
     le_http_request_state *state;
 
-    if (!SvROK(self) || !sv_derived_from(self, "Linux::Event::Net::HTTP::Request"))
-        croak("not a Linux::Event::Net::HTTP::Request object");
+    if (!SvROK(self) || !sv_derived_from(self, "Linux::Event::HTTP::Request"))
+        croak("not a Linux::Event::HTTP::Request object");
 
     inner = SvRV(self);
     state = INT2PTR(le_http_request_state *, SvIV(inner));
@@ -634,7 +634,7 @@ new_request_object(
     object = newSV(0);
     sv_setref_pv(
         object,
-        "Linux::Event::Net::HTTP::Request",
+        "Linux::Event::HTTP::Request",
         (void *)state
     );
 
@@ -706,7 +706,35 @@ valid_output_content_length(const char *value, size_t len)
     return 1;
 }
 
-MODULE = Linux::Event::Net::HTTP::_Parser::HTTP1    PACKAGE = Linux::Event::Net::HTTP::_Parser::HTTP1
+static struct phr_chunked_decoder *
+decoder_from_object(pTHX_ SV *self)
+{
+    SV *inner;
+    struct phr_chunked_decoder *decoder;
+
+    if (!SvROK(self) ||
+        !sv_derived_from(
+            self,
+            "Linux::Event::HTTP::_HTTP1::Chunked"
+        ))
+        croak("not an HTTP/1 chunked decoder object");
+
+    inner = SvRV(self);
+    decoder = INT2PTR(struct phr_chunked_decoder *, SvIV(inner));
+    if (decoder == NULL)
+        croak("HTTP/1 chunked decoder state has already been released");
+
+    return decoder;
+}
+
+static int
+request_method_is_head(le_http_request_state *state)
+{
+    return state->method_length == 4 &&
+        memEQ(state->bytes + state->method_offset, "HEAD", 4);
+}
+
+MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::_HTTP1
 PROTOTYPES: DISABLE
 
 const char *
@@ -903,7 +931,7 @@ parse_request_offsets(CLASS, buffer, last_len = 0, max_headers = 100)
   OUTPUT:
     RETVAL
 
-MODULE = Linux::Event::Net::HTTP::_Parser::HTTP1    PACKAGE = Linux::Event::Net::HTTP::Request
+MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::Request
 
 SV *
 method(self)
@@ -1112,7 +1140,7 @@ DESTROY(self)
     Safefree(state);
     sv_setiv(inner, 0);
 
-MODULE = Linux::Event::Net::HTTP::_Parser::HTTP1    PACKAGE = Linux::Event::Net::HTTP::Response
+MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::Response
 
 SV *
 _serialize_head(self, http_version = "1.1")
@@ -1134,9 +1162,9 @@ _serialize_head(self, http_version = "1.1")
     int saw_transfer_encoding = 0;
   CODE:
     if (!SvROK(self) ||
-        !sv_derived_from(self, "Linux::Event::Net::HTTP::Response") ||
+        !sv_derived_from(self, "Linux::Event::HTTP::Response") ||
         SvTYPE(SvRV(self)) != SVt_PVHV)
-        croak("not a Linux::Event::Net::HTTP::Response object");
+        croak("not a Linux::Event::HTTP::Response object");
 
     if (strNE(http_version, "1.0") && strNE(http_version, "1.1"))
         croak("HTTP/1 response version must be 1.0 or 1.1");
@@ -1258,5 +1286,153 @@ _serialize_head(self, http_version = "1.1")
 
     sv_catpvn(head, "\r\n", 2);
     RETVAL = head;
+  OUTPUT:
+    RETVAL
+
+MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::_HTTP1::Chunked
+PROTOTYPES: DISABLE
+
+SV *
+new(CLASS)
+    const char *CLASS
+  PREINIT:
+    struct phr_chunked_decoder *decoder;
+  CODE:
+    Newxz(decoder, 1, struct phr_chunked_decoder);
+    decoder->consume_trailer = 1;
+    RETVAL = newSV(0);
+    sv_setref_pv(RETVAL, CLASS, (void *)decoder);
+  OUTPUT:
+    RETVAL
+
+void
+feed(self, buffer, emit = 1)
+    SV *self
+    SV *buffer
+    int emit
+  PREINIT:
+    struct phr_chunked_decoder *decoder;
+    STRLEN buffer_len;
+    char *buf;
+    size_t decoded_len;
+    ssize_t result;
+    size_t leftover;
+    SV *decoded = NULL;
+  PPCODE:
+    decoder = decoder_from_object(aTHX_ self);
+
+    if (SvREADONLY(buffer))
+        croak("chunked decoder input buffer must be writable");
+
+    sv_force_normal(buffer);
+    buf = SvPVbyte_force(buffer, buffer_len);
+    decoded_len = (size_t)buffer_len;
+
+    result = phr_decode_chunked(decoder, buf, &decoded_len);
+    if (result == -1)
+        croak("malformed HTTP/1 chunked request body");
+
+    if (emit && decoded_len != 0)
+        decoded = newSVpvn(buf, decoded_len);
+
+    if (result >= 0) {
+        leftover = (size_t)result;
+        if (leftover != 0)
+            memmove(buf, buf + decoded_len, leftover);
+        SvCUR_set(buffer, (STRLEN)leftover);
+        buf[leftover] = '\0';
+    } else {
+        SvCUR_set(buffer, 0);
+        buf[0] = '\0';
+    }
+    SvUTF8_off(buffer);
+
+    EXTEND(SP, 2);
+    PUSHs(sv_2mortal(newSViv(result >= 0 ? 1 : 0)));
+    if (decoded != NULL)
+        PUSHs(sv_2mortal(decoded));
+    else
+        PUSHs(&PL_sv_undef);
+
+void
+DESTROY(self)
+    SV *self
+  PREINIT:
+    SV *inner;
+    struct phr_chunked_decoder *decoder;
+  CODE:
+    if (!SvROK(self))
+        XSRETURN_EMPTY;
+
+    inner = SvRV(self);
+    decoder = INT2PTR(struct phr_chunked_decoder *, SvIV(inner));
+    if (decoder == NULL)
+        XSRETURN_EMPTY;
+
+    Safefree(decoder);
+    sv_setiv(inner, 0);
+
+MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::_HTTP1
+PROTOTYPES: DISABLE
+
+SV *
+build_default_final(CLASS, request, body)
+    const char *CLASS
+    SV *request
+    SV *body
+  PREINIT:
+    le_http_request_state *state;
+    SV *body_copy = NULL;
+    STRLEN body_len = 0;
+    const char *body_bytes = "";
+    SV *wire;
+  CODE:
+    (void)CLASS;
+    state = request_state_from_object(aTHX_ request);
+
+    /*
+     * This is intentionally a very narrow experimental fast path. Anything
+     * outside the common persistent HTTP/1.1 scalar-response case falls back
+     * to the existing Perl response state machine.
+     */
+    if (state->minor_version != 1 || !state->keep_alive ||
+        request_method_is_head(state))
+        XSRETURN_UNDEF;
+
+    if (SvROK(body))
+        croak("end(): body must be a scalar byte string");
+
+    /*
+     * The common callback result is already an ordinary, non-magical byte
+     * string. Read that scalar directly: final wire construction necessarily
+     * copies the bytes, so an intermediate newSVsv() adds allocation/memcpy.
+     *
+     * Keep copy-based behavior for UTF-8, magical, and non-PV scalars so UTF-8
+     * downgrade validation never mutates the caller's value.
+     */
+    if (!SvOK(body)) {
+        body_bytes = "";
+        body_len = 0;
+    } else if (SvPOK(body) && !SvUTF8(body) && !SvGMAGICAL(body)) {
+        body_bytes = SvPVbyte(body, body_len);
+    } else {
+        body_copy = newSVsv(body);
+        if (SvUTF8(body_copy) && !sv_utf8_downgrade(body_copy, TRUE)) {
+            SvREFCNT_dec(body_copy);
+            croak("end(): body contains wide characters; encode it to bytes first");
+        }
+        body_bytes = SvPVbyte(body_copy, body_len);
+    }
+
+    wire = newSVpvf(
+        "HTTP/1.1 200 OK\r\nContent-Length: %" UVuf "\r\n\r\n",
+        (UV)body_len
+    );
+    sv_catpvn(wire, body_bytes, body_len);
+
+    if (body_copy != NULL)
+        SvREFCNT_dec(body_copy);
+
+    RETVAL = wire;
   OUTPUT:
     RETVAL

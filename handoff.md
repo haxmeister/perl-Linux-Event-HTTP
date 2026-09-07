@@ -1,10 +1,10 @@
-# Linux::Event::Net::HTTP handoff
+# Linux::Event::HTTP handoff
 
 Updated: 2026-09-07 (America/Chicago)
 
 ## Start here next session
 
-- Repo: `haxmeister/perl-Linux-Event-Net-HTTP`
+- Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Working branch: `main`
 - PR #11 (`Add cross-server HTTP comparison benchmarks`) was merged into `main` as `96b7003ad4481a9024d0476a5fc7a2131e32e8a0`.
 - PR #13 (`Add optimized final-response path`) was merged into `main` as `c2098c14801b3f446c9bc381d1ac63b1589ac925`.
@@ -15,7 +15,7 @@ Updated: 2026-09-07 (America/Chicago)
 
 ### Cross-server benchmark harness
 
-The repository now has a reproducible shared-client comparison harness for Linux::Event::Net::HTTP, Feersum, Mojolicious, Node.js, Go, aiohttp, and optional libh2o reference runs. GitHub-hosted absolute throughput is treated as directional only; same-run ratios are the useful signal.
+The repository now has a reproducible shared-client comparison harness for Linux::Event::HTTP, Feersum, Mojolicious, Node.js, Go, aiohttp, and optional libh2o reference runs. GitHub-hosted absolute throughput is treated as directional only; same-run ratios are the useful signal.
 
 ### Optimized bodyless final-response API
 
@@ -37,7 +37,7 @@ The focused regression benchmark is `bench/run-http-final-response.pl`. The cumu
 
 ### Native response builder
 
-A narrow `Linux::Event::Net::HTTP::_Native::Response1` builder handles the eligible default-final response shape. Its ordinary non-magical byte-scalar path avoids a temporary body copy. A same-run A/B measured about 48 ns saved for a 32-byte response body. This is a worthwhile local optimization, not the explanation for the whole server-level gain.
+A narrow `Linux::Event::HTTP::_HTTP1` builder handles the eligible default-final response shape. Its ordinary non-magical byte-scalar path avoids a temporary body copy. A same-run A/B measured about 48 ns saved for a 32-byte response body. This is a worthwhile local optimization, not the explanation for the whole server-level gain.
 
 ## Performance conclusion
 

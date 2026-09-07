@@ -1,4 +1,4 @@
-package Linux::Event::Net::HTTP;
+package Linux::Event::HTTP;
 use v5.36;
 use strict;
 use warnings;
@@ -11,7 +11,7 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP - native high-performance HTTP protocol support for Linux::Event
+Linux::Event::HTTP - native high-performance HTTP protocol support for Linux::Event
 
 =head1 VERSION
 
@@ -19,7 +19,7 @@ Version 0.001
 
 =head1 DESCRIPTION
 
-Linux::Event::Net::HTTP is an HTTP protocol distribution built on
+Linux::Event::HTTP is an HTTP protocol distribution built on
 L<Linux::Event>. It is intentionally a protocol layer rather than a web
 framework.
 

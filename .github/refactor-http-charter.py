@@ -9,25 +9,25 @@ def tracked_files():
 
 
 subprocess.check_call([
-    'git', 'mv', 'lib/Linux/Event/Net/HTTP.pm', 'lib/Linux/Event/HTTP.pm'
+    'git', 'mv', 'lib/Linux/Event/HTTP.pm', 'lib/Linux/Event/HTTP.pm'
 ])
 subprocess.check_call([
-    'git', 'mv', 'lib/Linux/Event/Net/HTTP', 'lib/Linux/Event/HTTP'
+    'git', 'mv', 'lib/Linux/Event/HTTP', 'lib/Linux/Event/HTTP'
 ])
 Path('lib/Linux/Event/HTTP/Server').mkdir(parents=True, exist_ok=True)
 subprocess.check_call([
     'git', 'mv',
-    'lib/Linux/Event/HTTP/Connection.pm',
+    'lib/Linux/Event/HTTP/Server/Connection.pm',
     'lib/Linux/Event/HTTP/Server/Connection.pm',
 ])
 
 replacements = [
-    (b'Linux::Event::Net::HTTP', b'Linux::Event::HTTP'),
-    (b'Linux::Event::HTTP::Connection', b'Linux::Event::HTTP::Server::Connection'),
-    (b'lib/Linux/Event/Net/HTTP', b'lib/Linux/Event/HTTP'),
-    (b'lib/Linux/Event/HTTP/Connection.pm', b'lib/Linux/Event/HTTP/Server/Connection.pm'),
-    (b'perl-Linux-Event-Net-HTTP', b'perl-Linux-Event-HTTP'),
-    (b'Linux-Event-Net-HTTP', b'Linux-Event-HTTP'),
+    (b'Linux::Event::HTTP', b'Linux::Event::HTTP'),
+    (b'Linux::Event::HTTP::Server::Connection', b'Linux::Event::HTTP::Server::Connection'),
+    (b'lib/Linux/Event/HTTP', b'lib/Linux/Event/HTTP'),
+    (b'lib/Linux/Event/HTTP/Server/Connection.pm', b'lib/Linux/Event/HTTP/Server/Connection.pm'),
+    (b'perl-Linux-Event-HTTP', b'perl-Linux-Event-HTTP'),
+    (b'Linux-Event-HTTP', b'Linux-Event-HTTP'),
 ]
 
 for path in tracked_files():
@@ -54,10 +54,10 @@ assert 'decoder_from_object' not in http1
 assert 'request_state_from_object' in http1
 
 http1 = http1.replace(
-    'MODULE = Linux::Event::HTTP::_Parser::HTTP1',
+    'MODULE = Linux::Event::HTTP::_HTTP1',
     'MODULE = Linux::Event::HTTP::_HTTP1',
 ).replace(
-    'PACKAGE = Linux::Event::HTTP::_Parser::HTTP1',
+    'PACKAGE = Linux::Event::HTTP::_HTTP1',
     'PACKAGE = Linux::Event::HTTP::_HTTP1',
 )
 
@@ -71,10 +71,10 @@ chunk_helper_start = chunked.index(
 chunk_module = chunked.index('MODULE = ')
 chunk_helpers = chunked[chunk_helper_start:chunk_module]
 chunk_xsubs = chunked[chunk_module:].replace(
-    'MODULE = Linux::Event::HTTP::_Parser::HTTP1::Chunked',
+    'MODULE = Linux::Event::HTTP::_HTTP1::Chunked',
     'MODULE = Linux::Event::HTTP::_HTTP1',
 ).replace(
-    'PACKAGE = Linux::Event::HTTP::_Parser::HTTP1::Chunked',
+    'PACKAGE = Linux::Event::HTTP::_HTTP1::Chunked',
     'PACKAGE = Linux::Event::HTTP::_HTTP1::Chunked',
 )
 
@@ -82,10 +82,10 @@ response_helper_start = response1.index('static int\nrequest_method_is_head')
 response_module = response1.index('MODULE = ')
 response_helpers = response1[response_helper_start:response_module]
 response_xsubs = response1[response_module:].replace(
-    'MODULE = Linux::Event::HTTP::_Native::Response1',
+    'MODULE = Linux::Event::HTTP::_HTTP1',
     'MODULE = Linux::Event::HTTP::_HTTP1',
 ).replace(
-    'PACKAGE = Linux::Event::HTTP::_Native::Response1',
+    'PACKAGE = Linux::Event::HTTP::_HTTP1',
     'PACKAGE = Linux::Event::HTTP::_HTTP1',
 )
 
@@ -111,9 +111,9 @@ Path('lib/Linux/Event/HTTP/_HTTP1.pm').write_text(
 )
 
 second = [
-    (b'Linux::Event::HTTP::_Parser::HTTP1::Chunked', b'Linux::Event::HTTP::_HTTP1::Chunked'),
-    (b'Linux::Event::HTTP::_Parser::HTTP1', b'Linux::Event::HTTP::_HTTP1'),
-    (b'Linux::Event::HTTP::_Native::Response1', b'Linux::Event::HTTP::_HTTP1'),
+    (b'Linux::Event::HTTP::_HTTP1::Chunked', b'Linux::Event::HTTP::_HTTP1::Chunked'),
+    (b'Linux::Event::HTTP::_HTTP1', b'Linux::Event::HTTP::_HTTP1'),
+    (b'Linux::Event::HTTP::_HTTP1', b'Linux::Event::HTTP::_HTTP1'),
 ]
 for path in tracked_files() + [Path('lib/Linux/Event/HTTP/_HTTP1.pm')]:
     if not path.is_file():
@@ -149,7 +149,7 @@ makefile.write_text(text)
 xs_make = Path('xshttp1/Makefile.PL')
 text = xs_make.read_text()
 text = text.replace(
-    "NAME             => 'Linux::Event::HTTP::_Parser::HTTP1'",
+    "NAME             => 'Linux::Event::HTTP::_HTTP1'",
     "NAME             => 'Linux::Event::HTTP::_HTTP1'",
 )
 text = text.replace(
@@ -170,9 +170,9 @@ subprocess.check_call(['git', 'rm', '-r', '-f', 'xsresponse1'])
 manifest = Path('MANIFEST').read_text().splitlines()
 mapped = []
 for line in manifest:
-    line = line.replace('lib/Linux/Event/Net/HTTP', 'lib/Linux/Event/HTTP')
+    line = line.replace('lib/Linux/Event/HTTP', 'lib/Linux/Event/HTTP')
     line = line.replace(
-        'lib/Linux/Event/HTTP/Connection.pm',
+        'lib/Linux/Event/HTTP/Server/Connection.pm',
         'lib/Linux/Event/HTTP/Server/Connection.pm',
     )
     if line.startswith('lib/Linux/Event/HTTP/_Parser'):
@@ -188,7 +188,7 @@ Path('MANIFEST').write_text('\n'.join(sorted(set(mapped))) + '\n')
 
 # Hard-stop on stale package names before building.
 old = subprocess.run(
-    ['git', 'grep', '-n', 'Linux::Event::Net::HTTP', '--', ':!handoff.md'],
+    ['git', 'grep', '-n', 'Linux::Event::HTTP', '--', ':!handoff.md'],
     capture_output=True,
     text=True,
 )
@@ -199,7 +199,7 @@ if old.returncode == 0:
 obsolete = subprocess.run(
     [
         'git', 'grep', '-nE',
-        'Linux::Event::HTTP::_Parser::HTTP1|Linux::Event::HTTP::_Native::Response1',
+        'Linux::Event::HTTP::_HTTP1|Linux::Event::HTTP::_HTTP1',
     ],
     capture_output=True,
     text=True,

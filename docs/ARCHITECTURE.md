@@ -1,6 +1,6 @@
-# Linux::Event::Net::HTTP architecture
+# Linux::Event::HTTP architecture
 
-Linux::Event::Net::HTTP is a protocol implementation, not a web framework.
+Linux::Event::HTTP is a protocol implementation, not a web framework.
 
 ## Boundaries
 
@@ -47,7 +47,7 @@ The design is divided into three layers:
 
 picohttpparser is vendored at a recorded upstream commit and compiled as part of
 this distribution. The parser package is private; applications receive
-Linux::Event::Net::HTTP::Request objects rather than parser offsets or pico
+Linux::Event::HTTP::Request objects rather than parser offsets or pico
 structures.
 
 A native Request allocation contains request metadata, header slices, stable
@@ -151,7 +151,7 @@ requirement of the public API.
 
 ## HTTP/1 connection
 
-`Linux::Event::Net::HTTP::Connection` is itself a
+`Linux::Event::HTTP::Server::Connection` is itself a
 `Linux::Event::IO::Sock::Stream` subclass. Its cached `on_data` callback is the
 HTTP protocol engine, so there is no wrapper object between Linux::Event byte
 I/O and HTTP parsing. Linux::Event continues to own transport, TLS, write
@@ -166,7 +166,7 @@ the connection continues consuming the current request before advancing.
 
 ## HTTP Server convenience
 
-`Linux::Event::Net::HTTP::Server` is a control-plane convenience around
+`Linux::Event::HTTP::Server` is a control-plane convenience around
 `Linux::Event::IO::Sock::Listener`; it is not another protocol or transport
 engine. The layering remains:
 
@@ -202,7 +202,7 @@ other Linux::Event Stream policy:
 
 ```perl
 package SecureHTTP;
-use parent 'Linux::Event::Net::HTTP::Connection';
+use parent 'Linux::Event::HTTP::Server::Connection';
 use Linux::Event::TLS
     cert_file => '/etc/myapp/server-cert.pem',
     key_file  => '/etc/myapp/server-key.pem',

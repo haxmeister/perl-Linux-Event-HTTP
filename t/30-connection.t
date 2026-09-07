@@ -7,11 +7,11 @@ use Test::More;
 use Linux::Event::Loop;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Net::HTTP::Connection;
+use Linux::Event::HTTP::Server::Connection;
 
 {
     package T::HTTPConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
     use Scalar::Util qw(refaddr);
 
     sub on_request ($self, $request, $response) {
@@ -154,7 +154,7 @@ like(
 
 {
     package T::DeferredHTTPConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
     use Linux::Event::Kernel::Timer;
 
     sub on_request ($self, $request, $response) {

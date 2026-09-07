@@ -3,9 +3,9 @@ use strict;
 use warnings;
 
 use Test::More;
-use Linux::Event::Net::HTTP::_Parser::HTTP1;
+use Linux::Event::HTTP::_HTTP1;
 
-my $parser = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+my $parser = 'Linux::Event::HTTP::_HTTP1';
 
 my $head = join '',
     "GET /hello?x=1 HTTP/1.1\r\n",
@@ -18,7 +18,7 @@ my $head = join '',
 my $buffer = $head . 'BODY';
 my $request = $parser->parse_request($buffer);
 
-isa_ok($request, 'Linux::Event::Net::HTTP::Request');
+isa_ok($request, 'Linux::Event::HTTP::Request');
 is($request->_consumed, length($head), 'native request retains consumed header length');
 is($request->method, 'GET', 'method materializes on access');
 is($request->target, '/hello?x=1', 'target materializes on access');

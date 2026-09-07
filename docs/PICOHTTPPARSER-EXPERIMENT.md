@@ -1,6 +1,6 @@
 # picohttpparser experiment
 
-This branch evaluates vendored picohttpparser as the native HTTP/1 request-head parser for Linux::Event::Net::HTTP.
+This branch evaluates vendored picohttpparser as the native HTTP/1 request-head parser for Linux::Event::HTTP.
 
 ## Result
 
@@ -22,13 +22,13 @@ The distribution never downloads picohttpparser while configuring, building, tes
 
 ## Parser boundary
 
-`Linux::Event::Net::HTTP::_Parser::HTTP1` is private. It does not establish a public parser API.
+`Linux::Event::HTTP::_HTTP1` is private. It does not establish a public parser API.
 
 The XS wrapper uses picohttpparser to identify the request method, request target, HTTP/1 minor version, and header name/value spans.
 
 `probe_request` exposes the lowest-overhead parse path for benchmarking and connection-state work. `parse_request_offsets` remains a private benchmark path that exposes offsets as Perl arrays so its allocation cost can be compared directly.
 
-The application-facing path is `parse_request`, which creates a `Linux::Event::Net::HTTP::Request` backed by native state. One C allocation contains the request metadata, header slice table, and a private copy of the parsed request-head bytes. It does not eagerly create a Perl scalar for every parsed field.
+The application-facing path is `parse_request`, which creates a `Linux::Event::HTTP::Request` backed by native state. One C allocation contains the request metadata, header slice table, and a private copy of the parsed request-head bytes. It does not eagerly create a Perl scalar for every parsed field.
 
 `Request` materializes method, target, header names, and header values only when the application asks for them. Header-name lookup is performed directly against the native slices with ASCII case-insensitive comparison before a value is materialized.
 
@@ -53,7 +53,7 @@ Header lookup is ASCII case-insensitive, as required for HTTP field names, but l
 
 ## Strict HTTP policy
 
-picohttpparser can report obsolete folded header lines as continuation entries. Linux::Event::Net::HTTP rejects those entries rather than accepting or normalizing `obs-fold`.
+picohttpparser can report obsolete folded header lines as continuation entries. Linux::Event::HTTP rejects those entries rather than accepting or normalizing `obs-fold`.
 
 The wrapper also imposes an explicit maximum header count. The current hard ceiling is 256, with a default parse limit of 100.
 

@@ -7,12 +7,12 @@ use Test::More;
 use Linux::Event::IO::Sock::Stream;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::Loop;
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Server;
 
 {
     package T::FinalResponse;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request_final ($self, $request) {
         ++$self->data->{final_hits};
@@ -59,7 +59,7 @@ sub new_state (%extra) {
 
 sub run_exchange ($request_wire, $state, $expected_wire_body = undef) {
     my $loop = Linux::Event::Loop->new;
-    my $server = Linux::Event::Net::HTTP::Server->new(
+    my $server = Linux::Event::HTTP::Server->new(
         loop => $loop,
         host => '127.0.0.1',
         port => 0,

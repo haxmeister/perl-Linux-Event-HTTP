@@ -4,8 +4,8 @@ use strict;
 use warnings;
 
 use Linux::Event::Loop;
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Server;
 
 my $port = $ENV{BENCH_PORT} // die "BENCH_PORT is required\n";
 my $response_bytes = $ENV{BENCH_RESPONSE_BYTES} // 32;
@@ -14,8 +14,8 @@ our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 my $payload = 'x' x $response_bytes;
 
 {
-    package Linux::Event::Net::HTTP::Bench::NaturalCompareConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::NaturalCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub stream_options ($class) {
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
@@ -28,8 +28,8 @@ my $payload = 'x' x $response_bytes;
 }
 
 {
-    package Linux::Event::Net::HTTP::Bench::RequestEndCompareConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::RequestEndCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub stream_options ($class) {
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
@@ -46,8 +46,8 @@ my $payload = 'x' x $response_bytes;
 }
 
 {
-    package Linux::Event::Net::HTTP::Bench::FastFinalCompareConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::FastFinalCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub stream_options ($class) {
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
@@ -71,15 +71,15 @@ my $payload = 'x' x $response_bytes;
 }
 
 my $connection_class = $mode eq 'natural'
-    ? 'Linux::Event::Net::HTTP::Bench::NaturalCompareConnection'
+    ? 'Linux::Event::HTTP::Bench::NaturalCompareConnection'
     : $mode eq 'request-end'
-        ? 'Linux::Event::Net::HTTP::Bench::RequestEndCompareConnection'
+        ? 'Linux::Event::HTTP::Bench::RequestEndCompareConnection'
         : $mode eq 'fast-final'
-            ? 'Linux::Event::Net::HTTP::Bench::FastFinalCompareConnection'
+            ? 'Linux::Event::HTTP::Bench::FastFinalCompareConnection'
             : die "unknown BENCH_LINUXEVENT_MODE: $mode\n";
 
 my $loop = Linux::Event::Loop->new;
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '127.0.0.1',
     port             => 0 + $port,

@@ -147,7 +147,7 @@ my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
 my @names = qw(parse bound state callbacks fused eligibility build mark commit end checked bodyless http);
 my @records;
 
-say 'Linux::Event::Net::HTTP transaction lifecycle ladder';
+say 'Linux::Event::HTTP transaction lifecycle ladder';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats read_budget_bytes=$read_budget_bytes";
 say 'mode=single-process loopback-tcp shared-client cumulative-stages';
 
@@ -204,7 +204,7 @@ if (defined $json_path) {
         environment => {
             perl => "$^V",
             linux_event => capture($^X, '-MLinux::Event', '-e', 'print $Linux::Event::VERSION'),
-            picohttpparser => capture($^X, '-Mblib', '-MLinux::Event::Net::HTTP::_Parser::HTTP1', '-e', 'print Linux::Event::Net::HTTP::_Parser::HTTP1->pico_version'),
+            picohttpparser => capture($^X, '-Mblib', '-MLinux::Event::HTTP::_HTTP1', '-e', 'print Linux::Event::HTTP::_HTTP1->pico_version'),
             os => $sysname,
             kernel => $release,
             machine => $machine,

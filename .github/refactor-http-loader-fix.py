@@ -9,11 +9,11 @@ for raw in subprocess.check_output(['git', 'ls-files', '-z']).split(b'\0'):
         continue
     data = path.read_bytes()
     changed = data.replace(
-        b'use Linux::Event::HTTP::_HTTP1::Chunked ();',
+        b'use Linux::Event::HTTP::_HTTP1 ();',
         b'use Linux::Event::HTTP::_HTTP1 ();',
     )
     changed = changed.replace(
-        b'use Linux::Event::HTTP::_HTTP1::Chunked;',
+        b'use Linux::Event::HTTP::_HTTP1;',
         b'use Linux::Event::HTTP::_HTTP1;',
     )
     if changed != data:

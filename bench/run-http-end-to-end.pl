@@ -14,13 +14,13 @@ use Time::HiRes qw(time clock_gettime CLOCK_PROCESS_CPUTIME_ID);
 
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
-use Linux::Event::Net::HTTP;
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Server;
 
 {
-    package Linux::Event::Net::HTTP::Bench::Connection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::Connection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
         my $state = $self->data;
@@ -120,8 +120,8 @@ die "timeout must be > 0\n" if $timeout <= 0;
 my $request_wire = make_request($request_body_bytes);
 my @records;
 
-say 'Linux::Event::Net::HTTP end-to-end benchmark';
-say "http_version=$Linux::Event::Net::HTTP::VERSION linux_event=$Linux::Event::Loop::VERSION perl=$^V";
+say 'Linux::Event::HTTP end-to-end benchmark';
+say "http_version=$Linux::Event::HTTP::VERSION linux_event=$Linux::Event::Loop::VERSION perl=$^V";
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats profile=$profile";
 
 for my $repeat (1 .. $repeats) {
@@ -199,7 +199,7 @@ if (defined $json_path) {
         environment => {
             perl => "$^V",
             linux_event => "$Linux::Event::Loop::VERSION",
-            linux_event_net_http => "$Linux::Event::Net::HTTP::VERSION",
+            linux_event_net_http => "$Linux::Event::HTTP::VERSION",
             os => $sysname,
             kernel => $release,
             machine => $machine,
@@ -247,12 +247,12 @@ sub spawn_server (%opt) {
             started => 0,
         };
 
-        my $server = Linux::Event::Net::HTTP::Server->new(
+        my $server = Linux::Event::HTTP::Server->new(
             loop => $loop,
             host => '127.0.0.1',
             port => 0,
             data => $state,
-            connection_class => 'Linux::Event::Net::HTTP::Bench::Connection',
+            connection_class => 'Linux::Event::HTTP::Bench::Connection',
         );
 
         print {$writer} "PORT ", $server->port, "\n";

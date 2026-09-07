@@ -10,8 +10,8 @@ use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Stream;
 use Linux::Event::TLS ();
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Server;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Server;
 
 my $openssl = -x '/usr/bin/openssl' ? '/usr/bin/openssl' : undef;
 if (!defined $openssl) {
@@ -50,7 +50,7 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
 
 {
     package T::SecureHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     Linux::Event::TLS->import(
         cert_file => $cert,
@@ -77,7 +77,7 @@ my $state = {
     client_ready => 0,
 };
 
-my $server = Linux::Event::Net::HTTP::Server->new(
+my $server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
     host             => '127.0.0.1',
     port             => 0,
@@ -144,7 +144,7 @@ is($state->{ready_class}, 'T::SecureHTTP',
     'Server readiness callback receives configured HTTP Connection subclass');
 is($state->{connection_class}, 'T::SecureHTTP',
     'HTTP request runs on configured TLS Connection subclass');
-is($state->{request_class}, 'Linux::Event::Net::HTTP::Request',
+is($state->{request_class}, 'Linux::Event::HTTP::Request',
     'decrypted request bytes reach ordinary HTTP Request parser');
 is($state->{ready_alpn}, 'http/1.1',
     'server readiness exposes negotiated HTTP/1.1 ALPN');
@@ -168,7 +168,7 @@ like(
 
 {
     package T::InvalidSecureHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     Linux::Event::TLS->import(
         verify => 0,
@@ -181,7 +181,7 @@ like(
 }
 
 my $ok = eval {
-    Linux::Event::Net::HTTP::Server->new(
+    Linux::Event::HTTP::Server->new(
         loop             => Linux::Event::Loop->new,
         host             => '127.0.0.1',
         port             => 0,

@@ -3,19 +3,19 @@ use warnings;
 use ExtUtils::MakeMaker;
 
 if ($^O ne 'linux') {
-    print "OS unsupported: Linux::Event::Net::HTTP supports Linux only\n";
+    print "OS unsupported: Linux::Event::HTTP supports Linux only\n";
     exit 0;
 }
 
 my @public_modules = qw(
-    Linux::Event::Net::HTTP
-    Linux::Event::Net::HTTP::Connection
-    Linux::Event::Net::HTTP::Request
-    Linux::Event::Net::HTTP::Response
-    Linux::Event::Net::HTTP::Server
+    Linux::Event::HTTP
+    Linux::Event::HTTP::Server::Connection
+    Linux::Event::HTTP::Request
+    Linux::Event::HTTP::Response
+    Linux::Event::HTTP::Server
 );
 
-my $distribution_version = MM->parse_version('lib/Linux/Event/Net/HTTP.pm');
+my $distribution_version = MM->parse_version('lib/Linux/Event/HTTP.pm');
 my %provides = map {
     my $file = "lib/$_.pm";
     $file =~ s{::}{/}g;
@@ -26,13 +26,13 @@ my %provides = map {
 } @public_modules;
 
 WriteMakefile(
-    NAME             => 'Linux::Event::Net::HTTP',
-    VERSION_FROM     => 'lib/Linux/Event/Net/HTTP.pm',
+    NAME             => 'Linux::Event::HTTP',
+    VERSION_FROM     => 'lib/Linux/Event/HTTP.pm',
     ABSTRACT         => 'Native high-performance HTTP protocol support for Linux::Event',
     AUTHOR           => 'Joshua S. Day <hax@cpan.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036000',
-    DIR              => [qw(xshttp1 xschunked xsresponse1)],
+    DIR              => [qw(xshttp1)],
     CONFIGURE_REQUIRES => {
         'ExtUtils::MakeMaker' => 0,
     },
@@ -48,23 +48,22 @@ WriteMakefile(
         },
         no_index => {
             package => [qw(
-                Linux::Event::Net::HTTP::_Native::Response1
-                Linux::Event::Net::HTTP::_Parser::HTTP1
-                Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked
-                Linux::Event::Net::HTTP::_ServerConnection
-                Linux::Event::Net::HTTP::_Upgrade
+                Linux::Event::HTTP::_HTTP1
+                Linux::Event::HTTP::_HTTP1::Chunked
+                Linux::Event::HTTP::_ServerConnection
+                Linux::Event::HTTP::_Upgrade
             )],
         },
         provides => \%provides,
         resources => {
-            homepage   => 'https://github.com/haxmeister/perl-Linux-Event-Net-HTTP',
+            homepage   => 'https://github.com/haxmeister/perl-Linux-Event-HTTP',
             bugtracker => {
-                web => 'https://github.com/haxmeister/perl-Linux-Event-Net-HTTP/issues',
+                web => 'https://github.com/haxmeister/perl-Linux-Event-HTTP/issues',
             },
             repository => {
                 type => 'git',
-                url  => 'https://github.com/haxmeister/perl-Linux-Event-Net-HTTP.git',
-                web  => 'https://github.com/haxmeister/perl-Linux-Event-Net-HTTP',
+                url  => 'https://github.com/haxmeister/perl-Linux-Event-HTTP.git',
+                web  => 'https://github.com/haxmeister/perl-Linux-Event-HTTP',
             },
         },
     },

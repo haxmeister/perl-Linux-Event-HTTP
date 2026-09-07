@@ -1,4 +1,4 @@
-package Linux::Event::Net::HTTP::Connection;
+package Linux::Event::HTTP::Server::Connection;
 use v5.36;
 use strict;
 use warnings;
@@ -9,15 +9,15 @@ use Carp qw(croak);
 use Scalar::Util qw(refaddr);
 use utf8 ();
 
-use Linux::Event::Net::HTTP::_Native::Response1 ();
-use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
-use Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked ();
-use Linux::Event::Net::HTTP::Response;
+use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::Response;
 
 our $VERSION = '0.001';
 
-my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
-my $CHUNKED = 'Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked';
+my $PARSER = 'Linux::Event::HTTP::_HTTP1';
+my $CHUNKED = 'Linux::Event::HTTP::_HTTP1::Chunked';
 my $MAX_REQUEST_HEAD = 65_536;
 my $MAX_HEADERS = 100;
 my %CLASS_HANDLER;
@@ -73,7 +73,7 @@ sub new ($class, %option) {
 }
 
 sub connect ($class, %option) {
-    croak 'connect(): HTTP client support is not implemented by Linux::Event::Net::HTTP::Connection';
+    croak 'connect(): HTTP client support is not implemented by Linux::Event::HTTP::Server::Connection';
 }
 
 sub on_data ($self, $bytes) {
@@ -306,7 +306,7 @@ sub _finalize_transaction ($self) {
 
 sub _complete_request_final_fallback ($self, $request, $body) {
     my $response
-        = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
+        = Linux::Event::HTTP::Response->_new_bound($self, $request);
     my $request_state = $self->{_http_bodyless_state} //= {
         mode      => 'none',
         body_done => 1,
@@ -411,7 +411,7 @@ sub _drive_http1 ($self) {
             if (defined $body) {
                 my $wire;
                 my $built = eval {
-                    $wire = Linux::Event::Net::HTTP::_Native::Response1
+                    $wire = Linux::Event::HTTP::_HTTP1
                         ->build_default_final($request, $body);
                     1;
                 };
@@ -433,7 +433,7 @@ sub _drive_http1 ($self) {
         }
 
         my $response
-            = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
+            = Linux::Event::HTTP::Response->_new_bound($self, $request);
         my $request_state;
         if ($bodyless) {
             $request_state = $self->{_http_bodyless_state} //= {
@@ -738,7 +738,7 @@ sub _protocol_error ($self, $status, $version = '1.1') {
 
     $version = '1.1' if $version ne '1.0' && $version ne '1.1';
 
-    my $response = Linux::Event::Net::HTTP::Response->_new(
+    my $response = Linux::Event::HTTP::Response->_new(
         status => $status,
         headers => [
             [ 'Content-Length', '0' ],
@@ -772,12 +772,12 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
+Linux::Event::HTTP::Server::Connection - HTTP/1 connection protocol state
 
 =head1 SYNOPSIS
 
     package UploadHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
         $self->data->{body} = '';
@@ -808,7 +808,7 @@ Linux::Event::Net::HTTP::Connection - HTTP/1 connection protocol state
 
 =head1 DESCRIPTION
 
-C<Linux::Event::Net::HTTP::Connection> is a
+C<Linux::Event::HTTP::Server::Connection> is a
 L<Linux::Event::IO::Sock::Stream> subclass. Linux::Event continues to own the
 socket, TLS transport, readiness, ordered-byte reads and writes, buffering, and
 backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
@@ -821,7 +821,7 @@ resolved and cached by connection class. Direct construction may supply the same
 names as constructor callbacks when lexical application scope is preferable.
 
 Ordinary request handling pairs each Request with one
-L<Linux::Event::Net::HTTP::Response> created by Connection, and the same Request
+L<Linux::Event::HTTP::Response> created by Connection, and the same Request
 and Response objects are passed to the ordinary callbacks for that transaction.
 A defined C<on_request_final> result may complete a bodyless request before a
 Response object is allocated.
@@ -909,7 +909,7 @@ still active, Connection pauses reads so a later request cannot overtake it.
 
 A direct/adopted connection may use constructor callbacks instead:
 
-    my $conn = Linux::Event::Net::HTTP::Connection->new(
+    my $conn = Linux::Event::HTTP::Server::Connection->new(
         fh => $connected_socket,
         on_request_final => sub ($conn, $req) {
             return "ok\n" if $req->target eq '/health';
@@ -982,7 +982,7 @@ HTTP protocol tuning rather than implicit accumulation.
 
 =head1 SEE ALSO
 
-L<Linux::Event::Net::HTTP::Request>, L<Linux::Event::Net::HTTP::Response>,
+L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Response>,
 L<Linux::Event::IO::Sock::Stream>, L<Linux::Event::IO::Sock::Listener>.
 
 =cut

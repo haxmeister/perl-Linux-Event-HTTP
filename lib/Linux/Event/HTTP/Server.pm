@@ -1,4 +1,4 @@
-package Linux::Event::Net::HTTP::Server;
+package Linux::Event::HTTP::Server;
 use v5.36;
 use strict;
 use warnings;
@@ -6,12 +6,12 @@ use warnings;
 use Carp qw(croak);
 
 use Linux::Event::IO::Sock::Listener;
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::_ServerConnection ();
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::_ServerConnection ();
 
 our $VERSION = '0.001';
 
-my $ADAPTER = 'Linux::Event::Net::HTTP::_ServerConnection';
+my $ADAPTER = 'Linux::Event::HTTP::_ServerConnection';
 
 sub _load_connection_class ($class) {
     croak 'new(): connection_class must be a package name'
@@ -23,8 +23,8 @@ sub _load_connection_class ($class) {
         require $file;
     }
 
-    croak 'new(): connection_class must inherit Linux::Event::Net::HTTP::Connection'
-        if !$class->isa('Linux::Event::Net::HTTP::Connection');
+    croak 'new(): connection_class must inherit Linux::Event::HTTP::Server::Connection'
+        if !$class->isa('Linux::Event::HTTP::Server::Connection');
     croak 'new(): connection_class cannot name the private Server adapter'
         if $class eq $ADAPTER;
 
@@ -49,7 +49,7 @@ sub new ($class, %option) {
 
     my $connection_class = _load_connection_class(
         delete($option{connection_class})
-            // 'Linux::Event::Net::HTTP::Connection',
+            // 'Linux::Event::HTTP::Server::Connection',
     );
 
     my %callbacks;
@@ -119,17 +119,17 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Server - HTTP server endpoint convenience
+Linux::Event::HTTP::Server - HTTP server endpoint convenience
 
 =head1 SYNOPSIS
 
     use v5.36;
     use Linux::Event::Loop;
-    use Linux::Event::Net::HTTP::Server;
+    use Linux::Event::HTTP::Server;
 
     my $loop = Linux::Event::Loop->new;
 
-    my $server = Linux::Event::Net::HTTP::Server->new(
+    my $server = Linux::Event::HTTP::Server->new(
         loop => $loop,
         host => '127.0.0.1',
         port => 8080,
@@ -143,10 +143,10 @@ Linux::Event::Net::HTTP::Server - HTTP server endpoint convenience
 
 =head1 DESCRIPTION
 
-C<Linux::Event::Net::HTTP::Server> is a small convenience layer around
+C<Linux::Event::HTTP::Server> is a small convenience layer around
 L<Linux::Event::IO::Sock::Listener>. It owns no socket or HTTP transport engine
 of its own. The Listener accepts connections and the configured
-L<Linux::Event::Net::HTTP::Connection> subclass owns each HTTP connection.
+L<Linux::Event::HTTP::Server::Connection> subclass owns each HTTP connection.
 
 The callback form retains each configured CV once and reuses it for every
 accepted Connection. No wrapper closure is created per connection and no extra
@@ -163,7 +163,7 @@ The object relationship is:
 
 =head2 Callback form
 
-    my $server = Linux::Event::Net::HTTP::Server->new(
+    my $server = Linux::Event::HTTP::Server->new(
         loop => $loop,
         host => '0.0.0.0',
         port => 8080,
@@ -176,7 +176,7 @@ The object relationship is:
 C<on_request> is required unless C<connection_class> provides an
 C<on_request> method. Optional C<on_body>, C<on_request_end>, and
 C<on_request_final> callbacks use the same signatures and semantics as
-L<Linux::Event::Net::HTTP::Connection> and are retained once by the Server.
+L<Linux::Event::HTTP::Server::Connection> and are retained once by the Server.
 
 C<data> becomes the C<data> value of each accepted HTTP Connection. The private
 Server acceptance state is not exposed through C<< $conn->data >>.
@@ -186,7 +186,7 @@ Server acceptance state is not exposed through C<< $conn->data >>.
 Applications whose common bodyless request can be answered with a default
 C<200 OK> scalar body may additionally provide C<on_request_final>:
 
-    my $server = Linux::Event::Net::HTTP::Server->new(
+    my $server = Linux::Event::HTTP::Server->new(
         loop => $loop,
         host => '0.0.0.0',
         port => 8080,
@@ -216,7 +216,7 @@ Response.
 =head2 Connection subclass form
 
     package MyHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
         $res->end("hello\n");
@@ -224,14 +224,14 @@ Response.
 
     package main;
 
-    my $server = Linux::Event::Net::HTTP::Server->new(
+    my $server = Linux::Event::HTTP::Server->new(
         loop             => $loop,
         host             => '127.0.0.1',
         port             => 8080,
         connection_class => 'MyHTTP',
     );
 
-C<connection_class> defaults to L<Linux::Event::Net::HTTP::Connection> and must
+C<connection_class> defaults to L<Linux::Event::HTTP::Server::Connection> and must
 name one of its subclasses. Constructor callbacks may still be supplied; as on
 direct Connection construction, they override same-named class methods for
 accepted instances.
@@ -247,7 +247,7 @@ HTTPS uses the same Server and Connection classes. Declare TLS on the configured
 Connection subclass using L<Linux::Event::TLS>:
 
     package SecureHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    use parent 'Linux::Event::HTTP::Server::Connection';
     use Linux::Event::TLS
         cert_file => '/etc/myapp/server-cert.pem',
         key_file  => '/etc/myapp/server-key.pem',
@@ -259,7 +259,7 @@ Connection subclass using L<Linux::Event::TLS>:
 
     package main;
 
-    my $server = Linux::Event::Net::HTTP::Server->new(
+    my $server = Linux::Event::HTTP::Server->new(
         loop             => $loop,
         host             => '0.0.0.0',
         port             => 443,
@@ -327,8 +327,8 @@ Connections retain their independent lifecycles.
 
 =head1 SEE ALSO
 
-L<Linux::Event::Net::HTTP::Connection>, L<Linux::Event::Net::HTTP::Request>,
-L<Linux::Event::Net::HTTP::Response>, L<Linux::Event::IO::Sock::Listener>,
+L<Linux::Event::HTTP::Server::Connection>, L<Linux::Event::HTTP::Request>,
+L<Linux::Event::HTTP::Response>, L<Linux::Event::IO::Sock::Listener>,
 L<Linux::Event::TLS>.
 
 =cut

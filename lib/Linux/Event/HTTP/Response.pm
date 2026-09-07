@@ -1,13 +1,13 @@
-package Linux::Event::Net::HTTP::Response;
+package Linux::Event::HTTP::Response;
 use v5.36;
 use strict;
 use warnings;
 
 use Scalar::Util qw(refaddr weaken);
 
-use Linux::Event::Net::HTTP::_Native::Response1 ();
-use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
-use Linux::Event::Net::HTTP::_Upgrade ();
+use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
 
@@ -164,7 +164,7 @@ sub _try_native_default_final ($self, $connection, $body) {
     my $request_state = $connection->{_http_request_state} or return 0;
     return 0 if !$request_state->{body_done};
 
-    my $wire = Linux::Event::Net::HTTP::_Native::Response1
+    my $wire = Linux::Event::HTTP::_HTTP1
         ->build_default_final($request, $body);
     return 0 if !defined $wire;
 
@@ -197,7 +197,7 @@ sub end ($self, $bytes = '') {
 }
 
 sub upgrade ($self, $target_class) {
-    Linux::Event::Net::HTTP::_Upgrade->schedule($self, $target_class);
+    Linux::Event::HTTP::_Upgrade->schedule($self, $target_class);
     return $self;
 }
 
@@ -244,7 +244,7 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Response - response half of an HTTP transaction
+Linux::Event::HTTP::Response - response half of an HTTP transaction
 
 =head1 SYNOPSIS
 
@@ -257,7 +257,7 @@ Linux::Event::Net::HTTP::Response - response half of an HTTP transaction
 =head1 DESCRIPTION
 
 Every successfully dispatched HTTP request receives one Response object created
-and bound by L<Linux::Event::Net::HTTP::Connection>. Applications do not
+and bound by L<Linux::Event::HTTP::Server::Connection>. Applications do not
 construct Response objects and do not pass them back to Connection.
 
 Response is the writable, transaction-scoped output handle for one HTTP
@@ -388,12 +388,12 @@ output are locked. Use C<is_upgrading> to distinguish this pending handoff.
 
 =head2 connection
 
-Returns the owning L<Linux::Event::Net::HTTP::Connection> while it remains
+Returns the owning L<Linux::Event::HTTP::Server::Connection> while it remains
 alive.
 
 =head2 request
 
-Returns the L<Linux::Event::Net::HTTP::Request> paired with this response.
+Returns the L<Linux::Event::HTTP::Request> paired with this response.
 
 =head2 is_started
 

@@ -10,9 +10,9 @@ use JSON::PP ();
 use POSIX qw(strftime uname);
 use Time::HiRes qw(time);
 
-use Linux::Event::Net::HTTP::Connection;
-use Linux::Event::Net::HTTP::Response;
-use Linux::Event::Net::HTTP::_Parser::HTTP1;
+use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Response;
+use Linux::Event::HTTP::_HTTP1;
 
 my $iterations = 200_000;
 my $warmup = 20_000;
@@ -33,7 +33,7 @@ die "warmup must be >= 0\n" if $warmup < 0;
 die "repeats must be > 0\n" if $repeats <= 0;
 die "response-bytes must be >= 0\n" if $response_bytes < 0;
 
-my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
+my $PARSER = 'Linux::Event::HTTP::_HTTP1';
 my $REQUEST_WIRE = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
 our $PAYLOAD = 'x' x $response_bytes;
 our $STATIC_HEAD = "HTTP/1.1 200 OK\r\nContent-Length: "
@@ -41,8 +41,8 @@ our $STATIC_HEAD = "HTTP/1.1 200 OK\r\nContent-Length: "
 our $SINK = 0;
 
 {
-    package Linux::Event::Net::HTTP::Bench::ResponsePathConnection;
-    use parent 'Linux::Event::Net::HTTP::Connection';
+    package Linux::Event::HTTP::Bench::ResponsePathConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub DESTROY ($self) { return }
     sub is_closed ($self) { 0 }
@@ -60,8 +60,8 @@ our $SINK = 0;
 }
 
 {
-    package Linux::Event::Net::HTTP::Bench::NoSerializeResponse;
-    use parent 'Linux::Event::Net::HTTP::Response';
+    package Linux::Event::HTTP::Bench::NoSerializeResponse;
+    use parent 'Linux::Event::HTTP::Response';
 
     sub _serialize_head ($self, $version = '1.1') {
         return $main::STATIC_HEAD;
@@ -78,7 +78,7 @@ my @case = (
         description => 'Response binding plus Perl request-state allocation and active-transaction assignment',
         code => sub {
             my $response = prepare_transaction(
-                $connection, $request, 'Linux::Event::Net::HTTP::Response',
+                $connection, $request, 'Linux::Event::HTTP::Response',
             );
             $SINK += $response->status;
         },
@@ -88,7 +88,7 @@ my @case = (
         description => '_response_start for a final scalar body, including automatic Content-Length and XS head serialization',
         code => sub {
             my $response = prepare_transaction(
-                $connection, $request, 'Linux::Event::Net::HTTP::Response',
+                $connection, $request, 'Linux::Event::HTTP::Response',
             );
             my ($state, $head)
                 = $connection->_response_start($response, $PAYLOAD, 1);
@@ -100,7 +100,7 @@ my @case = (
         description => '_response_start with Content-Length pre-populated directly, avoiding automatic header insertion work',
         code => sub {
             my $response = prepare_transaction(
-                $connection, $request, 'Linux::Event::Net::HTTP::Response',
+                $connection, $request, 'Linux::Event::HTTP::Response',
             );
             $response->{headers} = [
                 [ 'Content-Length', '' . length($PAYLOAD) ],
@@ -115,7 +115,7 @@ my @case = (
         description => '_complete_response transaction cleanup plus stub write with an already-built wire scalar',
         code => sub {
             my $response = prepare_transaction(
-                $connection, $request, 'Linux::Event::Net::HTTP::Response',
+                $connection, $request, 'Linux::Event::HTTP::Response',
             );
             $response->{started} = 1;
             $connection->{_http_response_state} = {
@@ -138,7 +138,7 @@ my @case = (
         code => sub {
             my $response = prepare_transaction(
                 $connection, $request,
-                'Linux::Event::Net::HTTP::Bench::NoSerializeResponse',
+                'Linux::Event::HTTP::Bench::NoSerializeResponse',
             );
             $response->end($PAYLOAD);
             $SINK += $connection->{_bench_wire_bytes};
@@ -150,7 +150,7 @@ my @case = (
         description => 'Full public Response->end path with normal response semantics and XS serialization',
         code => sub {
             my $response = prepare_transaction(
-                $connection, $request, 'Linux::Event::Net::HTTP::Response',
+                $connection, $request, 'Linux::Event::HTTP::Response',
             );
             $response->end($PAYLOAD);
             $SINK += $connection->{_bench_wire_bytes};
@@ -169,7 +169,7 @@ my @case = (
     },
 );
 
-say 'Linux::Event::Net::HTTP response-path decomposition';
+say 'Linux::Event::HTTP response-path decomposition';
 say "perl=$^V iterations=$iterations warmup=$warmup repeats=$repeats"
     . " response_bytes=$response_bytes";
 say 'transport is a stub; results measure HTTP response CPU only';
@@ -257,7 +257,7 @@ sub new_fake_connection () {
         _http_closing => 0,
         _bench_read_paused => 0,
         _bench_wire_bytes => 0,
-    }, 'Linux::Event::Net::HTTP::Bench::ResponsePathConnection';
+    }, 'Linux::Event::HTTP::Bench::ResponsePathConnection';
 }
 
 sub reset_fake_connection ($connection) {
@@ -277,7 +277,7 @@ sub prepare_transaction ($connection, $request, $response_class) {
     reset_fake_connection($connection);
     my $response = $response_class->_new_bound($connection, $request);
     my $request_state
-        = Linux::Event::Net::HTTP::Connection::_new_request_state($request);
+        = Linux::Event::HTTP::Server::Connection::_new_request_state($request);
     $request_state->{body_done} = 1;
     $connection->{_http_active_request} = $request;
     $connection->{_http_active_response} = $response;

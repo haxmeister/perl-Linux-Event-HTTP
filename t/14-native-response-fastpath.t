@@ -4,11 +4,11 @@ use warnings;
 
 use Test::More;
 
-use Linux::Event::Net::HTTP::_Native::Response1 ();
-use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
+use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::_HTTP1 ();
 
-my $parser = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
-my $native = 'Linux::Event::Net::HTTP::_Native::Response1';
+my $parser = 'Linux::Event::HTTP::_HTTP1';
+my $native = 'Linux::Event::HTTP::_HTTP1';
 
 my $get = $parser->parse_request(
     "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n",

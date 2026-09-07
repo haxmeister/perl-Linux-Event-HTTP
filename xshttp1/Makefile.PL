@@ -3,9 +3,9 @@ use warnings;
 use ExtUtils::MakeMaker;
 
 WriteMakefile(
-    NAME             => 'Linux::Event::Net::HTTP::_Parser::HTTP1',
-    VERSION_FROM     => '../lib/Linux/Event/Net/HTTP.pm',
-    ABSTRACT         => 'Private native HTTP/1 parser for Linux::Event::Net::HTTP',
+    NAME             => 'Linux::Event::HTTP::_HTTP1',
+    VERSION_FROM     => '../lib/Linux/Event/HTTP.pm',
+    ABSTRACT         => 'Private native HTTP/1 wire primitives for Linux::Event::HTTP',
     AUTHOR           => 'Joshua S. Day <hax@cpan.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036000',
