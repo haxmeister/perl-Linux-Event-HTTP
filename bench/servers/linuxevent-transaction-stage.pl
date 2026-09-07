@@ -14,7 +14,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|state|callbacks|eligibility|build|mark|commit|end)\z/;
+    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|end)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -102,17 +102,41 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            last if !$self->_invoke_http_callback(
-                $NOOP, $request, $response,
-            );
-            $request_state->{body_done} = 1;
-
             my $handler = $main::STAGE eq 'end' ? $END : $NOOP;
-            last if !$self->_invoke_http_callback(
-                $handler, $request, $response,
-            );
+            if ($main::STAGE eq 'callbacks') {
+                last if !$self->_invoke_http_callback(
+                    $NOOP, $request, $response,
+                );
+                $request_state->{body_done} = 1;
+                last if !$self->_invoke_http_callback(
+                    $handler, $request, $response,
+                );
+            } else {
+                my $ok;
+                {
+                    local $self->{_http_dispatching} = 1;
+                    $ok = eval {
+                        $NOOP->($self, $request, $response);
+                        $request_state->{body_done} = 1;
+                        $handler->($self, $request, $response);
+                        1;
+                    };
+                }
+                if (!$ok) {
+                    $self->_fail_active_transaction(
+                        500, $request, $response,
+                    );
+                    last;
+                }
+            }
 
             if ($main::STAGE eq 'callbacks') {
+                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                $self->write($self->data->{wire});
+                next;
+            }
+
+            if ($main::STAGE eq 'fused') {
                 Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
                 next;

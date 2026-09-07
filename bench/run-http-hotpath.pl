@@ -167,6 +167,27 @@ my @case = (
         },
     },
     {
+        name => 'callback_pair_fused',
+        description => 'Two HTTP callbacks under one localized dispatch flag and eval boundary',
+        code => sub {
+            my $ok;
+            {
+                local $fake->{_http_dispatching} = 1;
+                $ok = eval {
+                    Linux::Event::Net::HTTP::Bench::HotPathConnection::bench_on_request(
+                        $fake, $template_request, $noop_response,
+                    );
+                    Linux::Event::Net::HTTP::Bench::HotPathConnection::bench_on_request(
+                        $fake, $template_request, $noop_response,
+                    );
+                    1;
+                };
+            }
+            die "fused callback pair unexpectedly failed\n" if !$ok;
+            $SINK += 1;
+        },
+    },
+    {
         name => 'response_serialize',
         description => 'Response allocation, Content-Length header creation, and XS response-head serialization',
         code => sub {

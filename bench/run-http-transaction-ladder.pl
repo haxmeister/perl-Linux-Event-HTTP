@@ -42,35 +42,41 @@ my %case = (
         stage => 'callbacks',
         description => 'Transaction state plus two _invoke_http_callback no-op dispatches; prebuilt response write',
     },
+    fused => {
+        label => '3e + fused callbacks',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'fused',
+        description => 'Transaction state plus both no-op callbacks under one dispatch flag and eval boundary; prebuilt response write',
+    },
     eligibility => {
-        label => '3e + native eligibility',
+        label => '3f + native eligibility',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'eligibility',
-        description => 'Guarded callbacks plus native-default response and active-transaction eligibility checks; prebuilt response write',
+        description => 'Fused callbacks plus native-default response and active-transaction eligibility checks; prebuilt response write',
     },
     build => {
-        label => '3f + native wire build',
+        label => '3g + native wire build',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'build',
         description => 'Native eligibility plus Response1 build_default_final; generated response write',
     },
     mark => {
-        label => '3g + response marking',
+        label => '3h + response marking',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'mark',
         description => 'Native wire build plus Response started/ended marking; generated response write',
     },
     commit => {
-        label => '3h + transaction commit',
+        label => '3i + transaction commit',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'commit',
         description => 'Response marking plus write-before-clear transaction commit and read-resume check',
     },
     end => {
-        label => '3i + public Response end',
+        label => '3j + public Response end',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'end',
-        description => 'Guarded request callback plus guarded request-end callback calling public Response->end through the native default-final fast path',
+        description => 'Fused request callbacks calling public Response->end through the native default-final fast path',
     },
     http => {
         label => '4 Full HTTP transaction',
@@ -126,7 +132,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(parse bound state callbacks eligibility build mark commit end http);
+my @names = qw(parse bound state callbacks fused eligibility build mark commit end http);
 my @records;
 
 say 'Linux::Event::Net::HTTP transaction lifecycle ladder';
@@ -181,7 +187,7 @@ if (defined $json_path) {
 
     my $report = {
         benchmark => 'linux-event-net-http-transaction-ladder',
-        benchmark_contract_version => 2,
+        benchmark_contract_version => 3,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
