@@ -10,12 +10,14 @@ bench/pico-parser.pl
 bench/run-http-comparison.pl
 bench/run-http-end-to-end.pl
 bench/run-http-layer-ladder.pl
+bench/run-http-transaction-ladder.pl
 bench/run-http-transport-floor.pl
 bench/servers/aiohttp-http.py
 bench/servers/linuxevent-http.pl
 bench/servers/linuxevent-parse-floor.pl
 bench/servers/linuxevent-perl-buffer-floor.pl
 bench/servers/linuxevent-stream-floor.pl
+bench/servers/linuxevent-transaction-stage.pl
 bench/servers/mojo-http.pl
 bench/servers/node-http.js
 bench/servers/twiggy-http.pl
