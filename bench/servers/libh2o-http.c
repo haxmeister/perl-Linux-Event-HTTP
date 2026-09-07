@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#define H2O_USE_LIBUV 0
 #include <h2o.h>
 
 static h2o_globalconf_t config;
