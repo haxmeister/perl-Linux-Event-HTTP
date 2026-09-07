@@ -21,7 +21,7 @@ sub new ($class, %option) {
     $option{data} = $state->{data};
 
     my $callbacks = $state->{callbacks};
-    for my $name (qw(on_request on_body on_request_end on_request_final)) {
+    for my $name (qw(on_request on_body on_request_end)) {
         $option{$name} = $callbacks->{$name}
             if exists $callbacks->{$name};
     }
