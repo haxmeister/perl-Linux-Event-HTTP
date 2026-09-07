@@ -17,7 +17,7 @@ Updated: 2026-09-07 (America/Chicago)
 2. Minimize C/XS maintenance; do not add a new native subsystem unless measurements make it necessary.
 3. Preserve the general Response/streaming model while providing a cheaper complete-response path where measurements justify it.
 4. libh2o remains a benchmark/reference, not the current HTTP/1 integration direction.
-5. GitHub hosted runner absolute throughput varies dramatically; prefer same-run ratios/A-B measurements.
+5. GitHub hosted-runner absolute throughput varies dramatically; prefer same-run ratios and A/B measurements.
 
 ## Production-shaped changes currently on this branch
 
@@ -36,7 +36,7 @@ Real `Connection` discovers/caches optional `on_request_final($conn,$request)`. 
 - callback exception or invalid body => protocol-safe 500
 - invalid Expect is rejected before callback dispatch
 
-This is production-shaped, but the public name `on_request_final` is still experimental.
+The implementation is production-shaped. `on_request_final` is still treated as an experimental public name until Server/API cleanup is complete.
 
 ### Native default-final builder copy reduction
 
@@ -44,111 +44,106 @@ Commit `2a04725` changed `Response1.xs::build_default_final` so an already-mater
 
 ## Decision-grade complete-response results
 
-Focused production-shaped runs before the builder-copy experiment:
+Repeated focused real-Connection results:
 
 - CI 34085015017: natural `35,589.8`, fast-final `46,963.4` req/s => **+31.96%**
 - CI 34085371457: natural `34,484.1`, fast-final `46,363.5` => **+34.45%**
 - CI 34085638210: natural `35,271.3`, fast-final `46,119.1` => **+30.76%**
+- CI 34086436382: natural `35,725.5`, fast-final `45,629.5` => **+27.72%**
+- CI 34086824437: natural `36,095.5`, fast-final `48,305.9` => **+33.83%**
 
-Fair shared cross-server CI 34085638210, same runner/harness, 10k measured, 1k warmup, 100 conns, pipeline=1, 32-byte body, 3 repeats:
+The specialized complete-response path is therefore a robust ~28-34% win over optimized natural `on_request -> Response->end` on these runners.
 
-- Linux::Event natural: `34,396.5 req/s`
-- Linux::Event fast-final: `46,034.3`
-- Go: `59,429.7`
-- Feersum: `73,843.8`
-- libh2o: `69,404.4` (noisy on this run)
-- Node: `22,677.7`
-- aiohttp: `19,596.6`
+### Fair shared cross-server examples
+
+CI 34085638210, same runner/harness:
+
+- Linux::Event natural `34,396.5`
+- Linux::Event fast-final `46,034.3`
+- Go `59,429.7`
+- Feersum `73,843.8`
+- libh2o `69,404.4` (noisy)
 
 Fast-final vs natural: **+33.83%**.
 
-CI 34085985640 landed on much faster hardware; absolute numbers roughly doubled across competitors. Same-run ratios still held: focused fast-final **+26.33%**, shared fast-final **+29.00%** over natural. Do not use the cross-run absolute jump as evidence for any code change.
+CI 34086824437:
+
+Natural pass:
+- Linux::Event `34,680.1`
+- Go `59,057.7`
+- Feersum `75,253.1`
+- libh2o `66,882.4` (one low repeat)
+
+Fast-final pass:
+- Linux::Event `46,778.6`
+- Go `59,362.0`
+- Feersum `74,193.8`
+- libh2o `72,448.5`
+
+Fast-final remains materially ahead of Node/aiohttp but below Go/Feersum/libh2o. Do not compare absolute throughput between different GitHub runners.
 
 ## CLOSED: response-builder temporary-body-copy A/B - CI 34086436382
 
-To isolate commit `2a04725`, a temporary private `_build_default_final_copy_reference` reproduced the old unconditional `newSVsv(body)` behavior in the same XS binary. `bench/run-response1-copy-ab.pl` alternated old-copy and production no-copy implementations on the same parsed Request and runner: 200k calls, 20k warmup, 5 repeats.
+A temporary private copy-reference XSUB reproduced the old unconditional `newSVsv(body)` path in the same binary. 200k calls, 20k warmup, 5 alternating repeats:
 
-Same-run median builder results:
+- 0-byte: no-copy `3,439,673.9`, copy `3,033,010.0 ops/s` => **+13.41%**
+- 32-byte: `3,051,201.8` vs `2,660,744.2` => **+14.67%**
+- 256-byte: `2,558,984.8` vs `2,259,119.6` => **+13.27%**
+- 4096-byte: `2,362,721.9` vs `1,844,456.8` => **+28.10%**
 
-- 0-byte body: no-copy `3,439,673.9 ops/s`, copy `3,033,010.0` => **+13.41%**
-- 32-byte body: no-copy `3,051,201.8`, copy `2,660,744.2` => **+14.67%**
-- 256-byte body: no-copy `2,558,984.8`, copy `2,259,119.6` => **+13.27%**
-- 4096-byte body: no-copy `2,362,721.9`, copy `1,844,456.8` => **+28.10%**
+At 32 bytes this saves about **48 ns/build**; at 4 KiB about **119 ns/build**. Decision: **keep the production no-copy optimization**, but describe it as a small local win, not a large end-to-end gain. The temporary copy-reference XSUB and benchmark have been removed.
 
-For the 32-byte benchmark response, this is approximately `327.7 ns/build` vs `375.8 ns/build`: about **48 ns saved per response build**. At 4 KiB the saving is about **119 ns/build**.
+## CLOSED: HTTP input-buffer adoption/clear experiment - CI 34086824437
+
+A same-run microbenchmark exercised the real pico parser under three input shapes. Proposed strategy: assign incoming bytes when `_http_input` is empty (Perl COW) instead of always `.=`; clear by assignment when the parser consumed all buffered input instead of always mutating with `substr`.
+
+300k parsed requests, 30k warmup, 5 alternating repeats, 45-byte request:
+
+- one complete request per incoming chunk:
+  - legacy `934,248.2 req/s`, ~`1070 ns/req`
+  - adopt/clear `954,392.6`, ~`1048 ns/req`
+  - **+2.16%** (~23 ns saved)
+- four coalesced requests per chunk:
+  - legacy `1,146,034.8`
+  - adopt/clear `1,125,172.1`
+  - **-1.82%**
+- one request split across two chunks:
+  - legacy `715,985.3`
+  - adopt/clear `708,374.0`
+  - **-1.06%**
 
 ### Decision
 
-**Keep the production no-copy optimization.** It is clearly real, stable, small, and semantically covered. Do not describe it as a large end-to-end server gain; at the 32-byte workload its absolute saving is only ~48 ns. Remove the temporary copy-reference XSUB, A/B benchmark, and CI step now that the question is closed.
-
-CI 34086436382 remained fully green. On that runner:
-
-Focused:
-- natural `35,725.5 req/s`
-- request-end `32,006.8`
-- fast-final `45,629.5`
-- fast-final vs natural **+27.72%**
-
-Shared:
-- natural Linux::Event `34,696.4`
-- fast-final Linux::Event `44,668.0`
-- Go `59,118.4`
-- Feersum `70,995.1`
-- libh2o `70,105.1`
-
-Shared fast-final vs natural: about **+28.74%**.
+**Do not integrate this optimization.** The favorable common-case saving is only ~23 ns and it regresses fragmented/coalesced shapes by ~1-2%. This is too workload-sensitive and too small against a ~20 us full transaction to justify branches in `Connection::on_data` / `_drive_http1`. Remove the temporary benchmark and CI step.
 
 ## Other closed conclusions
 
 1. A duplicated production bodyless Perl driver was tested and is not worthwhile (~2.4% over full HTTP in its decision run). Do not pursue it.
 2. pico + Linux::Event transport gets close to Feersum/libh2o before the general Perl transaction layer. Do not pursue production libh2o HTTP/1 integration now.
-3. Realistic Perl application callback return-body shapes preserve essentially all stripped-path performance; callback invocation itself is not the large cost.
+3. Realistic Perl application callback-return-body shapes preserve essentially all stripped-path performance; callback invocation itself is not the giant cost bucket.
 4. `Response->_new_bound` is roughly ~1 us on representative runners, while reusable bodyless state reset is ~0.15 us. Avoiding eager Response/general transaction machinery explains the large complete-response gain.
 5. Linux::Event core Stream already writes directly from the supplied scalar when no output is queued and copies only a partial/EAGAIN remainder. Queued segments drain with `writev`; there is no unconditional extra Stream copy after HTTP builds a wire scalar.
 6. Splitting head/body into two ordinary `write()` calls would likely exchange memcpy work for another syscall. Do not pursue without a dedicated segmented-submit measurement/core primitive.
-
-## Next bounded experiment: HTTP input-buffer adoption/clearing
-
-Current `Connection::on_data` always does:
-
-    $self->{_http_input} .= $bytes;
-
-and after parsing a request head `_drive_http1` always removes the consumed prefix with:
-
-    substr($self->{_http_input}, 0, $consumed, '');
-
-For the common empty-buffer + one-complete-request read, a possible pure-Perl optimization is:
-
-- if `_http_input` is empty, assign `$bytes` rather than concatenate, allowing Perl COW/value sharing;
-- after parsing, if `$consumed == length(_http_input)`, clear by assignment rather than prefix `substr` mutation;
-- retain concatenation/substr behavior for split or coalesced input.
-
-This adds branches, so **benchmark before changing production**. Use a same-run microbenchmark exercising the real pico parser with at least:
-
-1. one complete request per incoming chunk;
-2. multiple coalesced requests per chunk;
-3. a request split across chunks.
-
-Only integrate if the common case wins materially and split/coalesced behavior is neutral/acceptable.
+7. Current representative tiny costs from CI 34086824437: parse direct ~649 ns, parse under eval ~762 ns, request `body_mode` ~184 ns, no-Expect validation ~352 ns, `Response->_new_bound` ~1.0 us, bodyless state reuse ~145 ns, active transaction assign/clear ~462 ns.
 
 ## Current conclusions
 
 1. More bespoke HTTP XS/C is still not justified as a broad move.
 2. Safe early bodyless completion belongs in the ordinary API and remains green.
-3. The specialized complete-response API remains strongly justified: roughly **+26-34%** over optimized natural depending on runner/harness.
-4. The no-temporary-copy response builder improvement is worth keeping, but it is a small local optimization, not the explanation for the remaining gap.
-5. The next work should remain low-risk and measurement-driven; the input-buffer copy/mutation path is the next candidate.
-6. The old private `_Experiment::FastFinalConnection` implementation is obsolete and should be removed after the public API direction is finalized.
-7. `on_request_final` remains an experimental name. Do not cement it until the remaining bounded experiments and API review are complete.
+3. The specialized complete-response API is now strongly justified by repeated real-Connection and shared-harness evidence: roughly **+28-34%** over optimized natural usage.
+4. The no-temporary-copy response builder improvement is worth keeping, but is a small local optimization.
+5. The input-buffer COW/clear idea is closed and should not be integrated.
+6. Remaining microcosts are mostly hundreds of nanoseconds; do not accumulate complexity chasing them without a credible aggregate win.
+7. The old private `_Experiment::FastFinalConnection` implementation is obsolete.
 8. PR #13 and PR #11 remain unmerged.
 
 ## Immediate next work
 
-1. Remove the temporary response-copy reference XSUB, A/B benchmark, and CI step while keeping the production no-copy implementation/tests.
-2. Add and run the same-run input-buffer adoption/clearing benchmark described above.
-3. If useful, integrate the input-buffer optimization into real `Connection` and validate semantic/full CI plus focused/shared performance.
-4. Then decide the public complete-response API name and surface it through `Server` constructor callbacks as well as Connection subclass methods.
-5. Remove the obsolete private fast-final experiment module/stale artifacts after API decision.
-6. Rerun full semantic CI and natural/fast-final cross-server comparison before preparing PR #13 for review.
+1. Remove `bench/run-http-input-buffer-ab.pl` and its CI step.
+2. Finalize the complete-response API surface. `on_request_final` is currently the leading name because HTTP uses “final response” distinctly from interim responses, while `complete` would collide conceptually with request-body completion / `on_request_end`.
+3. Add `on_request_final` support to `Server` constructor callback forwarding with semantic tests and documentation, while preserving ordinary `on_request` as the required general/body-bearing fallback.
+4. Remove obsolete private `_Experiment::FastFinalConnection` and stale experiment artifacts.
+5. Rerun full semantic CI and natural/fast-final cross-server comparison.
+6. Prepare PR #13 for review, but **do not merge it** without explicit authorization.
 
 Do not merge PR #13 or PR #11 without explicit authorization.
