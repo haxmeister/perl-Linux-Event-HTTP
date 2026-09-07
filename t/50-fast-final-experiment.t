@@ -7,12 +7,12 @@ use Test::More;
 use Linux::Event::IO::Sock::Stream;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::Loop;
+use Linux::Event::Net::HTTP::Connection;
 use Linux::Event::Net::HTTP::Server;
-use Linux::Event::Net::HTTP::_Experiment::FastFinalConnection;
 
 {
     package T::FastFinal;
-    use parent 'Linux::Event::Net::HTTP::_Experiment::FastFinalConnection';
+    use parent 'Linux::Event::Net::HTTP::Connection';
 
     sub on_request_final ($self, $request) {
         ++$self->data->{final_hits};
@@ -202,6 +202,18 @@ like(
     'fast-final callback exception becomes protocol-safe 500',
 );
 is($state->{general_hits}, 0, 'exception does not fall through to general handler');
+
+$state = new_state(final_result => []);
+$wire = run_exchange(
+    "GET /invalid-body HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    $state,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 500 [^\r\n]+\r\nContent-Length: 0\r\nConnection: close\r\n\r\n\z/s,
+    'invalid returned body becomes protocol-safe 500',
+);
+is($state->{general_hits}, 0, 'invalid returned body does not enter general handler');
 
 $state = new_state(final_result => "ignored\n");
 $wire = run_exchange(
