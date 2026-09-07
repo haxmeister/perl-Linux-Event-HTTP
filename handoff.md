@@ -1,6 +1,6 @@
 # Linux::Event::Net::HTTP benchmarking handoff
 
-Updated: 2026-09-06 (America/Chicago)
+Updated: 2026-09-07 (America/Chicago)
 
 ## Resume here
 
@@ -8,7 +8,7 @@ Updated: 2026-09-06 (America/Chicago)
 - Branch: `experiment/native-final-response`
 - Draft PR: #13, `Experiment: native default final-response fast path`
 - Base: `feature/http-comparison-benchmarks`
-- Current implementation/benchmark head before this handoff-only commit: `bf6868d667a8fb78c4378f8f2b7f1e17b1a28ce1`
+- Current implementation/test head before this handoff-only commit: `5c35e9db330f6c3f6a3b91a781c2aa4f1e2812f1`
 - DO NOT merge PR #13 or PR #11 without explicit authorization.
 - `handoff.md` is the live checkpoint. Update it after every meaningful benchmark, experiment, or conclusion.
 
@@ -37,7 +37,9 @@ Updated: 2026-09-06 (America/Chicago)
 - `b72faa0` - make focused fast-final benchmark compare only real `Connection` paths
 - `5467931` - add selectable fast-final mode to the existing Linux::Event cross-server benchmark server
 - `80a0678` - run ordinary and fast-final shared cross-server comparisons on the same CI runner
-- `bf6868d` - make the default Linux::Event cross-server candidate use the optimized natural `on_request -> Response->end` API; retain request-end and fast-final modes
+- `bf6868d` - make default cross-server Linux::Event candidate use optimized natural `on_request -> Response->end`
+- `2a04725` - avoid the temporary body SV copy in `Response1.xs::build_default_final` for ordinary already-materialized non-UTF8 byte strings
+- `5c35e9d` - expand native response-builder scalar/UTF8 semantic coverage
 
 PR #13 and PR #11 remain unmerged.
 
@@ -169,89 +171,101 @@ CI 34085638210:
 - fast-final vs natural: `+30.76%`
 - natural vs request-end: `+6.58%`
 
-The ~31-34% fast-final advantage over the optimized natural API has now reproduced on three separate CI runs.
+The ~31-34% fast-final advantage over the optimized natural API reproduced on three slower CI runners before the response-builder copy experiment.
 
-## Fair shared cross-server comparison - commit bf6868d / CI 34085638210
+## Fair shared cross-server comparison - CI 34085638210
 
-This is the current decision-grade competitive comparison. The first shared-harness pass uses the optimized natural Linux::Event API (`on_request -> Response->end`, no `on_request_end`). The second uses the integrated fast-final callback. Both run the same client, competitors, workload, and runner.
+Workload: 10,000 measured, 1,000 warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats.
 
-Workload:
+Optimized natural pass:
 
-- 10,000 measured requests per server/repeat
-- 1,000 warmup
-- 100 connections
-- pipeline=1
-- 32-byte response
-- 3 rotated repeats
-
-### Optimized natural Linux::Event pass
-
-- Linux::Event natural: **`34,396.5 req/s`**, p50 `2795.9 us`, p95 `2977.1 us`, p99 `5613.1 us`
+- Linux::Event natural: **`34,396.5 req/s`**, p50 `2795.9 us`
 - Go net/http: `59,268.8 req/s`
 - Feersum: `73,422.0 req/s`
-- libh2o evloop: `57,312.5 req/s`
-- Node.js http: `22,309.4 req/s`
-- Python aiohttp: `19,430.6 req/s`
-- Mojolicious: `1,812.8 req/s`
+- libh2o: `57,312.5 req/s` (very noisy on this runner)
+- Node: `22,309.4 req/s`
+- aiohttp: `19,430.6 req/s`
 
-Note: libh2o was unusually unstable in this pass (`73,086.5`, `57,312.5`, `52,870.6`), so treat its median cautiously.
+Fast-final pass:
 
-### Integrated fast-final pass on the same runner
-
-- Linux::Event fast-final: **`46,034.3 req/s`**, p50 `2039.0 us`, p95 `2321.0 us`, p99 `4143.0 us`
+- Linux::Event fast-final: **`46,034.3 req/s`**, p50 `2039.0 us`
 - Go net/http: `59,429.7 req/s`
 - Feersum: `73,843.8 req/s`
-- libh2o evloop: `69,404.4 req/s`
-- Node.js http: `22,677.7 req/s`
-- Python aiohttp: `19,596.6 req/s`
-- Mojolicious: `1,813.3 req/s`
+- libh2o: `69,404.4 req/s` (one anomalously low repeat)
+- Node: `22,677.7 req/s`
+- aiohttp: `19,596.6 req/s`
 
-Note: libh2o again had one anomalously low repeat (`46,013.4`) between `69,404.4` and `72,671.2`, so its median is noisier than Feersum/Go/Linux::Event.
+Same-run delta: fast-final vs natural **`+33.83%`**. This is the clean decision-grade API comparison from that runner.
 
-### Same-run deltas
+## Response-builder no-temporary-copy experiment - commits 2a04725, 5c35e9d / CI 34085985640
 
-- fast-final vs optimized natural Linux::Event: **`+33.83%`**
-- fast-final is **22.54% below Go**
-- fast-final is **33.67% below libh2o** using the noisy median
-- fast-final is **37.66% below Feersum**
-- fast-final is **102.99% faster than Node.js**
-- fast-final is **134.91% faster than aiohttp**
+### Change
 
-### Competitive conclusion
+`Response1.xs::build_default_final` now skips `newSVsv(body)` when the body is already an ordinary materialized non-UTF8 byte string. UTF8, magical, numeric/non-PV and other cases retain the old copy-based path. The goal is to remove one unnecessary body copy without mutating caller data or broadening semantics.
 
-1. The specialized complete-response path is now validated by both focused and exact shared cross-server comparisons.
-2. It reliably produces roughly **+31-34%** over the optimized natural Linux::Event API for this bodyless fixed-response workload.
-3. It more than doubles Node and is far ahead of aiohttp in this benchmark, but remains materially behind Go and Feersum.
-4. Feersum is the cleanest current high-performance reference because its repeats are stable. libh2o remains useful but had substantial runner variance in CI 34085638210.
-5. We have extracted a large performance win through API/transaction architecture alone; no new native HTTP driver was required.
+Expanded tests cover:
 
-## Next low-risk cost bucket: native response builder body copy
+- ordinary byte body
+- undef body
+- numeric scalar stringification
+- downgradable UTF8 bytes
+- caller UTF8 flag preservation
+- wide-character rejection
+- reference rejection
+- HEAD fallback
+- non-persistent request fallback
 
-Linux::Event's core Stream write engine was inspected after CI 34085638210. Its immediate-write path obtains `SvPVbyte(bytes_sv)` and writes directly from the supplied scalar when no older output is queued; it copies only a partial/EAGAIN remainder into an owned queue segment. Therefore there is not an unconditional extra Stream copy after HTTP constructs the final wire scalar.
+All semantic suites are green on Perl 5.36, latest, and latest-threaded.
 
-The existing `Response1.xs::build_default_final`, however, currently does this for every ordinary byte body:
+### CI 34085985640 absolute results
 
-1. `newSVsv(body)` copies the body into a temporary SV;
-2. `SvPVbyte(body_copy, ...)` reads it;
-3. `sv_catpvn(wire, body_bytes, body_len)` copies it again into the final response wire;
-4. temporary body copy is decref'd.
+This CI run landed on a **much faster Azure runner** than CI 34085638210. Nearly every server roughly doubled, so absolute before/after numbers across those runs are **not valid evidence for the copy optimization**.
 
-For a non-UTF8 byte scalar, the first copy appears unnecessary. A bounded experiment should change only this behavior:
+Focused medians on the fast runner:
 
-- undef body => use empty bytes directly
-- non-UTF8 scalar => read `SvPVbyte(body, len)` directly with no temporary copy
-- UTF8 scalar => retain the current copy-then-downgrade behavior so the caller's scalar is not modified and wide-character validation remains identical
+- natural: `69,888.2 req/s`, p50 `1387.1 us`
+- request-end: `63,367.2 req/s`, p50 `1533.0 us`
+- fast-final: `88,290.9 req/s`, p50 `1075.0 us`
+- fast-final vs natural: **`+26.33%`**
 
-Benchmark before keeping it. This changes the existing tiny response XS implementation; it does not add a new native subsystem.
+Shared cross-server medians on the same fast runner:
 
-The direct API-shape benchmark remains an upper-bound clue. CI 34085638210 medians:
+Natural pass:
 
-- callback returns prebuilt wire: `54,750.0 req/s`
-- callback returns body: `51,804.6`
-- checked callback returns body: `48,582.3`
-- checked driver-direct final: `50,528.2`
+- Linux::Event natural: `69,597.2 req/s`
+- Go: `107,619.4`
+- Feersum: `131,235.6`
+- libh2o: `122,405.0`
+- Node: `54,776.5`
+- aiohttp: `34,728.2`
 
-Do **not** expose raw-wire return as a public API merely for this speed difference; use it only to bound serialization/build overhead.
+Fast-final pass:
+
+- Linux::Event fast-final: `89,781.9 req/s`
+- Go: `107,208.7`
+- Feersum: `129,038.8`
+- libh2o: `121,235.6`
+- Node: `54,824.6`
+- aiohttp: `34,857.1`
+
+Same-run fast-final vs natural: **`+29.00%`**.
+
+### Conclusion so far
+
+1. The fast-final architectural advantage remains real on very different runner hardware: ~26% focused and ~29% shared on this fast runner.
+2. **Do not claim the no-copy response builder itself produced the absolute throughput jump.** Runner performance changed dramatically.
+3. A true **same-run A/B** between the old copy implementation and the no-copy implementation is required before deciding whether commit `2a04725` is worth retaining.
+4. Best next measurement: expose the old builder as a temporary private benchmark reference and add a same-driver `checked callback body (copy)` stage to `run-http-direct-api-experiment.pl`, so the only variable is old-copy vs no-copy serialization.
+
+## Linux::Event write-engine inspection
+
+Core `Stream` immediate writes already call the transport directly from the supplied Perl scalar when no older bytes are queued. Only a partial/EAGAIN remainder is copied into an owned queue segment. Queued segments drain with `writev`.
+
+Therefore:
+
+- there is no unconditional extra Stream copy after HTTP builds the final wire scalar;
+- splitting HTTP head/body into two ordinary `write()` calls would likely trade a memcpy for an extra syscall in the immediate path;
+- do not pursue split writes without a dedicated segmented-submit measurement/core primitive.
 
 ## Current conclusions
 
@@ -259,22 +273,23 @@ Do **not** expose raw-wire return as a public API merely for this speed differen
 2. libh2o is a benchmark/reference, not the current HTTP/1 integration direction.
 3. The duplicated bodyless-driver approach is closed.
 4. Safe early bodyless completion belongs in the ordinary natural API; it is integrated and repeatedly green.
-5. Natural `on_request -> Response->end` is now the correct normal bodyless benchmark shape; `on_request_end` is no longer a performance workaround.
-6. The specialized complete-response API is strongly justified: ~31-34% over the optimized natural API across repeated focused and shared-harness runs.
-7. The complete-response gain required no new XS/C and no duplicated driver.
-8. Current fair shared numbers are approximately `34.4k` natural, `46.0k` fast-final, `59.4k` Go, and `73.8k` Feersum on CI 34085638210.
-9. There is still a meaningful gap, but remaining work should stay measurement-driven and target bounded costs before contemplating a larger native implementation.
-10. The current callback name `on_request_final` is experimental; do not cement it until the next response-builder experiment and API review.
+5. Natural `on_request -> Response->end` is the correct normal bodyless benchmark shape; `on_request_end` is no longer a performance workaround.
+6. The specialized complete-response API remains strongly justified across multiple runners: ~26-34% over optimized natural depending on runner/harness.
+7. The complete-response gain required no new native driver and no duplicated production parser/driver.
+8. The response-builder no-copy change is semantically safe so far, but its performance value is **not yet established** because the first post-change CI used much faster hardware.
+9. Remaining work should stay measurement-driven and target bounded costs before contemplating a larger native implementation.
+10. The current callback name `on_request_final` is experimental; do not cement it until the response-builder A/B and API review.
 11. The old private `_Experiment::FastFinalConnection` module is obsolete and should be deleted after the API direction is finalized.
 12. PR #13 and PR #11 remain unmerged.
 
 ## Immediate next work
 
-1. Benchmark the byte-body no-temporary-copy change in `Response1.xs::build_default_final` while preserving UTF8 semantics.
-2. Update this handoff immediately with the result and revert the change if the gain is not worthwhile or semantics become less clear.
-3. If useful, inspect one or two remaining bounded Perl/native crossings in the fast-final path before considering anything larger.
-4. Then decide the public complete-response callback/API name and surface it through `Server` constructor callbacks as well as Connection subclass methods.
-5. Remove the obsolete private experiment module and stale benchmark artifacts after the API decision.
-6. Rerun full semantic CI and the natural/fast-final cross-server comparison before preparing PR #13 for review.
+1. Add a temporary private old-copy reference entry point in `Response1.xs` and a same-run A/B stage in `bench/run-http-direct-api-experiment.pl`.
+2. Run CI and compare no-copy vs copy under the identical checked callback-return-body path. Update this handoff immediately.
+3. Keep `2a04725` only if the measured gain is repeatable/worth the added branch complexity; otherwise revert the optimization while retaining the expanded semantic tests.
+4. Inspect one or two remaining bounded Perl/native crossings in fast-final if useful.
+5. Decide the public complete-response callback/API name and surface it through `Server` constructor callbacks as well as Connection subclass methods.
+6. Remove obsolete private experiment module and stale benchmark artifacts after the API decision.
+7. Rerun full semantic CI and natural/fast-final cross-server comparison before preparing PR #13 for review.
 
 Do not merge PR #13 or PR #11 without explicit authorization.
