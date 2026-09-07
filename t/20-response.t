@@ -161,7 +161,7 @@ $ok = eval { $tampered->_serialize_head('1.1'); 1 };
 ok(!$ok, 'native serializer revalidates tampered field values');
 
 my $unbound = $class->_new;
-$ok = eval { $unbound->end("x"); 1 };
+$ok = eval { $unbound->complete("x"); 1 };
 ok(!$ok, 'unbound internal Response cannot emit application output');
 like($@, qr/not bound/, 'unbound output rejection is clear');
 
