@@ -99,13 +99,12 @@ jobs:
           perl Makefile.PL
           make
 
-      - name: Native response body-copy A/B
+      - name: HTTP input-buffer strategy A/B
         run: |
-          perl -Mblib bench/run-response1-copy-ab.pl \
-            --iterations=200000 \
-            --warmup=20000 \
-            --repeats=5 \
-            --sizes=0,32,256,4096
+          perl -Mblib bench/run-http-input-buffer-ab.pl \
+            --requests=300000 \
+            --warmup=30000 \
+            --repeats=5
 
       - name: HTTP object/state cost diagnostic
         run: |
