@@ -99,6 +99,13 @@ jobs:
           perl Makefile.PL
           make
 
+      - name: HTTP object/state cost diagnostic
+        run: |
+          perl -Mblib bench/run-http-object-cost.pl \
+            --iterations=300000 \
+            --warmup=30000 \
+            --repeats=5
+
       - name: HTTP transaction lifecycle diagnostic
         run: |
           perl -Mblib bench/run-http-transaction-ladder.pl \
