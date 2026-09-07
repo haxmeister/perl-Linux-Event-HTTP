@@ -8,37 +8,36 @@ Updated: 2026-09-06 (America/Chicago)
 - Branch: `experiment/native-final-response`
 - Draft PR: #13, `Experiment: native default final-response fast path`
 - Base: `feature/http-comparison-benchmarks`
-- Current implementation/benchmark head before this handoff-only commit: `80a06783a1197ca294dd17a629a85707eca3d4c4`
+- Current implementation/benchmark head before this handoff-only commit: `bf6868d667a8fb78c4378f8f2b7f1e17b1a28ce1`
 - DO NOT merge PR #13 or PR #11 without explicit authorization.
 - `handoff.md` is the live checkpoint. Update it after every meaningful benchmark, experiment, or conclusion.
 
 ## Strategy
 
 1. Keep Linux::Event::Net::HTTP among the highest-performance servers in the ecosystem.
-2. Minimize C/XS maintenance; do not add native code unless measurements make it necessary.
-3. Preserve the general Response/streaming model while providing a cheaper complete-response path when measurements justify it.
+2. Minimize C/XS maintenance; do not add a new native subsystem unless measurements make it necessary.
+3. Preserve the general Response/streaming model while providing a cheaper complete-response path where measurements justify it.
 4. libh2o remains a benchmark/reference, not the current HTTP/1 integration direction.
 
 ## Important commits
 
-- `bd11439` / `a0be02c` - semantic bodyless driver benchmark; inspected after earlier handoff
+- `bd11439` / `a0be02c` - semantic bodyless driver benchmark
 - `f455a29` - checkpoint semantic bodyless result
 - `60bfeca` / `1ea8d91` / `cb99a0c` / `4fa08af` - optional libh2o benchmark spike
 - `d5c895b` - record libh2o upper-bound result
-- `b753467` / `e8f0a22` / `e18fcf1` - request-only direct API benchmark and fix
+- `b753467` / `e8f0a22` / `e18fcf1` - request-only direct API benchmark and fixes
 - `419f1b8` - checkpoint request-only result
 - `b930e2d` - benchmark callback-return API shapes
 - `71dc181` - checkpoint callback-return result
-- `5cbff47` - add private integrated fast-final Connection experiment, semantic tests, and focused benchmark
-- `c87c3c9` - checkpoint first integrated result
-- `0f65517` - compare fast-final with natural and optimized current APIs in one focused harness
-- `1b42865` - checkpoint decision-grade fast-final comparison
-- `c870226` - benchmark safe early bodyless completion through ordinary Response API
+- `5cbff47` - private integrated fast-final Connection experiment
+- `0f65517` / `1b42865` - decision-grade private fast-final comparison/checkpoint
+- `c870226` - benchmark safe early bodyless completion
 - `45555c9` - integrate optional fast-final callback and safe early bodyless completion directly into real `Connection::_drive_http1`; no new XS/C and no duplicated parser/driver
-- `5e206d2` - move fast-final semantic tests onto the real `Connection` implementation
+- `5e206d2` - move fast-final semantic tests onto the real `Connection`
 - `b72faa0` - make focused fast-final benchmark compare only real `Connection` paths
 - `5467931` - add selectable fast-final mode to the existing Linux::Event cross-server benchmark server
 - `80a0678` - run ordinary and fast-final shared cross-server comparisons on the same CI runner
+- `bf6868d` - make the default Linux::Event cross-server candidate use the optimized natural `on_request -> Response->end` API; retain request-end and fast-final modes
 
 PR #13 and PR #11 remain unmerged.
 
@@ -50,9 +49,9 @@ Earlier controlled end-to-end work showed the native default-final response is a
 
 ### Small Perl cost buckets
 
-Representative microcosts are bounded:
+Representative microcosts across CI runners:
 
-- parser direct ~0.4-0.7 us depending on runner
+- parser direct ~0.4-0.7 us
 - parser under eval ~0.5-0.8 us
 - no-Expect validation ~0.2-0.35 us
 - `Response->_new_bound` ~0.6-1.1 us
@@ -112,106 +111,69 @@ Realistic application callback return shapes:
 
 A real Perl application callback returning a body preserves essentially all of the stripped-path performance. The callback itself is not the large cost. Eager Response allocation/binding and the general transaction lifecycle are.
 
-## Earlier private fast-final Connection experiment
+## Safe early-bodyless completion
 
-The branch originally used a private duplicated-driver module:
+The benchmark-only experiment established that for a bodyless request with no `on_request_end` callback, marking the input boundary complete before ordinary `on_request` allows ordinary `$response->end(...)` to engage the existing native default-final path safely.
 
-`Linux::Event::Net::HTTP::_Experiment::FastFinalConnection`
+CI 34083753111 focused medians:
 
-Explicit callback shape:
+- natural pre-fix `on_request -> Response->end`: `36,386.1 req/s`
+- request-end workaround: `66,595.2 req/s`
+- safe early-body-done natural path: `67,531.8 req/s`
+- private fast-final: `90,671.7 req/s`
 
-`on_request_final($connection, $request)`
+The ordering fix and complete-response fast path are separate wins.
 
-The private experiment established the semantic contract and justified integration, but it is no longer the measured implementation. The real `Connection::_drive_http1` now contains the branch-only production-shaped experiment.
+## Production-shaped integration in real Connection
 
-### Decision-grade same-stack comparison - commit 0f65517 / CI 34083452101
+Commits `45555c9`, `5e206d2`, `b72faa0` integrate both opportunities directly into the real `Connection::_drive_http1`, with no duplicated parser/driver and no new XS/C.
 
-20k measured, 2k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
+### Ordinary natural API
 
-- `on_request -> Response->end`: `25,324.8 req/s`
-- no-op `on_request`, then `on_request_end -> Response->end`: `50,498.8 req/s`
-- private integrated `on_request_final -> scalar body`: `73,722.1 req/s`
-
-Fast-final was `+45.99%` over the optimized current `on_request_end` path in the identical focused harness.
-
-## Safe early-bodyless-completion experiment - commit c870226 / CI 34083753111
-
-Goal: test whether the ordinary natural API can become native-eligible earlier without adding a new public callback.
-
-Benchmark-only subclass behavior marked `body_done = 1` immediately before ordinary `on_request` for bodyless requests only when no `on_request_end` handler was configured. That allowed ordinary `$response->end(...)` to engage the existing native default-final shortcut while preserving existing callback ordering whenever `on_request_end` existed.
-
-Same focused harness, 20k measured, 2k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
-
-- natural `on_request -> Response->end`: **`36,386.1 req/s`**
-- optimized `on_request_end -> Response->end`: **`66,595.2 req/s`**
-- safe early-body-done `on_request -> Response->end`: **`67,531.8 req/s`**
-- private integrated fast-final callback return: **`90,671.7 req/s`**
-
-Same-harness deltas:
-
-- early-body-done vs natural on_request: **`+85.60%`**
-- early-body-done vs optimized on_request_end: **`+1.41%`**
-- fast-final vs optimized on_request_end: **`+36.15%`**
-- fast-final vs early-body-done: **`+34.27%`**
-
-This proved the ordering fix and complete-response fast path were independent opportunities.
-
-## Production-shaped integration in real Connection - commits 45555c9, 5e206d2, b72faa0
-
-`Connection::_drive_http1` now implements both opportunities directly with no duplicate driver and no new XS/C.
-
-### Ordinary path change
-
-For a bodyless request with **no configured `on_request_end` handler**, the reusable bodyless request state is marked `body_done = 1` before ordinary `on_request` runs. This allows ordinary `$response->end($body)` to use the existing native default-final shortcut. If `on_request_end` exists, the old callback ordering is preserved.
+For bodyless requests with **no configured `on_request_end` handler**, the reusable bodyless state is marked `body_done = 1` before ordinary `on_request`. This enables native default-final `Response->end` while preserving existing callback semantics whenever `on_request_end` is configured.
 
 ### Complete-response path
 
-`Connection->new` now discovers/caches an optional `on_request_final` callback/method. For validated bodyless requests it runs before Response allocation:
+`Connection->new` discovers/caches optional experimental `on_request_final`. For validated bodyless requests it runs before Response allocation:
 
 - scalar return => attempt existing native default-final serialization/write
 - `undef` => fall through to ordinary `on_request` / Response transaction path
-- HEAD, HTTP/1.0, or other native-ineligible returned bodies => construct the ordinary Response transaction only as fallback and serialize the already-returned body without invoking the general application callback again
-- body-bearing requests always use the ordinary streaming path
+- HEAD, HTTP/1.0, or other native-ineligible returned bodies => construct ordinary Response only as fallback and serialize the returned body without invoking the application callback twice
+- body-bearing requests always use ordinary streaming callbacks
 - callback exception or invalid returned body => protocol-safe 500
-- invalid Expect is rejected before the complete-response callback
+- invalid Expect is rejected before the callback
 
-`t/50-fast-final-experiment.t` now tests this against the real `Connection`, including GET success, undef fallback, HEAD, HTTP/1.0, body-bearing POST, callback exception, invalid returned body, and invalid Expect.
+`t/50-fast-final-experiment.t` exercises these semantics against real `Connection`.
 
-### CI 34085015017 - first integrated production-shaped focused result
+### Repeated focused results
 
-All jobs green. Focused medians:
+CI 34085015017:
 
-- real `on_request -> Response->end`: **`35,589.8 req/s`**, p50 `2719.2 us`
-- real `on_request_end -> Response->end`: **`33,436.7 req/s`**, p50 `2900.1 us`
-- real integrated `on_request_final -> scalar body`: **`46,963.4 req/s`**, p50 `2009.2 us`
+- natural: `35,589.8 req/s`, p50 `2719.2 us`
+- request-end: `33,436.7`, p50 `2900.1 us`
+- fast-final: `46,963.4`, p50 `2009.2 us`
+- fast-final vs natural: `+31.96%`
 
-Same-harness deltas:
+CI 34085371457:
 
-- fast-final vs improved ordinary `on_request`: **`+31.96%`**
-- fast-final vs `on_request_end`: **`+40.45%`**
-- improved ordinary `on_request` vs `on_request_end`: **`+6.44%`**
+- natural: `34,484.1 req/s`, p50 `2784.0 us`
+- request-end: `32,446.8`, p50 `2992.2 us`
+- fast-final: `46,363.5`, p50 `2044.9 us`
+- fast-final vs natural: `+34.45%`
 
-### CI 34085371457 - repeat after cross-server wiring
+CI 34085638210:
 
-All Perl 5.36/latest/latest-threaded jobs and all benchmark steps are green again.
+- natural: `35,271.3 req/s`, p50 `2727.0 us`, p99 `5482.0 us`
+- request-end: `33,093.0`, p50 `2920.9 us`, p99 `5864.9 us`
+- fast-final: `46,119.1`, p50 `2063.0 us`, p99 `4165.9 us`
+- fast-final vs natural: `+30.76%`
+- natural vs request-end: `+6.58%`
 
-Focused medians on this runner:
+The ~31-34% fast-final advantage over the optimized natural API has now reproduced on three separate CI runs.
 
-- real improved `on_request -> Response->end`: **`34,484.1 req/s`**, p50 `2784.0 us`, p99 `5590.0 us`
-- real `on_request_end -> Response->end`: **`32,446.8 req/s`**, p50 `2992.2 us`, p99 `5992.2 us`
-- real integrated fast-final: **`46,363.5 req/s`**, p50 `2044.9 us`, p99 `4129.9 us`
+## Fair shared cross-server comparison - commit bf6868d / CI 34085638210
 
-Deltas:
-
-- fast-final vs improved natural path: **`+34.45%`**
-- fast-final vs request-end path: **`+42.89%`**
-- improved natural path vs request-end path: **`+6.28%`**
-
-This independently reproduces the earlier production-shaped conclusion.
-
-## Shared cross-server fast-final comparison - commits 5467931, 80a0678 / CI 34085371457
-
-The existing `bench/servers/linuxevent-http.pl` now supports `BENCH_LINUXEVENT_MODE=fast-final`, so the exact same `bench/run-http-comparison.pl` command can be run twice on the same GitHub Actions runner. Competitor processes, client code, workload, and runner are unchanged; only the Linux::Event connection callback mode changes.
+This is the current decision-grade competitive comparison. The first shared-harness pass uses the optimized natural Linux::Event API (`on_request -> Response->end`, no `on_request_end`). The second uses the integrated fast-final callback. Both run the same client, competitors, workload, and runner.
 
 Workload:
 
@@ -222,63 +184,97 @@ Workload:
 - 32-byte response
 - 3 rotated repeats
 
-### Existing Linux::Event request-end benchmark pass
+### Optimized natural Linux::Event pass
 
-- Linux::Event::Net::HTTP: **`33,126.7 req/s`**, p50 `2914.9 us`, p99 `5842.0 us`
-- Go net/http: `58,721.0 req/s`
-- libh2o evloop: `71,407.7 req/s`
-- Feersum: `72,267.4 req/s`
-- Node.js http: `23,164.9 req/s`
-- Python aiohttp: `19,143.0 req/s`
-- Mojolicious: `1,843.0 req/s`
+- Linux::Event natural: **`34,396.5 req/s`**, p50 `2795.9 us`, p95 `2977.1 us`, p99 `5613.1 us`
+- Go net/http: `59,268.8 req/s`
+- Feersum: `73,422.0 req/s`
+- libh2o evloop: `57,312.5 req/s`
+- Node.js http: `22,309.4 req/s`
+- Python aiohttp: `19,430.6 req/s`
+- Mojolicious: `1,812.8 req/s`
 
-### Linux::Event fast-final pass on the same runner
+Note: libh2o was unusually unstable in this pass (`73,086.5`, `57,312.5`, `52,870.6`), so treat its median cautiously.
 
-- Linux::Event fast-final: **`45,210.6 req/s`**, p50 `2100.0 us`, p95 `2235.2 us`, p99 `4238.1 us`
-- Go net/http: `59,000.9 req/s`
-- libh2o evloop: `73,100.4 req/s`
-- Feersum: `74,409.7 req/s`
-- Node.js http: `22,868.3 req/s`
-- Python aiohttp: `19,554.2 req/s`
-- Mojolicious: `1,826.5 req/s`
+### Integrated fast-final pass on the same runner
 
-### Shared-harness deltas
+- Linux::Event fast-final: **`46,034.3 req/s`**, p50 `2039.0 us`, p95 `2321.0 us`, p99 `4143.0 us`
+- Go net/http: `59,429.7 req/s`
+- Feersum: `73,843.8 req/s`
+- libh2o evloop: `69,404.4 req/s`
+- Node.js http: `22,677.7 req/s`
+- Python aiohttp: `19,596.6 req/s`
+- Mojolicious: `1,813.3 req/s`
 
-- fast-final vs existing Linux::Event request-end benchmark path: **`+36.48%`**
-- fast-final is about **23.37% below Go**
-- fast-final is about **38.15% below libh2o**
-- fast-final is about **39.24% below Feersum**
-- fast-final is about **97.70% faster than Node.js** in this workload
-- fast-final is about **131.21% faster than aiohttp** in this workload
+Note: libh2o again had one anomalously low repeat (`46,013.4`) between `69,404.4` and `72,671.2`, so its median is noisier than Feersum/Go/Linux::Event.
 
-### Cross-server conclusion
+### Same-run deltas
 
-1. The complete-response path produces a large real-server improvement under the exact shared competitor harness, not only in a special focused benchmark.
-2. Its ~36% shared-harness gain agrees closely with the ~32-34% focused gain over the improved ordinary natural API, so the direction is robust across benchmark shapes/runners.
-3. It materially closes the gap but does **not** reach Go, Feersum, or libh2o yet.
-4. We therefore have a worthwhile pure-architecture/API win without additional native code, but there is still a meaningful remaining performance gap to investigate.
-5. The current default cross-server Linux::Event entry is still the old request-end usage; before publishing/recommending competitive numbers, add the improved natural `on_request -> end` mode to the shared harness so both supported API shapes are represented fairly.
+- fast-final vs optimized natural Linux::Event: **`+33.83%`**
+- fast-final is **22.54% below Go**
+- fast-final is **33.67% below libh2o** using the noisy median
+- fast-final is **37.66% below Feersum**
+- fast-final is **102.99% faster than Node.js**
+- fast-final is **134.91% faster than aiohttp**
+
+### Competitive conclusion
+
+1. The specialized complete-response path is now validated by both focused and exact shared cross-server comparisons.
+2. It reliably produces roughly **+31-34%** over the optimized natural Linux::Event API for this bodyless fixed-response workload.
+3. It more than doubles Node and is far ahead of aiohttp in this benchmark, but remains materially behind Go and Feersum.
+4. Feersum is the cleanest current high-performance reference because its repeats are stable. libh2o remains useful but had substantial runner variance in CI 34085638210.
+5. We have extracted a large performance win through API/transaction architecture alone; no new native HTTP driver was required.
+
+## Next low-risk cost bucket: native response builder body copy
+
+Linux::Event's core Stream write engine was inspected after CI 34085638210. Its immediate-write path obtains `SvPVbyte(bytes_sv)` and writes directly from the supplied scalar when no older output is queued; it copies only a partial/EAGAIN remainder into an owned queue segment. Therefore there is not an unconditional extra Stream copy after HTTP constructs the final wire scalar.
+
+The existing `Response1.xs::build_default_final`, however, currently does this for every ordinary byte body:
+
+1. `newSVsv(body)` copies the body into a temporary SV;
+2. `SvPVbyte(body_copy, ...)` reads it;
+3. `sv_catpvn(wire, body_bytes, body_len)` copies it again into the final response wire;
+4. temporary body copy is decref'd.
+
+For a non-UTF8 byte scalar, the first copy appears unnecessary. A bounded experiment should change only this behavior:
+
+- undef body => use empty bytes directly
+- non-UTF8 scalar => read `SvPVbyte(body, len)` directly with no temporary copy
+- UTF8 scalar => retain the current copy-then-downgrade behavior so the caller's scalar is not modified and wide-character validation remains identical
+
+Benchmark before keeping it. This changes the existing tiny response XS implementation; it does not add a new native subsystem.
+
+The direct API-shape benchmark remains an upper-bound clue. CI 34085638210 medians:
+
+- callback returns prebuilt wire: `54,750.0 req/s`
+- callback returns body: `51,804.6`
+- checked callback returns body: `48,582.3`
+- checked driver-direct final: `50,528.2`
+
+Do **not** expose raw-wire return as a public API merely for this speed difference; use it only to bound serialization/build overhead.
 
 ## Current conclusions
 
 1. More bespoke HTTP XS/C is still not justified as a broad architectural move.
-2. libh2o is useful as an upper-bound/reference but is not the current HTTP/1 implementation direction.
+2. libh2o is a benchmark/reference, not the current HTTP/1 integration direction.
 3. The duplicated bodyless-driver approach is closed.
-4. Safe early bodyless completion is integrated into real `Connection` and is a worthwhile ordinary-API optimization.
-5. The natural `on_request -> Response->end` path no longer needs `on_request_end` as a performance workaround for bodyless requests.
-6. A specialized complete-response callback is now strongly justified by both focused and shared cross-server data: about **+34%** over the improved natural API in the focused harness and **+36%** over the old request-end benchmark server in the shared harness.
-7. The complete-response gain is achieved without adding XS/C and without duplicating the parser/driver.
-8. Fast-final now reaches ~`45.2k req/s` on the CI 34085371457 shared harness versus ~`59.0k` Go and ~`73-74k` libh2o/Feersum. There is still enough gap to justify further targeted profiling/experiments.
-9. The old private `_Experiment::FastFinalConnection` module is obsolete as an implementation; remove it after the public API/benchmark direction is settled.
-10. The current name `on_request_final` remains experimental. Do not cement it until the natural shared-harness pass and next low-risk optimization checks are complete.
-11. PR #13 and PR #11 remain unmerged.
+4. Safe early bodyless completion belongs in the ordinary natural API; it is integrated and repeatedly green.
+5. Natural `on_request -> Response->end` is now the correct normal bodyless benchmark shape; `on_request_end` is no longer a performance workaround.
+6. The specialized complete-response API is strongly justified: ~31-34% over the optimized natural API across repeated focused and shared-harness runs.
+7. The complete-response gain required no new XS/C and no duplicated driver.
+8. Current fair shared numbers are approximately `34.4k` natural, `46.0k` fast-final, `59.4k` Go, and `73.8k` Feersum on CI 34085638210.
+9. There is still a meaningful gap, but remaining work should stay measurement-driven and target bounded costs before contemplating a larger native implementation.
+10. The current callback name `on_request_final` is experimental; do not cement it until the next response-builder experiment and API review.
+11. The old private `_Experiment::FastFinalConnection` module is obsolete and should be deleted after the API direction is finalized.
+12. PR #13 and PR #11 remain unmerged.
 
 ## Immediate next work
 
-1. Add a selectable **natural** Linux::Event benchmark mode using real `on_request -> Response->end` with no `on_request_end`, then run it through the exact same shared cross-server harness. Keep the legacy request-end pass only for historical comparison.
-2. Update this handoff immediately with the natural-vs-fast-final-vs-competitor result.
-3. Investigate the next low-risk fast-final cost bucket before considering more architectural C/XS. A promising candidate is the existing `Response1.xs::build_default_final`, which currently makes an unconditional `newSVsv(body)` copy even for already-byte scalar bodies. Benchmark a copy-only-when-UTF8 variant before adopting it; this modifies existing tiny XS rather than adding a new native subsystem.
-4. Also keep the direct callback-return-wire result in mind as an upper-bound clue (~`56.3k req/s` vs ~`53.0k` callback-return-body in CI 34085371457), but do not expose raw-wire return as a public API merely for speed without a stronger design reason.
-5. After the natural shared comparison and builder micro-experiment, decide the public complete-response API name/surface, remove the obsolete private experiment module, rerun full CI, and prepare the branch for review.
+1. Benchmark the byte-body no-temporary-copy change in `Response1.xs::build_default_final` while preserving UTF8 semantics.
+2. Update this handoff immediately with the result and revert the change if the gain is not worthwhile or semantics become less clear.
+3. If useful, inspect one or two remaining bounded Perl/native crossings in the fast-final path before considering anything larger.
+4. Then decide the public complete-response callback/API name and surface it through `Server` constructor callbacks as well as Connection subclass methods.
+5. Remove the obsolete private experiment module and stale benchmark artifacts after the API decision.
+6. Rerun full semantic CI and the natural/fast-final cross-server comparison before preparing PR #13 for review.
 
 Do not merge PR #13 or PR #11 without explicit authorization.
