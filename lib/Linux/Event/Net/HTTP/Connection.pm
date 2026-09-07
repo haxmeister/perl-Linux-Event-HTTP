@@ -9,6 +9,7 @@ use Carp qw(croak);
 use Scalar::Util qw(refaddr);
 use utf8 ();
 
+use Linux::Event::Net::HTTP::_Native::Response1 ();
 use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
 use Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked ();
 use Linux::Event::Net::HTTP::Response;
@@ -46,6 +47,9 @@ sub new ($class, %option) {
     my $on_request = _take_http_handler($class, 'on_request', \%option);
     my $on_body = _take_http_handler($class, 'on_body', \%option);
     my $on_request_end = _take_http_handler($class, 'on_request_end', \%option);
+    my $on_request_final = _take_http_handler(
+        $class, 'on_request_final', \%option,
+    );
 
     croak 'new(): HTTP Connection requires on_request callback or method'
         if !$on_request;
@@ -54,6 +58,7 @@ sub new ($class, %option) {
     $self->{_http_on_request} = $on_request;
     $self->{_http_on_body} = $on_body;
     $self->{_http_on_request_end} = $on_request_end;
+    $self->{_http_on_request_final} = $on_request_final;
     $self->{_http_input} = '';
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
@@ -78,8 +83,7 @@ sub on_data ($self, $bytes) {
     return;
 }
 
-sub _new_request_state ($request) {
-    my $mode = $request->body_mode;
+sub _new_request_state ($request, $mode = $request->body_mode) {
     my $state = {
         mode      => $mode,
         body_done => 0,
@@ -134,6 +138,24 @@ sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
     return 1 if $ok;
     $self->_fail_active_transaction(500, $request, $response);
     return 0;
+}
+
+sub _invoke_request_final ($self, $request) {
+    my ($ok, $body);
+    {
+        local $self->{_http_dispatching} = 1;
+        $ok = eval {
+            $body = $self->{_http_on_request_final}->($self, $request);
+            1;
+        };
+    }
+
+    if (!$ok) {
+        $self->_protocol_error(500, $request->http_version);
+        return (0, undef);
+    }
+
+    return (1, $body);
 }
 
 sub _clear_transaction ($self) {
@@ -282,6 +304,33 @@ sub _finalize_transaction ($self) {
     return;
 }
 
+sub _complete_request_final_fallback ($self, $request, $body) {
+    my $response
+        = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
+    my $request_state = $self->{_http_bodyless_state} //= {
+        mode      => 'none',
+        body_done => 1,
+    };
+    $request_state->{body_done} = 1;
+    delete $request_state->{close_after_response};
+
+    $self->{_http_active_request} = $request;
+    $self->{_http_active_response} = $response;
+    $self->{_http_request_state} = $request_state;
+    $self->{_http_response_state} = undef;
+
+    my $ok = eval {
+        $response->end($body);
+        1;
+    };
+    if (!$ok) {
+        $self->_fail_active_transaction(500, $request, $response);
+        return 0;
+    }
+
+    return 1;
+}
+
 sub _drive_http1 ($self) {
     return if $self->{_http_driving} || $self->{_http_closing}
         || $self->is_closed;
@@ -351,9 +400,52 @@ sub _drive_http1 ($self) {
             last;
         }
 
+        my $body_mode = $request->body_mode;
+        my $bodyless = $body_mode eq 'none';
+
+        if ($bodyless && $self->{_http_on_request_final}) {
+            my ($ok, $body) = $self->_invoke_request_final($request);
+            last if !$ok;
+            last if $self->{_http_closing} || $self->is_closed;
+
+            if (defined $body) {
+                my $wire;
+                my $built = eval {
+                    $wire = Linux::Event::Net::HTTP::_Native::Response1
+                        ->build_default_final($request, $body);
+                    1;
+                };
+                if (!$built) {
+                    $self->_protocol_error(500, $request->http_version);
+                    last;
+                }
+
+                if (defined $wire) {
+                    $self->write($wire);
+                    next;
+                }
+
+                last if !$self->_complete_request_final_fallback(
+                    $request, $body,
+                );
+                next;
+            }
+        }
+
         my $response
             = Linux::Event::Net::HTTP::Response->_new_bound($self, $request);
-        my $request_state = _new_request_state($request);
+        my $request_state;
+        if ($bodyless) {
+            $request_state = $self->{_http_bodyless_state} //= {
+                mode      => 'none',
+                body_done => 0,
+            };
+            $request_state->{body_done}
+                = $self->{_http_on_request_end} ? 0 : 1;
+            delete $request_state->{close_after_response};
+        } else {
+            $request_state = _new_request_state($request, $body_mode);
+        }
 
         $self->{_http_active_request} = $request;
         $self->{_http_active_response} = $response;
@@ -371,6 +463,25 @@ sub _drive_http1 ($self) {
         }
         last if $self->{_http_closing} || $self->is_closed;
         next if !$self->{_http_active_request};
+
+        if ($bodyless) {
+            if ($self->{_http_on_request_end}) {
+                $request_state->{body_done} = 1;
+                last if !$self->_invoke_http_callback(
+                    $self->{_http_on_request_end}, $request, $response,
+                );
+                last if $self->{_http_closing} || $self->is_closed;
+                next if !$self->{_http_active_request};
+            }
+
+            if ($response->is_ended) {
+                $self->_finalize_transaction;
+                next;
+            }
+
+            $self->pause_read if !$self->is_read_paused;
+            last;
+        }
 
         if (!_body_pending($request_state)) {
             $self->_finish_request_body;
@@ -704,14 +815,16 @@ backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
 request sequencing, response serialization, and persistence policy.
 
 C<on_data> is the cached Linux::Event Stream callback for the protocol engine.
-Applications use C<on_request>, optional C<on_body>, and optional
-C<on_request_end> instead. Named methods are resolved and cached by connection
-class. Direct construction may supply the same names as constructor callbacks
-when lexical application scope is preferable.
+Applications use C<on_request>, optional C<on_body>, optional
+C<on_request_end>, and optionally C<on_request_final>. Named methods are
+resolved and cached by connection class. Direct construction may supply the same
+names as constructor callbacks when lexical application scope is preferable.
 
-Every successfully dispatched Request is paired with one
-L<Linux::Event::Net::HTTP::Response> created by Connection. The same Request and
-Response objects are passed to all callbacks for that transaction.
+Ordinary request handling pairs each Request with one
+L<Linux::Event::Net::HTTP::Response> created by Connection, and the same Request
+and Response objects are passed to the ordinary callbacks for that transaction.
+A defined C<on_request_final> result may complete a bodyless request before a
+Response object is allocated.
 
 =head1 REQUEST BODY STREAMING
 
@@ -728,9 +841,38 @@ after the current request input and response have both completed.
 If C<on_body> is absent, request body bytes are drained and discarded without
 being accumulated. C<on_request_end>, when present, still runs when the complete
 request has been consumed. It also runs for requests with no body or
-C<Content-Length: 0>, immediately after C<on_request> returns.
+C<Content-Length: 0>, immediately after C<on_request> returns on the ordinary
+Response path.
 
 =head1 CALLBACKS
+
+=head2 on_request_final
+
+    sub on_request_final ($self, $req) {
+        return "ok\n" if $req->target eq '/health';
+        return undef;
+    }
+
+Optional complete final-response callback for applications with a common
+bodyless request that can be answered by a default C<200 OK> scalar body. It
+runs after request-head and Expect validation but before Response allocation.
+It is never invoked for a request carrying a message body.
+
+A defined scalar return lets Connection attempt its narrow native default-final
+serialization directly. C<undef> declines the shortcut and falls through to
+ordinary C<on_request>. HEAD, HTTP/1.0, non-persistent requests, and other cases
+that cannot use native default serialization still preserve a defined returned
+body through the ordinary Response machinery without invoking C<on_request>
+again.
+
+The returned body must be a scalar byte string. Callback exceptions or invalid
+returned bodies fail the request with a protocol-safe 500 response. The callback
+cannot set status or headers and is not a streaming API; use C<on_request> and
+Response for those cases.
+
+C<on_request> remains required even when this callback exists because it is the
+general fallback and handles body-bearing requests, custom responses, streaming,
+and deferred completion.
 
 =head2 on_request
 
@@ -738,10 +880,10 @@ C<Content-Length: 0>, immediately after C<on_request> returns.
         ...
     }
 
-Runs once after a validated request head has been parsed. A body-bearing request
-may continue delivering C<on_body> calls after this callback. The Response may
-be written immediately or retained for completion after the body or another
-event.
+Runs once after a validated request head has been parsed when the request uses
+the ordinary Response path. A body-bearing request may continue delivering
+C<on_body> calls after this callback. The Response may be written immediately or
+retained for completion after the body or another event.
 
 =head2 on_body
 
@@ -759,16 +901,20 @@ application.
         $res->end("ok\n");
     }
 
-Runs once when the complete request input boundary has been reached. This
-includes bodyless requests, where it runs immediately after C<on_request>
-returns. If the Response has already ended, the transaction becomes eligible
-for the next pipelined request. If the Response is still active, Connection
-pauses reads so a later request cannot overtake it.
+Runs once when the complete request input boundary has been reached on the
+ordinary Response path. This includes bodyless requests, where it runs
+immediately after C<on_request> returns. If the Response has already ended, the
+transaction becomes eligible for the next pipelined request. If the Response is
+still active, Connection pauses reads so a later request cannot overtake it.
 
 A direct/adopted connection may use constructor callbacks instead:
 
     my $conn = Linux::Event::Net::HTTP::Connection->new(
         fh => $connected_socket,
+        on_request_final => sub ($conn, $req) {
+            return "ok\n" if $req->target eq '/health';
+            return undef;
+        },
         on_request => sub ($conn, $req, $res) {
             ...
         },
@@ -789,12 +935,16 @@ the connection is closed.
 
 =head1 RESPONSE FLOW
 
-The Response object owns status, headers, body output, and transaction
+The ordinary Response object owns status, headers, body output, and transaction
 completion:
 
     $res->status(200);
     $res->header('Content-Type', 'text/plain');
     $res->end("hello\n");
+
+For the narrower bodyless/default-C<200 OK> case, C<on_request_final> may return
+the complete scalar body before a Response object is constructed. This is an
+optional performance path; it does not replace the Response API.
 
 A scalar C<end> automatically supplies Content-Length. Streaming can declare a
 known Content-Length explicitly:

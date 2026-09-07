@@ -32,7 +32,7 @@ WriteMakefile(
     AUTHOR           => 'Joshua S. Day <hax@cpan.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036000',
-    DIR              => [qw(xshttp1 xschunked)],
+    DIR              => [qw(xshttp1 xschunked xsresponse1)],
     CONFIGURE_REQUIRES => {
         'ExtUtils::MakeMaker' => 0,
     },
@@ -48,6 +48,7 @@ WriteMakefile(
         },
         no_index => {
             package => [qw(
+                Linux::Event::Net::HTTP::_Native::Response1
                 Linux::Event::Net::HTTP::_Parser::HTTP1
                 Linux::Event::Net::HTTP::_Parser::HTTP1::Chunked
                 Linux::Event::Net::HTTP::_ServerConnection

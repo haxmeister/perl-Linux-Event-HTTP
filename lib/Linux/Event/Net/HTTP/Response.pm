@@ -3,12 +3,15 @@ use v5.36;
 use strict;
 use warnings;
 
-use Scalar::Util qw(weaken);
+use Scalar::Util qw(refaddr weaken);
 
+use Linux::Event::Net::HTTP::_Native::Response1 ();
 use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
 use Linux::Event::Net::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
+
+my $EMPTY_HEADERS = [];
 
 sub _new ($class, %args) {
     my $status  = delete($args{status}) // 200;
@@ -47,10 +50,17 @@ sub _new ($class, %args) {
 }
 
 sub _new_bound ($class, $connection, $request) {
-    my $self = $class->_new;
-    $self->{connection} = $connection;
+    my $self = bless {
+        status          => 200,
+        reason          => undef,
+        headers         => $EMPTY_HEADERS,
+        connection      => $connection,
+        request         => $request,
+        started         => 0,
+        ended           => 0,
+        upgrade_pending => 0,
+    }, $class;
     weaken($self->{connection});
-    $self->{request} = $request;
     return $self;
 }
 
@@ -114,6 +124,8 @@ sub add_header ($self, $name, $value) {
     $self->_assert_mutable;
     _validate_name($name);
     _validate_value($value);
+    $self->{headers} = []
+        if refaddr($self->{headers}) == refaddr($EMPTY_HEADERS);
     push @{$self->{headers}}, [ "$name", "$value" ];
     return $self;
 }
@@ -135,12 +147,51 @@ sub write ($self, $bytes) {
     return $connection->_write_response($self, $bytes, 0);
 }
 
+sub _try_native_default_final ($self, $connection, $body) {
+    return 0 if ref($self) ne __PACKAGE__;
+    return 0 if $self->{status} != 200 || defined($self->{reason});
+    return 0 if @{$self->{headers}};
+    return 0 if $connection->{_http_closing} || $connection->is_closed;
+    return 0 if $connection->{_http_response_state};
+
+    my $active = $connection->{_http_active_response} or return 0;
+    return 0 if refaddr($active) != refaddr($self);
+
+    my $request = $connection->{_http_active_request} or return 0;
+    return 0 if !defined($self->{request})
+        || refaddr($request) != refaddr($self->{request});
+
+    my $request_state = $connection->{_http_request_state} or return 0;
+    return 0 if !$request_state->{body_done};
+
+    my $wire = Linux::Event::Net::HTTP::_Native::Response1
+        ->build_default_final($request, $body);
+    return 0 if !defined $wire;
+
+    $self->{started} = 1;
+    $self->{ended} = 1;
+    $connection->{_http_response_state} = undef;
+
+    $connection->write($wire);
+
+    $connection->{_http_active_request} = undef;
+    $connection->{_http_active_response} = undef;
+    $connection->{_http_request_state} = undef;
+    $connection->{_http_response_state} = undef;
+
+    $connection->resume_read if $connection->is_read_paused;
+    return 1;
+}
+
 sub end ($self, $bytes = '') {
     die 'end(): response has an Upgrade handoff pending'
         if $self->{upgrade_pending};
     die 'end(): response has already ended' if $self->{ended};
     my $connection = $self->{connection}
         or die 'end(): response is not bound to an active HTTP connection';
+
+    return $self if $self->_try_native_default_final($connection, $bytes);
+
     $connection->_write_response($self, $bytes, 1);
     return $self;
 }
@@ -221,7 +272,7 @@ characters that could otherwise permit response splitting.
 
 =head1 TRANSACTION RELATIONSHIP
 
-C<connection> returns the owning HTTP Connection while it is alive. C<request>
+C<connection> returns the owning Connection while it is alive. C<request>
 returns the Request paired with this response. The connection reference is weak
 so retaining a completed Response does not retain the socket.
 

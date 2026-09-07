@@ -12,10 +12,15 @@ use Linux::Event::Net::HTTP::Connection;
 {
     package T::HTTPConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
+    use Scalar::Util qw(refaddr);
 
     sub on_request ($self, $request, $response) {
         push @{$self->data->{targets}}, $request->target;
         push @{$self->data->{responses}}, $response;
+        push @{$self->data->{request_state_refs}},
+            refaddr($self->{_http_request_state});
+        push @{$self->data->{body_done_on_request}},
+            $self->{_http_request_state}{body_done} ? 1 : 0;
         push @{$self->data->{paired}},
             $response->request == $request
             && $response->connection == $self ? 1 : 0;
@@ -31,6 +36,12 @@ use Linux::Event::Net::HTTP::Connection;
             $response->end("two\n");
         }
     }
+
+    sub on_request_end ($self, $request, $response) {
+        push @{$self->data->{request_end_targets}}, $request->target;
+        push @{$self->data->{body_done_on_request_end}},
+            $self->{_http_request_state}{body_done} ? 1 : 0;
+    }
 }
 
 my $loop = Linux::Event::Loop->new;
@@ -39,6 +50,10 @@ my $state = {
     responses    => [],
     paired       => [],
     write_status => [],
+    request_state_refs       => [],
+    body_done_on_request     => [],
+    request_end_targets      => [],
+    body_done_on_request_end => [],
     response     => '',
     eof          => 0,
 };
@@ -91,6 +106,26 @@ is_deeply(
     $state->{paired},
     [ 1, 1 ],
     'each request receives a Response bound to the same transaction',
+);
+is(
+    $state->{request_state_refs}[0],
+    $state->{request_state_refs}[1],
+    'bodyless requests reuse per-connection transaction state',
+);
+is_deeply(
+    $state->{body_done_on_request},
+    [ 0, 0 ],
+    'bodyless request state remains pending during on_request',
+);
+is_deeply(
+    $state->{request_end_targets},
+    [ '/one', '/two' ],
+    'bodyless fast path dispatches on_request_end in request order',
+);
+is_deeply(
+    $state->{body_done_on_request_end},
+    [ 1, 1 ],
+    'bodyless request state is complete during on_request_end',
 );
 ok($state->{write_status}[0], 'Response write exposes Stream backpressure status');
 ok(

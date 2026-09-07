@@ -13,6 +13,26 @@ my $response = $class->_new(status => 200);
 is($response->status, 200, 'status getter returns internal initial status');
 ok(!defined $response->reason, 'reason is optional');
 
+my $bound_connection = {};
+my $bound_request = {};
+my $bound = $class->_new_bound($bound_connection, $bound_request);
+is($bound->status, 200, 'bound response uses the default status');
+is($bound->header('X-Missing'), undef, 'bound response starts without headers');
+is(
+    $bound->_serialize_head('1.1'),
+    "HTTP/1.1 200 OK\r\n\r\n",
+    'bound response with shared empty headers serializes normally',
+);
+$bound->add_header('X-Bound', 'yes');
+is($bound->header('X-Bound'), 'yes', 'bound response lazily owns added headers');
+
+my $second_bound = $class->_new_bound($bound_connection, $bound_request);
+is(
+    $second_bound->header('X-Bound'),
+    undef,
+    'adding a header does not mutate another bound response',
+);
+
 $response->header('Content-Type', 'text/plain');
 is($response->header('content-type'), 'text/plain', 'header lookup is case-insensitive');
 
