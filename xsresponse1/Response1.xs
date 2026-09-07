@@ -60,9 +60,9 @@ build_default_final(CLASS, request, body)
     SV *body
   PREINIT:
     le_http_request_state *state;
-    SV *body_copy;
-    STRLEN body_len;
-    const char *body_bytes;
+    SV *body_copy = NULL;
+    STRLEN body_len = 0;
+    const char *body_bytes = "";
     SV *wire;
   CODE:
     (void)CLASS;
@@ -80,19 +80,38 @@ build_default_final(CLASS, request, body)
     if (SvROK(body))
         croak("end(): body must be a scalar byte string");
 
-    body_copy = SvOK(body) ? newSVsv(body) : newSVpvn("", 0);
-    if (SvUTF8(body_copy) && !sv_utf8_downgrade(body_copy, TRUE)) {
-        SvREFCNT_dec(body_copy);
-        croak("end(): body contains wide characters; encode it to bytes first");
+    /*
+     * The common callback result is already an ordinary, non-magical byte
+     * string.  Read that scalar directly: the final wire construction below
+     * necessarily copies its bytes, so making an intermediate newSVsv() copy
+     * only adds allocation and memcpy work.
+     *
+     * Keep the old copy-based behavior for UTF-8, magical, and non-PV scalars.
+     * That preserves caller-scalar semantics while allowing UTF-8 downgrade
+     * validation to operate on a private value.
+     */
+    if (!SvOK(body)) {
+        body_bytes = "";
+        body_len = 0;
+    } else if (SvPOK(body) && !SvUTF8(body) && !SvGMAGICAL(body)) {
+        body_bytes = SvPVbyte(body, body_len);
+    } else {
+        body_copy = newSVsv(body);
+        if (SvUTF8(body_copy) && !sv_utf8_downgrade(body_copy, TRUE)) {
+            SvREFCNT_dec(body_copy);
+            croak("end(): body contains wide characters; encode it to bytes first");
+        }
+        body_bytes = SvPVbyte(body_copy, body_len);
     }
 
-    body_bytes = SvPVbyte(body_copy, body_len);
     wire = newSVpvf(
         "HTTP/1.1 200 OK\r\nContent-Length: %" UVuf "\r\n\r\n",
         (UV)body_len
     );
     sv_catpvn(wire, body_bytes, body_len);
-    SvREFCNT_dec(body_copy);
+
+    if (body_copy != NULL)
+        SvREFCNT_dec(body_copy);
 
     RETVAL = wire;
   OUTPUT:
