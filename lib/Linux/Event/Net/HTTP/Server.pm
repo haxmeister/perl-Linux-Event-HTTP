@@ -53,7 +53,7 @@ sub new ($class, %option) {
     );
 
     my %callbacks;
-    for my $name (qw(on_request on_body on_request_end)) {
+    for my $name (qw(on_request on_body on_request_end on_request_final)) {
         my $callback = _take_callback($name, \%option);
         $callbacks{$name} = $callback if $callback;
     }
@@ -148,9 +148,9 @@ L<Linux::Event::IO::Sock::Listener>. It owns no socket or HTTP transport engine
 of its own. The Listener accepts connections and the configured
 L<Linux::Event::Net::HTTP::Connection> subclass owns each HTTP connection.
 
-The simple form retains one C<on_request> callback and reuses that same CV for
-every accepted Connection. No wrapper closure is created per connection and no
-extra Server dispatch is inserted into the per-request callback path.
+The callback form retains each configured CV once and reuses it for every
+accepted Connection. No wrapper closure is created per connection and no extra
+Server dispatch is inserted into the per-request callback path.
 
 The object relationship is:
 
@@ -174,12 +174,44 @@ The object relationship is:
     );
 
 C<on_request> is required unless C<connection_class> provides an
-C<on_request> method. Optional C<on_body> and C<on_request_end> callbacks use the
-same signatures as L<Linux::Event::Net::HTTP::Connection> and are retained once
-by the Server.
+C<on_request> method. Optional C<on_body>, C<on_request_end>, and
+C<on_request_final> callbacks use the same signatures and semantics as
+L<Linux::Event::Net::HTTP::Connection> and are retained once by the Server.
 
 C<data> becomes the C<data> value of each accepted HTTP Connection. The private
 Server acceptance state is not exposed through C<< $conn->data >>.
+
+=head2 Complete final-response callback
+
+Applications whose common bodyless request can be answered with a default
+C<200 OK> scalar body may additionally provide C<on_request_final>:
+
+    my $server = Linux::Event::Net::HTTP::Server->new(
+        loop => $loop,
+        host => '0.0.0.0',
+        port => 8080,
+        on_request_final => sub ($conn, $req) {
+            return "ok\n" if $req->target eq '/health';
+            return undef;
+        },
+        on_request => sub ($conn, $req, $res) {
+            $res->status(404);
+            $res->end("not found\n");
+        },
+    );
+
+For a validated request with no message body, a defined scalar return lets
+Connection attempt its narrow default final-response path before allocating a
+Response object. C<undef> falls through to ordinary C<on_request>. Requests with
+a body always use the ordinary request/body callbacks. HEAD, HTTP/1.0,
+non-persistent requests, and other cases that cannot use the native default
+serialization still preserve the returned body through the ordinary Response
+machinery without calling the application twice.
+
+C<on_request> remains required because it is the general fallback and the API
+for body-bearing requests, custom status/headers, streaming, and deferred
+responses. C<on_request_final> is an optimization surface, not a replacement for
+Response.
 
 =head2 Connection subclass form
 
