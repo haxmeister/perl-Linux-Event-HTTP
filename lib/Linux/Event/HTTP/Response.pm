@@ -1,692 +1,241 @@
-package Linux::Event::HTTP::Server::Connection;
+package Linux::Event::HTTP::Response;
 use v5.36;
 use strict;
 use warnings;
 
-use parent 'Linux::Event::IO::Sock::Stream';
-
-use Carp qw(croak);
-use Scalar::Util qw(refaddr);
-use utf8 ();
+use Scalar::Util qw(refaddr weaken);
 
 use Linux::Event::HTTP::_HTTP1 ();
-use Linux::Event::HTTP::Response;
+use Linux::Event::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
 
-my $PARSER = 'Linux::Event::HTTP::_HTTP1';
-my $CHUNKED = 'Linux::Event::HTTP::_HTTP1::Chunked';
-my $MAX_REQUEST_HEAD = 65_536;
-my $MAX_HEADERS = 100;
-my %CLASS_HANDLER;
+my $EMPTY_HEADERS = [];
 
-sub _class_handler ($class, $name) {
-    my $key = "$class\0$name";
-    return $CLASS_HANDLER{$key} if exists $CLASS_HANDLER{$key};
-    return $CLASS_HANDLER{$key} = $class->can($name);
-}
+sub _new ($class, %args) {
+    my $status  = delete($args{status}) // 200;
+    my $reason  = delete $args{reason};
+    my $headers = delete $args{headers};
 
-sub _take_http_handler ($class, $name, $option) {
-    if (exists $option->{$name}) {
-        my $handler = delete $option->{$name};
-        croak "new(): $name must be a coderef" if ref($handler) ne 'CODE';
-        return $handler;
+    die 'unknown response option: ' . join(', ', sort keys %args)
+        if %args;
+
+    _validate_status($status);
+    _validate_reason($reason) if defined $reason;
+
+    my $self = bless {
+        status          => 0 + $status,
+        reason          => $reason,
+        headers         => [],
+        connection      => undef,
+        request         => undef,
+        started         => 0,
+        ended           => 0,
+        upgrade_pending => 0,
+    }, $class;
+
+    if (defined $headers) {
+        die 'headers must be an array reference of [name, value] pairs'
+            if ref($headers) ne 'ARRAY';
+
+        for my $pair (@$headers) {
+            die 'each response header must be a [name, value] pair'
+                if ref($pair) ne 'ARRAY' || @$pair != 2;
+            $self->add_header($pair->[0], $pair->[1]);
+        }
     }
-    return _class_handler($class, $name);
-}
 
-sub new ($class, %option) {
-    croak 'new(): Connection owns on_data; use on_request for HTTP requests'
-        if exists $option{on_data};
-    croak 'new(): Connection cannot use message framing callbacks'
-        if exists($option{on_message}) || exists($option{on_messages});
-    croak 'new(): on_request_final was removed; use on_request and Response->complete'
-        if exists $option{on_request_final};
-
-    my $loop = delete $option{loop};
-    my $on_request = _take_http_handler($class, 'on_request', \%option);
-    my $on_body = _take_http_handler($class, 'on_body', \%option);
-    my $on_request_end = _take_http_handler($class, 'on_request_end', \%option);
-
-    croak 'new(): HTTP Connection requires on_request callback or method'
-        if !$on_request;
-
-    my $self = $class->SUPER::new(%option);
-    $self->{_http_on_request} = $on_request;
-    $self->{_http_on_body} = $on_body;
-    $self->{_http_on_request_end} = $on_request_end;
-    $self->{_http_input} = '';
-    $self->{_http_active_request} = undef;
-    $self->{_http_active_response} = undef;
-    $self->{_http_request_state} = undef;
-    $self->{_http_response_state} = undef;
-    $self->{_http_driving} = 0;
-    $self->{_http_dispatching} = 0;
-    $self->{_http_closing} = 0;
-
-    $self->_attach_to_loop($loop) if $loop;
     return $self;
 }
 
-sub connect ($class, %option) {
-    croak 'connect(): HTTP client support is not implemented by Linux::Event::HTTP::Server::Connection';
+sub _new_bound ($class, $connection, $request) {
+    my $self = bless {
+        status          => 200,
+        reason          => undef,
+        headers         => $EMPTY_HEADERS,
+        connection      => $connection,
+        request         => $request,
+        started         => 0,
+        ended           => 0,
+        upgrade_pending => 0,
+    }, $class;
+    weaken($self->{connection});
+    return $self;
 }
 
-sub on_data ($self, $bytes) {
-    return if $self->{_http_closing} || $self->is_closed;
-    $self->{_http_input} .= $bytes;
-    $self->_drive_http1;
+sub connection   ($self) { $self->{connection} }
+sub request      ($self) { $self->{request} }
+sub is_started   ($self) { !!$self->{started} }
+sub is_complete  ($self) { !!$self->{ended} }
+sub is_upgrading ($self) { !!$self->{upgrade_pending} }
+
+sub _assert_mutable ($self) {
+    die 'response metadata cannot change after Upgrade handoff is requested'
+        if $self->{upgrade_pending};
+    die 'response metadata cannot change after output has started'
+        if $self->{started};
+    die 'response is already complete' if $self->{ended};
     return;
 }
 
-sub _new_request_state ($request, $mode = $request->body_mode) {
-    my $state = {
-        mode      => $mode,
-        body_done => 0,
-    };
+sub status ($self, @args) {
+    return $self->{status} if !@args;
 
-    if ($mode eq 'content-length') {
-        $state->{remaining} = $request->content_length // 0;
-    } elsif ($mode eq 'chunked') {
-        $state->{decoder} = $CHUNKED->new;
-    }
-
-    return $state;
+    die 'status accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
+    _validate_status($args[0]);
+    $self->{status} = 0 + $args[0];
+    return $self;
 }
 
-sub _body_pending ($state) {
-    return 0 if $state->{body_done};
-    return 0 if $state->{mode} eq 'none';
-    return $state->{remaining} > 0 if $state->{mode} eq 'content-length';
+sub reason ($self, @args) {
+    return $self->{reason} if !@args;
+
+    die 'reason accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
+    _validate_reason($args[0]) if defined $args[0];
+    $self->{reason} = $args[0];
+    return $self;
+}
+
+sub header ($self, $name, @args) {
+    _validate_name($name);
+
+    if (!@args) {
+        for my $pair (@{$self->{headers}}) {
+            return $pair->[1] if lc($pair->[0]) eq lc($name);
+        }
+        return undef;
+    }
+
+    die 'header setter accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
+    _validate_value($args[0]);
+
+    my @kept = grep { lc($_->[0]) ne lc($name) } @{$self->{headers}};
+    push @kept, [ "$name", "$args[0]" ];
+    $self->{headers} = \@kept;
+
+    return $self;
+}
+
+sub add_header ($self, $name, $value) {
+    $self->_assert_mutable;
+    _validate_name($name);
+    _validate_value($value);
+    $self->{headers} = []
+        if refaddr($self->{headers}) == refaddr($EMPTY_HEADERS);
+    push @{$self->{headers}}, [ "$name", "$value" ];
+    return $self;
+}
+
+sub header_values ($self, $name) {
+    _validate_name($name);
+    my $wanted = lc $name;
+    return map { $_->[1] }
+        grep { lc($_->[0]) eq $wanted }
+        @{$self->{headers}};
+}
+
+sub write ($self, $bytes) {
+    die 'write(): response has an Upgrade handoff pending'
+        if $self->{upgrade_pending};
+    die 'write(): response is already complete' if $self->{ended};
+    my $connection = $self->{connection}
+        or die 'write(): response is not bound to an active HTTP connection';
+    return $connection->_write_response($self, $bytes, 0);
+}
+
+sub _try_native_default_final ($self, $connection, $body) {
+    return 0 if ref($self) ne __PACKAGE__;
+    return 0 if $self->{status} != 200 || defined($self->{reason});
+    return 0 if @{$self->{headers}};
+    return 0 if $connection->{_http_closing} || $connection->is_closed;
+    return 0 if $connection->{_http_response_state};
+
+    my $active = $connection->{_http_active_response} or return 0;
+    return 0 if refaddr($active) != refaddr($self);
+
+    my $request = $connection->{_http_active_request} or return 0;
+    return 0 if !defined($self->{request})
+        || refaddr($request) != refaddr($self->{request});
+
+    my $request_state = $connection->{_http_request_state} or return 0;
+    return 0 if !$request_state->{body_done};
+
+    my $wire = Linux::Event::HTTP::_HTTP1
+        ->build_default_final($request, $body);
+    return 0 if !defined $wire;
+
+    $self->{started} = 1;
+    $self->{ended} = 1;
+    $connection->{_http_response_state} = undef;
+
+    $connection->write($wire);
+
+    $connection->{_http_active_request} = undef;
+    $connection->{_http_active_response} = undef;
+    $connection->{_http_request_state} = undef;
+    $connection->{_http_response_state} = undef;
+
+    $connection->resume_read if $connection->is_read_paused;
     return 1;
 }
 
-sub _expect_continue ($request) {
-    my @values = $request->header_values('Expect');
-    return 0 if !@values;
-    return -1 if $request->http_version ne '1.1';
+sub complete ($self, $bytes = '') {
+    die 'complete(): response has an Upgrade handoff pending'
+        if $self->{upgrade_pending};
+    die 'complete(): response is already complete' if $self->{ended};
+    my $connection = $self->{connection}
+        or die 'complete(): response is not bound to an active HTTP connection';
 
-    my $count = 0;
-    for my $value (@values) {
-        for my $member (split /,/, $value, -1) {
-            $member =~ s/\A[ \t]+//;
-            $member =~ s/[ \t]+\z//;
-            return -1 if $member eq '' || lc($member) ne '100-continue';
-            ++$count;
-        }
-    }
+    return $self if $self->_try_native_default_final($connection, $bytes);
 
-    return $count ? 1 : -1;
+    $connection->_write_response($self, $bytes, 1);
+    return $self;
 }
 
-sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
-    return 1 if !$handler;
-
-    my $ok;
-    {
-        local $self->{_http_dispatching} = 1;
-        $ok = eval {
-            $handler->($self, $request, $response, @extra);
-            1;
-        };
-    }
-
-    return 1 if $ok;
-    $self->_fail_active_transaction(500, $request, $response);
-    return 0;
+sub upgrade ($self, $target_class) {
+    Linux::Event::HTTP::_Upgrade->schedule($self, $target_class);
+    return $self;
 }
 
-sub _clear_transaction ($self) {
-    $self->{_http_active_request} = undef;
-    $self->{_http_active_response} = undef;
-    $self->{_http_request_state} = undef;
-    $self->{_http_response_state} = undef;
+sub _mark_started ($self) {
+    $self->{started} = 1;
     return;
 }
 
-sub _abort_started_response ($self, $response) {
-    return if $self->{_http_closing} || $self->is_closed;
-
-    $response->_mark_complete if $response && !$response->is_complete;
-    $self->_clear_transaction;
-    $self->{_http_input} = '';
-    $self->{_http_closing} = 1;
-    $self->pause_read if !$self->is_read_paused;
-    $self->end;
+sub _mark_complete ($self) {
+    $self->{ended} = 1;
     return;
 }
 
-sub _fail_active_transaction ($self, $status, $request, $response) {
-    return if $self->{_http_closing} || $self->is_closed;
-
-    if ($response && $response->is_started) {
-        $self->_abort_started_response($response);
-    } else {
-        $self->_protocol_error($status, $request->http_version);
-    }
-    return;
+sub _validate_status ($status) {
+    die 'response status must be an integer between 100 and 999'
+        if !defined($status) || "$status" !~ /\A[0-9]{3}\z/
+        || $status < 100 || $status > 999;
 }
 
-sub _finish_request_body ($self) {
-    my $request = $self->{_http_active_request} or return;
-    my $response = $self->{_http_active_response} or return;
-    my $state = $self->{_http_request_state} or return;
-    return if $state->{body_done};
-
-    $state->{body_done} = 1;
-    delete $state->{decoder};
-    delete $state->{remaining};
-
-    return if !$self->_invoke_http_callback(
-        $self->{_http_on_request_end}, $request, $response,
-    );
-    return if $self->{_http_closing} || $self->is_closed;
-    return if !$self->{_http_active_request};
-
-    if ($response->is_complete) {
-        $self->_finalize_transaction;
-    } else {
-        $self->pause_read if !$self->is_read_paused;
-    }
-    return;
+sub _validate_reason ($reason) {
+    die 'response reason phrase contains invalid control characters'
+        if $reason =~ /[\x00-\x08\x0a-\x1f\x7f]/;
 }
 
-sub _consume_request_body ($self) {
-    my $request = $self->{_http_active_request} or return 0;
-    my $response = $self->{_http_active_response} or return 0;
-    my $state = $self->{_http_request_state} or return 0;
-    return 0 if $state->{body_done};
+sub _validate_name ($name) {
+    die 'response header field name is required'
+        if !defined($name) || $name eq '';
 
-    if ($state->{mode} eq 'content-length') {
-        if (($state->{remaining} // 0) == 0) {
-            $self->_finish_request_body;
-            return 1;
-        }
-        return 0 if !length($self->{_http_input});
-
-        my $available = length($self->{_http_input});
-        my $take = $available < $state->{remaining}
-            ? $available : $state->{remaining};
-
-        my $chunk;
-        if ($self->{_http_on_body}) {
-            $chunk = substr($self->{_http_input}, 0, $take, '');
-        } else {
-            substr($self->{_http_input}, 0, $take, '');
-        }
-        $state->{remaining} -= $take;
-
-        if (defined($chunk) && length($chunk)) {
-            return 1 if !$self->_invoke_http_callback(
-                $self->{_http_on_body}, $request, $response, $chunk,
-            );
-            return 1 if $self->{_http_closing} || $self->is_closed;
-            return 1 if !$self->{_http_active_request};
-        }
-
-        $self->_finish_request_body if $state->{remaining} == 0;
-        return 1;
-    }
-
-    if ($state->{mode} eq 'chunked') {
-        return 0 if !length($self->{_http_input});
-
-        my ($done, $decoded);
-        my $ok = eval {
-            ($done, $decoded) = $state->{decoder}->feed(
-                $self->{_http_input}, $self->{_http_on_body} ? 1 : 0,
-            );
-            1;
-        };
-        if (!$ok) {
-            $self->_fail_active_transaction(400, $request, $response);
-            return 1;
-        }
-
-        if (defined($decoded) && length($decoded)) {
-            return 1 if !$self->_invoke_http_callback(
-                $self->{_http_on_body}, $request, $response, $decoded,
-            );
-            return 1 if $self->{_http_closing} || $self->is_closed;
-            return 1 if !$self->{_http_active_request};
-        }
-
-        $self->_finish_request_body if $done;
-        return 1;
-    }
-
-    $self->_finish_request_body;
-    return 1;
+    die 'invalid response header field name'
+        if $name !~ /\A[!#\$%&'*+\-.^_`|~0-9A-Za-z]+\z/;
 }
 
-sub _finalize_transaction ($self) {
-    return if $self->{_http_closing} || $self->is_closed;
+sub _validate_value ($value) {
+    die 'response header field value must be defined'
+        if !defined $value;
 
-    my $request_state = $self->{_http_request_state};
-    my $close_after = $request_state
-        && $request_state->{close_after_response} ? 1 : 0;
-
-    $self->_clear_transaction;
-
-    if ($close_after) {
-        $self->{_http_input} = '';
-        $self->{_http_closing} = 1;
-        $self->pause_read if !$self->is_read_paused;
-        $self->end;
-        return;
-    }
-
-    $self->resume_read if $self->is_read_paused;
-    $self->_drive_http1
-        if !$self->{_http_driving} && !$self->{_http_dispatching};
-    return;
+    die 'response header field value contains invalid control characters'
+        if $value =~ /[\x00-\x08\x0a-\x1f\x7f]/;
 }
-
-sub _drive_http1 ($self) {
-    return if $self->{_http_driving} || $self->{_http_closing}
-        || $self->is_closed;
-
-    local $self->{_http_driving} = 1;
-
-    while (!$self->{_http_closing} && !$self->is_closed) {
-        if (my $request = $self->{_http_active_request}) {
-            my $response = $self->{_http_active_response};
-            my $state = $self->{_http_request_state};
-
-            if (!$state->{body_done}) {
-                if (!_body_pending($state)) {
-                    $self->_finish_request_body;
-                    next;
-                }
-
-                last if !length($self->{_http_input});
-                $self->_consume_request_body;
-                next;
-            }
-
-            if ($response && $response->is_complete) {
-                $self->_finalize_transaction;
-                next;
-            }
-
-            $self->pause_read if $response && !$self->is_read_paused;
-            last;
-        }
-
-        last if !length($self->{_http_input});
-
-        my $request;
-        my $parsed = eval {
-            $request = $PARSER->parse_request(
-                $self->{_http_input}, 0, $MAX_HEADERS,
-            );
-            1;
-        };
-
-        if (!$parsed) {
-            my $failure = "$@";
-            my $status = $failure =~ /semantic error \(501\)/ ? 501 : 400;
-            $self->_protocol_error($status);
-            last;
-        }
-
-        if (!defined $request) {
-            if (length($self->{_http_input}) > $MAX_REQUEST_HEAD) {
-                $self->_protocol_error(431);
-            }
-            last;
-        }
-
-        my $consumed = $request->_consumed;
-        if ($consumed > $MAX_REQUEST_HEAD) {
-            $self->_protocol_error(431, $request->http_version);
-            last;
-        }
-
-        substr($self->{_http_input}, 0, $consumed, '');
-
-        my $expect = _expect_continue($request);
-        if ($expect < 0) {
-            $self->_protocol_error(417, $request->http_version);
-            last;
-        }
-
-        my $body_mode = $request->body_mode;
-        my $bodyless = $body_mode eq 'none';
-
-        my $response
-            = Linux::Event::HTTP::Response->_new_bound($self, $request);
-        my $request_state;
-        if ($bodyless) {
-            $request_state = $self->{_http_bodyless_state} //= {
-                mode      => 'none',
-                body_done => 0,
-            };
-            $request_state->{body_done}
-                = $self->{_http_on_request_end} ? 0 : 1;
-            delete $request_state->{close_after_response};
-        } else {
-            $request_state = _new_request_state($request, $body_mode);
-        }
-
-        $self->{_http_active_request} = $request;
-        $self->{_http_active_response} = $response;
-        $self->{_http_request_state} = $request_state;
-        $self->{_http_response_state} = undef;
-
-        if ($expect && _body_pending($request_state)) {
-            $self->write("HTTP/1.1 100 Continue\r\n\r\n");
-        }
-
-        if (!$self->_invoke_http_callback(
-            $self->{_http_on_request}, $request, $response,
-        )) {
-            last;
-        }
-        last if $self->{_http_closing} || $self->is_closed;
-        next if !$self->{_http_active_request};
-
-        if ($bodyless) {
-            if ($self->{_http_on_request_end}) {
-                $request_state->{body_done} = 1;
-                last if !$self->_invoke_http_callback(
-                    $self->{_http_on_request_end}, $request, $response,
-                );
-                last if $self->{_http_closing} || $self->is_closed;
-                next if !$self->{_http_active_request};
-            }
-
-            if ($response->is_complete) {
-                $self->_finalize_transaction;
-                next;
-            }
-
-            $self->pause_read if !$self->is_read_paused;
-            last;
-        }
-
-        if (!_body_pending($request_state)) {
-            $self->_finish_request_body;
-        }
-    }
-
-    return;
-}
-
-sub _body_bytes ($operation, $body) {
-    croak "$operation(): body must be a scalar byte string" if ref($body);
-
-    my $bytes = defined($body) ? "$body" : '';
-    if (utf8::is_utf8($bytes)) {
-        croak "$operation(): body contains wide characters; encode it to bytes first"
-            if !utf8::downgrade($bytes, 1);
-    }
-    return $bytes;
-}
-
-sub _canonical_decimal ($value) {
-    return undef if !defined($value) || $value !~ /\A\d+\z/;
-    my $decimal = "$value";
-    $decimal =~ s/\A0+(?=\d)//;
-    return $decimal;
-}
-
-sub _compare_count ($count, $decimal) {
-    my $actual = "$count";
-    return length($actual) <=> length($decimal)
-        || $actual cmp $decimal;
-}
-
-sub _chunk_wire ($bytes) {
-    return '' if !length($bytes);
-    return sprintf('%x', length($bytes)) . "\r\n" . $bytes . "\r\n";
-}
-
-sub _chunked_transfer_encoding ($operation, $version, $values) {
-    return 0 if !@$values;
-
-    croak "$operation(): Transfer-Encoding is not valid for HTTP/1.0 responses"
-        if $version ne '1.1';
-
-    my @coding;
-    for my $value (@$values) {
-        for my $member (split /,/, $value, -1) {
-            $member =~ s/\A[ \t]+//;
-            $member =~ s/[ \t]+\z//;
-            croak "$operation(): invalid Transfer-Encoding response value"
-                if $member eq '' || $member =~ /;/;
-            push @coding, lc $member;
-        }
-    }
-
-    croak "$operation(): only chunked response Transfer-Encoding is supported"
-        if @coding != 1 || $coding[0] ne 'chunked';
-
-    return 1;
-}
-
-sub _response_start ($self, $response, $bytes, $final) {
-    my $request = $self->{_http_active_request};
-    my $version = $request->http_version;
-    my $method = $request->method;
-    my $status = $response->status;
-    my $operation = $final ? 'complete' : 'write';
-
-    croak "$operation(): informational responses require a future interim-response API"
-        if $status >= 100 && $status < 200;
-
-    my $body_forbidden = $status == 204 || $status == 304;
-    croak "$operation(): this response status cannot carry a message body"
-        if $body_forbidden && length($bytes);
-
-    my @transfer_encoding = $response->header_values('Transfer-Encoding');
-    my @content_length = $response->header_values('Content-Length');
-    my $head_request = $method eq 'HEAD';
-
-    croak "$operation(): response cannot contain both Transfer-Encoding and Content-Length"
-        if @transfer_encoding && @content_length;
-
-    croak 'write(): HEAD responses must be completed with complete()'
-        if !$final && $head_request;
-    croak 'write(): this response status cannot use body streaming'
-        if !$final && $body_forbidden;
-
-    my $chunked = _chunked_transfer_encoding(
-        $operation, $version, \@transfer_encoding,
-    );
-    my $close_delimited = 0;
-
-    if (!@content_length && !$body_forbidden && !$chunked) {
-        if ($final) {
-            $response->header('Content-Length', length($bytes));
-            @content_length = $response->header_values('Content-Length');
-        } elsif ($version eq '1.1') {
-            $response->header('Transfer-Encoding', 'chunked');
-            $chunked = 1;
-        } else {
-            $close_delimited = 1;
-        }
-    }
-
-    my $expected;
-    if (@content_length == 1) {
-        $expected = _canonical_decimal($content_length[0]);
-        croak "$operation(): Content-Length must be a decimal number"
-            if !defined $expected;
-    }
-
-    if ($final && !$head_request && !$body_forbidden && defined $expected) {
-        croak 'complete(): Content-Length does not match scalar body length'
-            if _compare_count(length($bytes), $expected) != 0;
-    }
-
-    if (!$final && defined $expected
-        && _compare_count(length($bytes), $expected) > 0) {
-        croak 'write(): response body exceeds Content-Length';
-    }
-
-    my @connection = $response->header_values('Connection');
-    my $close_after = !$request->keep_alive
-        || _has_connection_token(\@connection, 'close')
-        || $close_delimited;
-
-    if (!$request->keep_alive && $version eq '1.1') {
-        $response->header('Connection', 'close');
-        $close_after = 1;
-    } elsif ($request->keep_alive && $version eq '1.0'
-        && !@connection && !$close_after) {
-        $response->header('Connection', 'keep-alive');
-    }
-
-    my $head = $response->_serialize_head($version);
-    $response->_mark_started;
-
-    return (
-        {
-            expected      => $expected,
-            sent          => 0,
-            suppress_body => $head_request || $body_forbidden ? 1 : 0,
-            close_after   => $close_after ? 1 : 0,
-            chunked       => $chunked ? 1 : 0,
-        },
-        $head,
-    );
-}
-
-sub _write_response ($self, $response, $body, $final) {
-    my $operation = $final ? 'complete' : 'write';
-
-    croak "$operation(): connection is closing or closed"
-        if $self->{_http_closing} || $self->is_closed;
-
-    my $active = $self->{_http_active_response};
-    croak "$operation(): this Response is not the active HTTP transaction"
-        if !$active || refaddr($active) != refaddr($response);
-
-    my $bytes = _body_bytes($operation, $body);
-    my $state = $self->{_http_response_state};
-
-    if (!$state) {
-        my ($created, $head) = $self->_response_start(
-            $response, $bytes, $final,
-        );
-        $state = $self->{_http_response_state} = $created;
-
-        if ($final) {
-            my $wire_body = '';
-            if (!$state->{suppress_body}) {
-                $wire_body = $state->{chunked}
-                    ? _chunk_wire($bytes) . "0\r\n\r\n"
-                    : $bytes;
-            }
-            return $self->_complete_response(
-                $response, $head . $wire_body, $state->{close_after},
-            );
-        }
-
-        $state->{sent} = length($bytes);
-        my $wire_body = $state->{chunked} ? _chunk_wire($bytes) : $bytes;
-        return $self->write($head . $wire_body);
-    }
-
-    my $new_sent = $state->{sent} + length($bytes);
-    if (defined($state->{expected})
-        && _compare_count($new_sent, $state->{expected}) > 0) {
-        croak "$operation(): response body exceeds Content-Length";
-    }
-    if ($final && defined($state->{expected})
-        && _compare_count($new_sent, $state->{expected}) != 0) {
-        croak 'complete(): response body length does not match Content-Length';
-    }
-
-    $state->{sent} = $new_sent;
-
-    if ($final) {
-        my $wire = $state->{chunked}
-            ? _chunk_wire($bytes) . "0\r\n\r\n"
-            : $bytes;
-        return $self->_complete_response(
-            $response, $wire, $state->{close_after},
-        );
-    }
-
-    my $wire = $state->{chunked} ? _chunk_wire($bytes) : $bytes;
-    return length($wire) ? $self->write($wire) : 1;
-}
-
-sub _complete_response ($self, $response, $wire, $close_after) {
-    $response->_mark_complete;
-    $self->{_http_response_state} = undef;
-
-    my $request_state = $self->{_http_request_state};
-    if ($close_after && $request_state && !$request_state->{body_done}) {
-        $request_state->{close_after_response} = 1;
-        my $accepted = length($wire) ? $self->write($wire) : 1;
-        $self->resume_read if $self->is_read_paused;
-        return $accepted;
-    }
-
-    if ($close_after) {
-        $self->_clear_transaction;
-        $self->{_http_closing} = 1;
-        $self->{_http_input} = '';
-        $self->pause_read if !$self->is_read_paused;
-        $self->end($wire);
-        return 1;
-    }
-
-    my $accepted = length($wire) ? $self->write($wire) : 1;
-    if ($request_state && $request_state->{body_done}) {
-        $self->_finalize_transaction;
-    } else {
-        $self->resume_read if $self->is_read_paused;
-    }
-    return $accepted;
-}
-
-sub _has_connection_token ($values, $wanted) {
-    for my $value (@$values) {
-        for my $token (split /,/, $value) {
-            $token =~ s/\A[ \t]+//;
-            $token =~ s/[ \t]+\z//;
-            return 1 if lc($token) eq $wanted;
-        }
-    }
-    return 0;
-}
-
-sub _protocol_error ($self, $status, $version = '1.1') {
-    return if $self->{_http_closing} || $self->is_closed;
-
-    $version = '1.1' if $version ne '1.0' && $version ne '1.1';
-
-    my $response = Linux::Event::HTTP::Response->_new(
-        status => $status,
-        headers => [
-            [ 'Content-Length', '0' ],
-            [ 'Connection', 'close' ],
-        ],
-    );
-
-    my $head = $response->_serialize_head($version);
-    if (my $active = $self->{_http_active_response}) {
-        $active->_mark_complete if !$active->is_complete;
-    }
-    $self->_clear_transaction;
-    $self->{_http_input} = '';
-    $self->{_http_closing} = 1;
-    $self->pause_read if !$self->is_read_paused;
-    $self->end($head);
-    return;
-}
-
-sub CLONE ($class) {
-    %CLASS_HANDLER = ();
-    Linux::Event::_Socket::Stream::CLONE($class);
-    return;
-}
-
-sub CLONE_SKIP ($class) { 1 }
 
 1;
 
@@ -694,134 +243,143 @@ __END__
 
 =head1 NAME
 
-Linux::Event::HTTP::Server::Connection - HTTP/1 connection protocol state
+Linux::Event::HTTP::Response - response half of an HTTP transaction
 
 =head1 SYNOPSIS
 
-    package UploadHTTP;
-    use parent 'Linux::Event::HTTP::Server::Connection';
-
     sub on_request ($self, $req, $res) {
-        $self->data->{body} = '';
+        $res->status(200);
         $res->header('Content-Type', 'text/plain');
+        $res->complete("hello\n");
     }
-
-    sub on_body ($self, $req, $res, $bytes) {
-        $self->data->{body} .= $bytes;
-    }
-
-    sub on_request_end ($self, $req, $res) {
-        $res->complete("received " . length($self->data->{body}) . " bytes\n");
-    }
-
-    package main;
-    use Linux::Event::Loop;
-    use Linux::Event::IO::Sock::Listener;
-
-    my $loop = Linux::Event::Loop->new;
-    my $listener = Linux::Event::IO::Sock::Listener->new(
-        loop         => $loop,
-        stream_class => 'UploadHTTP',
-        host         => '127.0.0.1',
-        port         => 8080,
-    );
-
-    $loop->run;
 
 =head1 DESCRIPTION
 
-C<Linux::Event::HTTP::Server::Connection> is a
-L<Linux::Event::IO::Sock::Stream> subclass. Linux::Event continues to own the
-socket, TLS transport, readiness, ordered-byte reads and writes, buffering, and
-backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
-request sequencing, response serialization, and persistence policy.
+Every successfully dispatched HTTP request receives one Response object created
+and bound by L<Linux::Event::HTTP::Server::Connection>. Applications do not
+construct Response objects and do not pass them back to Connection.
 
-Applications normally use L<Linux::Event::HTTP::Server> and receive this
-Connection as the first callback argument. Subclass Connection when reusable
-transport, TLS, tuning, or callback policy belongs on the connection class.
+A Response represents one HTTP response, not the underlying TCP or TLS
+connection. C<complete> completes this HTTP response. It does not mean "close
+the socket"; on a persistent HTTP connection the same socket normally remains
+open for later requests.
 
-Every dispatched Request is paired with one L<Linux::Event::HTTP::Response>
-created by Connection, and the same Request and Response objects are passed to
-the callbacks for that transaction.
+Status and headers may be configured until output begins. C<write> streams body
+bytes. C<complete> may supply final body bytes and marks the response half of
+the transaction complete.
 
-=head1 REQUEST BODY STREAMING
+=head1 METHODS
 
-Request bodies are streaming-first. C<Content-Length> bodies are delivered as
-bytes become available. C<Transfer-Encoding: chunked> is decoded before
-application delivery. If C<on_body> is absent, body bytes are drained and
-discarded rather than accumulated.
+=head2 status
 
-C<on_request_end> runs when the complete request input boundary has been
-consumed, including requests with no body.
+    my $status = $res->status;
+    $res->status(404);
 
-=head1 CALLBACKS
+Gets or sets the three-digit status code. It defaults to 200.
 
-=head2 on_request
+=head2 reason
 
-    sub on_request ($self, $req, $res) {
-        ...
-    }
+    my $reason = $res->reason;
+    $res->reason('Not Here');
 
-Runs once after the validated request head is available. A body-bearing request
-may continue delivering C<on_body> calls after this callback.
+Gets or sets the optional reason phrase. Passing undef restores the serializer's
+default phrase for the status code.
 
-=head2 on_body
+=head2 header
 
-    sub on_body ($self, $req, $res, $bytes) {
-        ...
-    }
-
-Receives decoded request-body byte strings.
-
-=head2 on_request_end
-
-    sub on_request_end ($self, $req, $res) {
-        $res->complete("ok\n");
-    }
-
-Runs once when the complete request input boundary has been reached. If the
-Response is already complete, the transaction can advance to the next
-persistent request. If the Response is still active, reads pause so a later
-request cannot overtake it.
-
-=head1 RESPONSE FLOW
-
-C<complete> completes an HTTP Response; it does not mean close the underlying
-socket. A persistent connection normally remains open for later requests.
-
-    $res->status(200);
     $res->header('Content-Type', 'text/plain');
-    $res->complete("hello\n");
+    my $type = $res->header('Content-Type');
 
-Streaming uses C<write> followed by C<complete>:
+With a value, replaces all existing fields of the same ASCII
+case-insensitive name with one field. Without a value, returns the first
+matching value or undef.
 
-    $res->write("hello ");
+=head2 add_header
+
+    $res->add_header('Set-Cookie', 'a=1');
+    $res->add_header('Set-Cookie', 'b=2');
+
+Appends another field without removing existing fields of the same name.
+
+=head2 header_values
+
+    my @cookies = $res->header_values('Set-Cookie');
+
+Returns all matching values in output order.
+
+=head2 write
+
+    my $accepted = $res->write("hello ");
     $res->write("world\n");
     $res->complete;
 
-When HTTP/1.1 streaming begins without Content-Length, Connection uses chunked
-transfer coding. HTTP/1.0 unknown-length streaming is close-delimited and
-therefore requires the HTTP connection to close after the response completes.
+Begins or continues a streaming response body. The return value mirrors
+Linux::Event Stream write backpressure: false means the bytes were accepted but
+the configured high watermark has been reached.
 
-The first output commits the response head, after which status and headers are
-immutable. A persistent connection advances to the next request only after both
-the request input and response are complete.
+For HTTP/1.1, if Content-Length was not set before the first C<write>, the
+Connection automatically uses chunked transfer coding. C<complete> emits the
+terminating chunk. If Content-Length was set explicitly, the total body length
+must match it exactly.
 
-=head1 EXPECT: 100-CONTINUE
+HTTP/1.0 cannot use chunked transfer coding. Unknown-length streaming is
+close-delimited, so completing that response also requires the HTTP connection
+to close after queued output has drained.
 
-For an HTTP/1.1 request with a body and C<Expect: 100-continue>, Connection
-emits C<100 Continue> after validating the request head. Unsupported
-expectations are answered with 417 and the connection is closed.
+=head2 complete
 
-=head1 LIMITS
+    $res->complete("hello\n");
 
-The current request-head limit is 65,536 bytes and the parser header-count limit
-is 100 fields. Request bodies are streamed and do not inherit the request-head
-memory limit.
+Completes this HTTP response. Optional bytes are the final response-body bytes.
+When C<complete> is the first body operation, Content-Length is added
+automatically from the supplied byte-string length.
 
-=head1 SEE ALSO
+    $res->write($chunk);
+    $res->write($chunk);
+    $res->complete;
 
-L<Linux::Event::HTTP::Server>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::IO::Sock::Stream>.
+After streaming has started, C<complete> follows the framing mode selected by
+the first C<write>. Completing a response normally does not close a persistent
+HTTP connection. The connection closes only when HTTP framing or persistence
+rules require it.
+
+=head2 upgrade
+
+    $res->header('Upgrade', 'websocket');
+    $res->header('Sec-WebSocket-Accept', $accept);
+    $res->upgrade('MyWebSocketConnection');
+
+Completes an HTTP/1.1 protocol switch and hands the same live stream-socket
+object to another L<Linux::Event::IO::Sock::Stream> subclass. The request and
+response must satisfy HTTP Upgrade rules before the handoff is scheduled.
+
+=head2 connection
+
+Returns the owning L<Linux::Event::HTTP::Server::Connection> while it remains
+alive.
+
+=head2 request
+
+Returns the L<Linux::Event::HTTP::Request> paired with this response.
+
+=head2 is_started
+
+True after the response head has been committed.
+
+=head2 is_complete
+
+True after C<complete> completes the response half of the HTTP transaction, or
+after an Upgrade switching response is committed immediately before handoff.
+
+=head2 is_upgrading
+
+True after C<upgrade> has validated and scheduled a protocol handoff but before
+the 101 response has been committed and the live stream has transitioned.
+
+=head1 INTERNAL SERIALIZATION
+
+The private C<_serialize_head> method serializes the HTTP/1 status line and
+field section. It is used by the connection protocol layer and is not the
+application response-writing API.
 
 =cut
