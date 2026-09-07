@@ -50,50 +50,39 @@ request_method_is_head(le_http_request_state *state)
         memEQ(state->bytes + state->method_offset, "HEAD", 4);
 }
 
-MODULE = Linux::Event::Net::HTTP::_Native::Response1    PACKAGE = Linux::Event::Net::HTTP::_Native::Response1
-PROTOTYPES: DISABLE
-
-SV *
-build_default_final(CLASS, request, body)
-    const char *CLASS
-    SV *request
-    SV *body
-  PREINIT:
-    le_http_request_state *state;
+static SV *
+build_default_final_impl(
+    pTHX_ le_http_request_state *state,
+    SV *body,
+    int force_body_copy
+)
+{
     SV *body_copy = NULL;
     STRLEN body_len = 0;
     const char *body_bytes = "";
     SV *wire;
-  CODE:
-    (void)CLASS;
-    state = request_state_from_object(aTHX_ request);
 
     /*
-     * This is intentionally a very narrow experimental fast path.  Anything
+     * This is intentionally a very narrow experimental fast path. Anything
      * outside the common persistent HTTP/1.1 scalar-response case falls back
      * to the existing Perl response state machine.
      */
     if (state->minor_version != 1 || !state->keep_alive ||
         request_method_is_head(state))
-        XSRETURN_UNDEF;
+        return NULL;
 
     if (SvROK(body))
         croak("end(): body must be a scalar byte string");
 
     /*
-     * The common callback result is already an ordinary, non-magical byte
-     * string.  Read that scalar directly: the final wire construction below
-     * necessarily copies its bytes, so making an intermediate newSVsv() copy
-     * only adds allocation and memcpy work.
-     *
-     * Keep the old copy-based behavior for UTF-8, magical, and non-PV scalars.
-     * That preserves caller-scalar semantics while allowing UTF-8 downgrade
-     * validation to operate on a private value.
+     * force_body_copy exists only to preserve the pre-2a04725 implementation
+     * as a temporary same-run benchmark reference. Production calls pass 0.
      */
     if (!SvOK(body)) {
         body_bytes = "";
         body_len = 0;
-    } else if (SvPOK(body) && !SvUTF8(body) && !SvGMAGICAL(body)) {
+    } else if (!force_body_copy && SvPOK(body) && !SvUTF8(body)
+        && !SvGMAGICAL(body)) {
         body_bytes = SvPVbyte(body, body_len);
     } else {
         body_copy = newSVsv(body);
@@ -113,6 +102,40 @@ build_default_final(CLASS, request, body)
     if (body_copy != NULL)
         SvREFCNT_dec(body_copy);
 
-    RETVAL = wire;
+    return wire;
+}
+
+MODULE = Linux::Event::Net::HTTP::_Native::Response1    PACKAGE = Linux::Event::Net::HTTP::_Native::Response1
+PROTOTYPES: DISABLE
+
+SV *
+build_default_final(CLASS, request, body)
+    const char *CLASS
+    SV *request
+    SV *body
+  PREINIT:
+    le_http_request_state *state;
+  CODE:
+    (void)CLASS;
+    state = request_state_from_object(aTHX_ request);
+    RETVAL = build_default_final_impl(aTHX_ state, body, 0);
+    if (RETVAL == NULL)
+        XSRETURN_UNDEF;
+  OUTPUT:
+    RETVAL
+
+SV *
+_build_default_final_copy_reference(CLASS, request, body)
+    const char *CLASS
+    SV *request
+    SV *body
+  PREINIT:
+    le_http_request_state *state;
+  CODE:
+    (void)CLASS;
+    state = request_state_from_object(aTHX_ request);
+    RETVAL = build_default_final_impl(aTHX_ state, body, 1);
+    if (RETVAL == NULL)
+        XSRETURN_UNDEF;
   OUTPUT:
     RETVAL
