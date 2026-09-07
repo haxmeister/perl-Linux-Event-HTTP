@@ -12,6 +12,7 @@ bench/run-http-end-to-end.pl
 bench/run-http-transaction-ladder.pl
 bench/servers/aiohttp-http.py
 bench/servers/linuxevent-http.pl
+bench/servers/linuxevent-transaction-stage.pl
 bench/servers/mojo-http.pl
 bench/servers/node-http.js
 bench/servers/twiggy-http.pl
