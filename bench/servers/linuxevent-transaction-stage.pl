@@ -14,7 +14,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:bound|state|callbacks|end)\z/;
+    if $STAGE !~ /\A(?:parse|bound|state|callbacks|end)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -52,6 +52,11 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 
             my $consumed = $request->_consumed;
             substr($self->{_bench_input}, 0, $consumed, '');
+
+            if ($main::STAGE eq 'parse') {
+                $self->write($self->data->{wire});
+                next;
+            }
 
             my $response = Linux::Event::Net::HTTP::Response->_new_bound(
                 $self, $request,
