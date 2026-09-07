@@ -5,7 +5,6 @@ use warnings;
 use Test::More;
 
 use Linux::Event::HTTP::_HTTP1 ();
-use Linux::Event::HTTP::_HTTP1 ();
 
 my $parser = 'Linux::Event::HTTP::_HTTP1';
 my $native = 'Linux::Event::HTTP::_HTTP1';
