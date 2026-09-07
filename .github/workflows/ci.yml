@@ -84,7 +84,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libssl-dev python3-venv
+          sudo apt-get install --yes libssl-dev python3-venv libh2o-evloop-dev pkg-config
 
       - name: Install HTTP benchmark competitors
         run: |
@@ -119,14 +119,14 @@ jobs:
       - name: Cross-server smoke
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent,feersum,mojo,node,go,aiohttp \
+            --servers=linuxevent,feersum,mojo,node,go,aiohttp,h2o \
             --smoke \
             --strict
 
       - name: Cross-server directional benchmark
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent,feersum,mojo,node,go,aiohttp \
+            --servers=linuxevent,feersum,mojo,node,go,aiohttp,h2o \
             --strict \
             --requests=10000 \
             --warmup=1000 \
