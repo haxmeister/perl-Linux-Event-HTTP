@@ -815,14 +815,16 @@ backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
 request sequencing, response serialization, and persistence policy.
 
 C<on_data> is the cached Linux::Event Stream callback for the protocol engine.
-Applications use C<on_request>, optional C<on_body>, and optional
-C<on_request_end> instead. Named methods are resolved and cached by connection
-class. Direct construction may supply the same names as constructor callbacks
-when lexical application scope is preferable.
+Applications use C<on_request>, optional C<on_body>, optional
+C<on_request_end>, and optionally C<on_request_final>. Named methods are
+resolved and cached by connection class. Direct construction may supply the same
+names as constructor callbacks when lexical application scope is preferable.
 
-Every successfully dispatched Request is paired with one
-L<Linux::Event::Net::HTTP::Response> created by Connection. The same Request and
-Response objects are passed to all callbacks for that transaction.
+Ordinary request handling pairs each Request with one
+L<Linux::Event::Net::HTTP::Response> created by Connection, and the same Request
+and Response objects are passed to the ordinary callbacks for that transaction.
+A defined C<on_request_final> result may complete a bodyless request before a
+Response object is allocated.
 
 =head1 REQUEST BODY STREAMING
 
@@ -839,9 +841,38 @@ after the current request input and response have both completed.
 If C<on_body> is absent, request body bytes are drained and discarded without
 being accumulated. C<on_request_end>, when present, still runs when the complete
 request has been consumed. It also runs for requests with no body or
-C<Content-Length: 0>, immediately after C<on_request> returns.
+C<Content-Length: 0>, immediately after C<on_request> returns on the ordinary
+Response path.
 
 =head1 CALLBACKS
+
+=head2 on_request_final
+
+    sub on_request_final ($self, $req) {
+        return "ok\n" if $req->target eq '/health';
+        return undef;
+    }
+
+Optional complete final-response callback for applications with a common
+bodyless request that can be answered by a default C<200 OK> scalar body. It
+runs after request-head and Expect validation but before Response allocation.
+It is never invoked for a request carrying a message body.
+
+A defined scalar return lets Connection attempt its narrow native default-final
+serialization directly. C<undef> declines the shortcut and falls through to
+ordinary C<on_request>. HEAD, HTTP/1.0, non-persistent requests, and other cases
+that cannot use native default serialization still preserve a defined returned
+body through the ordinary Response machinery without invoking C<on_request>
+again.
+
+The returned body must be a scalar byte string. Callback exceptions or invalid
+returned bodies fail the request with a protocol-safe 500 response. The callback
+cannot set status or headers and is not a streaming API; use C<on_request> and
+Response for those cases.
+
+C<on_request> remains required even when this callback exists because it is the
+general fallback and handles body-bearing requests, custom responses, streaming,
+and deferred completion.
 
 =head2 on_request
 
@@ -849,10 +880,10 @@ C<Content-Length: 0>, immediately after C<on_request> returns.
         ...
     }
 
-Runs once after a validated request head has been parsed. A body-bearing request
-may continue delivering C<on_body> calls after this callback. The Response may
-be written immediately or retained for completion after the body or another
-event.
+Runs once after a validated request head has been parsed when the request uses
+the ordinary Response path. A body-bearing request may continue delivering
+C<on_body> calls after this callback. The Response may be written immediately or
+retained for completion after the body or another event.
 
 =head2 on_body
 
@@ -870,16 +901,20 @@ application.
         $res->end("ok\n");
     }
 
-Runs once when the complete request input boundary has been reached. This
-includes bodyless requests, where it runs immediately after C<on_request>
-returns. If the Response has already ended, the transaction becomes eligible
-for the next pipelined request. If the Response is still active, Connection
-pauses reads so a later request cannot overtake it.
+Runs once when the complete request input boundary has been reached on the
+ordinary Response path. This includes bodyless requests, where it runs
+immediately after C<on_request> returns. If the Response has already ended, the
+transaction becomes eligible for the next pipelined request. If the Response is
+still active, Connection pauses reads so a later request cannot overtake it.
 
 A direct/adopted connection may use constructor callbacks instead:
 
     my $conn = Linux::Event::Net::HTTP::Connection->new(
         fh => $connected_socket,
+        on_request_final => sub ($conn, $req) {
+            return "ok\n" if $req->target eq '/health';
+            return undef;
+        },
         on_request => sub ($conn, $req, $res) {
             ...
         },
@@ -900,12 +935,16 @@ the connection is closed.
 
 =head1 RESPONSE FLOW
 
-The Response object owns status, headers, body output, and transaction
+The ordinary Response object owns status, headers, body output, and transaction
 completion:
 
     $res->status(200);
     $res->header('Content-Type', 'text/plain');
     $res->end("hello\n");
+
+For the narrower bodyless/default-C<200 OK> case, C<on_request_final> may return
+the complete scalar body before a Response object is constructed. This is an
+optional performance path; it does not replace the Response API.
 
 A scalar C<end> automatically supplies Content-Length. Streaming can declare a
 known Content-Length explicitly:
