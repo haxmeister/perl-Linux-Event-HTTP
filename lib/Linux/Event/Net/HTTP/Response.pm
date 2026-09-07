@@ -11,6 +11,8 @@ use Linux::Event::Net::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
 
+my $EMPTY_HEADERS = [];
+
 sub _new ($class, %args) {
     my $status  = delete($args{status}) // 200;
     my $reason  = delete $args{reason};
@@ -48,10 +50,17 @@ sub _new ($class, %args) {
 }
 
 sub _new_bound ($class, $connection, $request) {
-    my $self = $class->_new;
-    $self->{connection} = $connection;
+    my $self = bless {
+        status          => 200,
+        reason          => undef,
+        headers         => $EMPTY_HEADERS,
+        connection      => $connection,
+        request         => $request,
+        started         => 0,
+        ended           => 0,
+        upgrade_pending => 0,
+    }, $class;
     weaken($self->{connection});
-    $self->{request} = $request;
     return $self;
 }
 
@@ -115,6 +124,8 @@ sub add_header ($self, $name, $value) {
     $self->_assert_mutable;
     _validate_name($name);
     _validate_value($value);
+    $self->{headers} = []
+        if refaddr($self->{headers}) == refaddr($EMPTY_HEADERS);
     push @{$self->{headers}}, [ "$name", "$value" ];
     return $self;
 }
