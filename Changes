@@ -12,7 +12,7 @@ Revision history for Linux-Event-Net-HTTP
     - Reject ambiguous TE/CL framing and unsupported request transfer codings.
     - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
     - Bind HTTP Connection directly to Linux::Event::IO::Sock::Stream.
-    - Pair every dispatched Request with a connection-created Response object.
+    - Pair general-path dispatched Requests with a connection-created Response object.
     - Move response completion to Response->end and fixed-length output to Response->write.
     - Lock response status and headers once output begins.
     - Stream Content-Length request bodies through cached on_body callbacks.
@@ -36,5 +36,11 @@ Revision history for Linux-Event-Net-HTTP
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.
+    - Add a reproducible cross-server comparison harness for Linux::Event, Feersum,
+      Mojolicious, Node.js, Go, aiohttp, and optional libh2o reference runs.
+    - Add optional on_request_final($connection, $request) for validated bodyless
+      complete responses while retaining on_request as the required general fallback.
+    - Add a narrow native default-final response builder and focused final-response
+      benchmark, with ordinary Response fallback for HEAD, HTTP/1.0, and body-bearing requests.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
