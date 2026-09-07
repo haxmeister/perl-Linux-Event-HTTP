@@ -76,7 +76,7 @@ ok($server->port > 0, 'Server reports kernel-selected listener port');
 is(
     $server->connection_class,
     'Linux::Event::Net::HTTP::Connection',
-    'Server defaults to HTTP Connection class',
+    'private transitional Server defaults to HTTP Connection class',
 );
 is($server->data, $state, 'Server exposes application data, not private accept state');
 
@@ -113,54 +113,6 @@ like(
     $state->{wire},
     qr/\AHTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 10\r\nConnection: close\r\n\r\nbody=data\n\z/s,
     'simple Server callback form produces complete HTTP response',
-);
-
-$loop = Linux::Event::Loop->new;
-my $final = {
-    wire          => '',
-    final_hits    => 0,
-    fallback_hits => 0,
-};
-
-$server = Linux::Event::Net::HTTP::Server->new(
-    loop => $loop,
-    host => '127.0.0.1',
-    port => 0,
-    data => $final,
-    on_request_final => sub ($conn, $req) {
-        $final->{final_hits}++;
-        $final->{final_class} = ref($conn);
-        $final->{final_target} = $req->target;
-        return "final\n";
-    },
-    on_request => sub ($conn, $req, $res) {
-        $final->{fallback_hits}++;
-        $res->end("fallback\n");
-    },
-);
-
-run_client(
-    $loop,
-    $server,
-    "GET /final HTTP/1.1\r\n" .
-        "Host: example.test\r\n" .
-        "Connection: close\r\n" .
-        "\r\n",
-    $final,
-);
-
-is($final->{final_hits}, 1,
-    'Server forwards on_request_final to accepted Connection');
-is($final->{fallback_hits}, 0,
-    'returned final body does not invoke general application callback again');
-is($final->{final_class}, 'Linux::Event::Net::HTTP::Connection',
-    'final-response callback receives accepted Connection');
-is($final->{final_target}, '/final',
-    'final-response callback receives parsed Request');
-like(
-    $final->{wire},
-    qr/\AHTTP\/1\.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nfinal\n\z/s,
-    'final-response callback body survives ordinary fallback serialization',
 );
 
 {
@@ -260,12 +212,14 @@ $ok = eval {
         loop => Linux::Event::Loop->new,
         host => '127.0.0.1',
         port => 0,
-        on_request_final => sub { return "only\n" },
+        on_request => sub { },
+        on_request_final => sub { return "old shortcut\n" },
     );
     1;
 };
-ok(!$ok, 'on_request_final alone does not replace general on_request');
-like($@, qr/requires on_request/, 'final-only Server explains fallback requirement');
+ok(!$ok, 'Server rejects removed on_request_final shortcut');
+like($@, qr/on_request_final is no longer supported/,
+    'removed shortcut error directs applications to ordinary Response API');
 
 $ok = eval {
     Linux::Event::Net::HTTP::Server->new(
