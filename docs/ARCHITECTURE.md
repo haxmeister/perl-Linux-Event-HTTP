@@ -77,10 +77,9 @@ Linux::Event::HTTP::Client
 Linux::Event::HTTP::Client::Connection
 ```
 
-The client is not implemented by the current server refactor. It should be a
-native Linux::Event protocol client, not an HTTP::Tiny or LWP transport adapter.
-Adapters for blocking user-agent APIs belong in separate distributions if
-someone wants them.
+The client is not implemented yet. It should be a native Linux::Event protocol
+client, not an HTTP::Tiny or LWP transport adapter. Adapters for blocking
+user-agent APIs belong in separate distributions if someone wants them.
 
 ## Private HTTP/1 native boundary
 
@@ -349,8 +348,9 @@ connection classes. HTTP::Tiny and LWP remain useful blocking user-agent APIs,
 but adapting their synchronous request lifecycle is not the foundation for the
 Linux::Event-native client. Any compatibility adapter can be a separate module.
 
-Client implementation is a future feature after the server structure is
-settled; this refactor reserves the architecture but does not add client code.
+Client implementation is a future feature. The server/client namespace split
+reserves that architecture without forcing client lifecycle semantics into
+`Server::Connection`.
 
 ## Measurement tooling
 
