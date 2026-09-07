@@ -30,7 +30,9 @@ jobs:
           cpanm --notest --installdeps .
 
       - name: Refactor namespace and consolidate HTTP/1 XS
-        run: python3 .github/refactor-http-charter.py
+        run: |
+          python3 .github/refactor-http-charter.py
+          python3 .github/refactor-http-loader-fix.py
 
       - name: Build and test refactor
         run: |
