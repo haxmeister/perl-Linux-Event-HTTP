@@ -14,7 +14,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|state|callbacks|end)\z/;
+    if $STAGE !~ /\A(?:parse|bound|state|callbacks|eligibility|build|mark|commit|end)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -22,6 +22,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 {
     package Linux::Event::Net::HTTP::Bench::TransactionStageConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
+    use Scalar::Util qw(refaddr);
 
     my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
     my $MAX_HEADERS = 100;
@@ -39,6 +40,25 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
     # invokes the cached benchmark handlers explicitly below so each stage can
     # add exactly the intended lifecycle work.
     sub on_request ($self, $request, $response) { return }
+
+    sub native_default_context ($self, $response) {
+        return if ref($response) ne 'Linux::Event::Net::HTTP::Response';
+        return if $response->{status} != 200 || defined($response->{reason});
+        return if @{$response->{headers}};
+        return if $self->{_http_closing} || $self->is_closed;
+        return if $self->{_http_response_state};
+
+        my $active = $self->{_http_active_response} or return;
+        return if refaddr($active) != refaddr($response);
+
+        my $request = $self->{_http_active_request} or return;
+        return if !defined($response->{request})
+            || refaddr($request) != refaddr($response->{request});
+
+        my $request_state = $self->{_http_request_state} or return;
+        return if !$request_state->{body_done};
+        return $request;
+    }
 
     sub on_data ($self, $bytes) {
         $self->{_bench_input} = '' if !defined $self->{_bench_input};
@@ -95,7 +115,49 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             if ($main::STAGE eq 'callbacks') {
                 Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
+                next;
             }
+
+            next if $main::STAGE eq 'end';
+
+            my $native_request = $self->native_default_context($response)
+                or die "native default response unexpectedly ineligible\n";
+
+            if ($main::STAGE eq 'eligibility') {
+                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                $self->write($self->data->{wire});
+                next;
+            }
+
+            my $native_wire = Linux::Event::Net::HTTP::_Native::Response1
+                ->build_default_final(
+                    $native_request, $self->data->{payload},
+                );
+            die "native default response build unexpectedly failed\n"
+                if !defined $native_wire;
+
+            if ($main::STAGE eq 'build') {
+                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                $self->write($native_wire);
+                next;
+            }
+
+            $response->{started} = 1;
+            $response->{ended} = 1;
+            $self->{_http_response_state} = undef;
+
+            if ($main::STAGE eq 'mark') {
+                Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
+                $self->write($native_wire);
+                next;
+            }
+
+            $self->write($native_wire);
+            $self->{_http_active_request} = undef;
+            $self->{_http_active_response} = undef;
+            $self->{_http_request_state} = undef;
+            $self->{_http_response_state} = undef;
+            $self->resume_read if $self->is_read_paused;
         }
         return;
     }

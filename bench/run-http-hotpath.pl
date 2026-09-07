@@ -8,6 +8,7 @@ use File::Path qw(make_path);
 use Getopt::Long qw(GetOptions);
 use JSON::PP ();
 use POSIX qw(strftime uname);
+use Scalar::Util qw(refaddr);
 use Time::HiRes qw(time);
 
 use Linux::Event::Net::HTTP::Connection;
@@ -39,6 +40,7 @@ die "response-bytes must be >= 0\n" if $response_bytes < 0;
 my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
 my $REQUEST_WIRE = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
 our $PAYLOAD = 'x' x $response_bytes;
+our $WIRE = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$PAYLOAD";
 our $SINK = 0;
 
 {
@@ -172,6 +174,95 @@ my @case = (
             $response->header('Content-Length', length($PAYLOAD));
             my $head = $response->_serialize_head('1.1');
             $SINK += length($head);
+        },
+    },
+    {
+        name => 'native_commit_base',
+        description => 'Active transaction preparation, prebuilt response write, and transaction clear',
+        code => sub {
+            prepare_active_transaction($fake, $template_request, 1);
+            $fake->write($WIRE);
+            Linux::Event::Net::HTTP::Connection::_clear_transaction($fake);
+            $SINK += $fake->{_bench_wire_bytes};
+            $fake->{_bench_wire_bytes} = 0;
+        },
+    },
+    {
+        name => 'native_eligibility',
+        description => 'Commit base plus native-default response and active-transaction eligibility checks',
+        code => sub {
+            prepare_active_transaction($fake, $template_request, 1);
+            my $response = $fake->{_http_active_response};
+            native_default_context($fake, $response)
+                or die "native default response unexpectedly ineligible\n";
+            $fake->write($WIRE);
+            Linux::Event::Net::HTTP::Connection::_clear_transaction($fake);
+            $SINK += $fake->{_bench_wire_bytes};
+            $fake->{_bench_wire_bytes} = 0;
+        },
+    },
+    {
+        name => 'native_wire_build',
+        description => 'Native eligibility plus Response1 build_default_final',
+        code => sub {
+            prepare_active_transaction($fake, $template_request, 1);
+            my $response = $fake->{_http_active_response};
+            my $request = native_default_context($fake, $response)
+                or die "native default response unexpectedly ineligible\n";
+            my $wire = Linux::Event::Net::HTTP::_Native::Response1
+                ->build_default_final($request, $PAYLOAD);
+            die "native default response build unexpectedly failed\n"
+                if !defined $wire;
+            $fake->write($wire);
+            Linux::Event::Net::HTTP::Connection::_clear_transaction($fake);
+            $SINK += $fake->{_bench_wire_bytes};
+            $fake->{_bench_wire_bytes} = 0;
+        },
+    },
+    {
+        name => 'native_response_mark',
+        description => 'Native wire build plus Response started/ended marking',
+        code => sub {
+            prepare_active_transaction($fake, $template_request, 1);
+            my $response = $fake->{_http_active_response};
+            my $request = native_default_context($fake, $response)
+                or die "native default response unexpectedly ineligible\n";
+            my $wire = Linux::Event::Net::HTTP::_Native::Response1
+                ->build_default_final($request, $PAYLOAD);
+            die "native default response build unexpectedly failed\n"
+                if !defined $wire;
+            $response->{started} = 1;
+            $response->{ended} = 1;
+            $fake->{_http_response_state} = undef;
+            $fake->write($wire);
+            Linux::Event::Net::HTTP::Connection::_clear_transaction($fake);
+            $SINK += $fake->{_bench_wire_bytes};
+            $fake->{_bench_wire_bytes} = 0;
+        },
+    },
+    {
+        name => 'native_transaction_commit',
+        description => 'Response marking plus write-before-clear transaction commit and read-resume check',
+        code => sub {
+            prepare_active_transaction($fake, $template_request, 1);
+            my $response = $fake->{_http_active_response};
+            my $request = native_default_context($fake, $response)
+                or die "native default response unexpectedly ineligible\n";
+            my $wire = Linux::Event::Net::HTTP::_Native::Response1
+                ->build_default_final($request, $PAYLOAD);
+            die "native default response build unexpectedly failed\n"
+                if !defined $wire;
+            $response->{started} = 1;
+            $response->{ended} = 1;
+            $fake->{_http_response_state} = undef;
+            $fake->write($wire);
+            $fake->{_http_active_request} = undef;
+            $fake->{_http_active_response} = undef;
+            $fake->{_http_request_state} = undef;
+            $fake->{_http_response_state} = undef;
+            $fake->resume_read if $fake->is_read_paused;
+            $SINK += $fake->{_bench_wire_bytes};
+            $fake->{_bench_wire_bytes} = 0;
         },
     },
     {
@@ -328,6 +419,25 @@ sub prepare_active_transaction ($connection, $request, $body_done) {
     $connection->{_http_active_response} = $response;
     $connection->{_http_request_state} = $request_state;
     return;
+}
+
+sub native_default_context ($connection, $response) {
+    return if ref($response) ne 'Linux::Event::Net::HTTP::Response';
+    return if $response->{status} != 200 || defined($response->{reason});
+    return if @{$response->{headers}};
+    return if $connection->{_http_closing} || $connection->is_closed;
+    return if $connection->{_http_response_state};
+
+    my $active = $connection->{_http_active_response} or return;
+    return if refaddr($active) != refaddr($response);
+
+    my $request = $connection->{_http_active_request} or return;
+    return if !defined($response->{request})
+        || refaddr($request) != refaddr($response->{request});
+
+    my $request_state = $connection->{_http_request_state} or return;
+    return if !$request_state->{body_done};
+    return $request;
 }
 
 sub run_iterations ($code, $count) {
