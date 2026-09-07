@@ -41,7 +41,7 @@ jobs:
           path.write_text(text[:text.index(marker)])
           PY
           python3 /tmp/remove-final-api.py
-          if git grep -nE '_http_on_request_final|sub on_request_final|=head2 on_request_final|FastFinal|fast-final' -- ':!handoff.md'; then
+          if git grep -nE '_http_on_request_final|sub on_request_final|=head2 on_request_final|FastFinal|fast-final' -- lib t bench README.md Changes docs; then
             echo 'obsolete final-response handler implementation remains' >&2
             exit 1
           fi
