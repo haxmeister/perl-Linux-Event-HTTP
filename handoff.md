@@ -27,8 +27,14 @@ Updated: 2026-09-06 (America/Chicago)
 - `195c6ce` - `Add HTTP object allocation cost benchmark`
 - `a568fed` - `Run HTTP object cost diagnostic in PR CI`
 - `503eb9f` - `Match end-stage callback semantics to production`
+- `a2cd2cd` - `Add checked HTTP transaction benchmark stage`
+- `4746a80` - `Benchmark production request checks separately`
 
-`503eb9f` changed only the benchmark transaction-stage server: the public `Response->end` rung now uses the same two guarded `_invoke_http_callback` boundaries as production. No production HTTP code changed.
+The new `checked` stage is benchmark-only. It starts from the guarded public `Response->end` path and additionally performs the production driver's parser `eval`/error boundary, incomplete-request handling, maximum request-head guard, and `_expect_continue` validation. The ladder contract is now version 4 and contains:
+
+`parse -> bound -> state -> callbacks -> fused -> eligibility -> build -> mark -> commit -> end -> checked -> full HTTP`
+
+No production HTTP implementation was changed by the `checked` stage.
 
 ## Native final-response result
 
@@ -49,17 +55,7 @@ Conclusion: native default-final response is a real end-to-end win. Callback fus
 
 ## Corrected guarded-end lifecycle result - CI run 34078645063
 
-Environment:
-
-- Ubuntu 24.04 GitHub runner
-- Perl 5.44.0 non-threaded
-- Linux::Event 0.112
-- 20,000 measured requests
-- 2,000 warmup
-- 100 connections
-- pipeline=1
-- response=32 bytes
-- 3 rotated repeats
+Ubuntu 24.04, Perl 5.44.0 non-threaded, Linux::Event 0.112, 20k measured + 2k warmup, 100 connections, pipeline=1, response=32B, 3 rotated repeats.
 
 Median ladder:
 
@@ -72,21 +68,19 @@ Median ladder:
 - native wire build: `49,030.8` (`-4.38%`)
 - response marking: `48,782.9` (`-0.51%`)
 - transaction commit: `48,834.9` (`+0.11%`, noise)
-- guarded public `Response->end`: `45,238.1` (`-7.37%` from commit; note commit rung still follows fused callback semantics)
+- guarded public `Response->end`: `45,238.1`
 - full production HTTP: `39,295.8` (`-13.14%` from guarded end)
 
-This replaces the earlier contaminated ~20% `end -> http` estimate. With callback semantics matched, the true measured production-driver residual is about **13.1%** on this run.
+This replaced the earlier contaminated ~20% `end -> http` estimate. The apples-to-apples production-driver residual is about 13.1% on this run.
 
-Latency medians for the final comparison:
+Final-rung latency medians:
 
 - guarded public end: p50 `2,120 us`, p95 `2,208.9 us`, p99 `4,264.8 us`
 - full HTTP: p50 `2,420.9 us`, p95 `2,682.0 us`, p99 `4,849.0 us`
 
-Conclusion: there is still a meaningful driver/control-flow cost, but it is substantially smaller than the prior 20% estimate. This is still enough headroom to justify more Perl-side isolation before any new C/XS work.
+## Cross-server result from CI run 34078645063
 
-## Cross-server result from the same CI run 34078645063
-
-10,000 measured, 1,000 warmup, 100 connections, pipeline=1, response=32B, 3 repeats:
+10k measured, 1k warmup, 100 connections, pipeline=1, response=32B, 3 repeats:
 
 - Linux::Event::Net::HTTP: `39,653.1 req/s`
 - Feersum: `76,594.3`
@@ -95,13 +89,7 @@ Conclusion: there is still a meaningful driver/control-flow cost, but it is subs
 - aiohttp: `28,672.3`
 - Mojolicious: `2,204.9`
 
-Same-run ratios:
-
-- Linux::Event is about `51.8%` of Feersum throughput; Feersum ~`1.93x` faster.
-- Linux::Event is about `64.0%` of Go throughput; Go ~`1.56x` faster.
-- Linux::Event remains faster than Node.js and aiohttp on throughput in this run.
-
-GitHub-hosted runner absolute throughput varies heavily. Never compare absolute req/s across separate runners; use same-run ratios and within-run stage deltas.
+Same-run ratios: Linux::Event was about `51.8%` of Feersum and `64.0%` of Go. GitHub-hosted runner absolute performance varies heavily; use same-run ratios and within-run stage deltas, not absolute cross-run req/s.
 
 ## Object/state microbenchmark
 
@@ -116,30 +104,26 @@ CI run `34078368402`, medians:
 - cached bodyless-state reset: `150.2 ns`
 - active assign + clear: `504.6 ns`
 
-Conclusions:
-
-- `weaken(connection)` costs only ~`72.6 ns`; ignore it.
-- array-backed Response could save ~`0.65 us/request`, not enough to justify a rewrite yet.
-- cached bodyless state saves ~`0.62 us/request`; production already gets this benefit.
+Conclusions: `weaken` is negligible; an array Response might save ~0.65 us/request but is not worth rewriting yet; production already benefits from cached bodyless state.
 
 ## Current conclusions
 
 1. Native default-final response is worthwhile and should remain the candidate.
-2. Response allocation and weak-reference handling are not the dominant remaining issue.
+2. Response allocation and weak-reference handling are not dominant.
 3. Bodyless state reuse is already correct.
-4. Guarded callback dispatch is measurable; fusion recovers roughly 6-13% at that rung across runs, but semantics constrain production changes.
-5. The apples-to-apples production-driver residual is now measured at about 13%, not 20%.
-6. Production `_drive_http1` performs several operations absent from the staged end path: parser `eval`, incomplete/error branches, max-head checks, `_expect_continue`, outer `_http_driving` localization, repeated closing/is_closed/active checks, and generic loop branching.
-7. There is still enough plausible Perl/control-flow headroom that more bespoke XS/C is premature.
-8. `libh2o` remains the fallback architecture if future progress would otherwise require substantial custom native HTTP code.
+4. Guarded callback dispatch is measurable, but fusion remains a semantic-risk experiment rather than an automatic production change.
+5. The real guarded-end -> production-driver residual is ~13%, not 20%.
+6. The new `checked` rung will determine how much of that residual is parser/error/request validation versus generic `_drive_http1` loop/control-flow overhead.
+7. There is still plausible Perl-side headroom, so additional bespoke XS/C is premature.
+8. `libh2o` remains the fallback architecture if useful progress would otherwise require substantial custom native HTTP code.
 
 ## Immediate next work
 
-1. Add a benchmark-only cumulative stage between guarded `end` and full HTTP that adds the real driver's parser `eval` + request validation/pre-dispatch checks (`consumed` max-head and `_expect_continue`) while retaining the staged bodyless transaction flow.
-2. Rerun the ladder and split:
-   - guarded end -> checked end = parser/error/request-check overhead
-   - checked end -> full HTTP = outer driver loop/state/control-flow overhead
-3. If parser `eval`/request checks dominate, microbenchmark them individually before any production change.
-4. If outer driver control flow dominates, prototype a pure-Perl common-bodyless fast branch without weakening protocol/error semantics.
-5. Only consider native changes if a specific residual remains both large and difficult to remove cleanly in Perl.
+1. Let CI measure commits `a2cd2cd` + `4746a80` and extract:
+   - guarded `end -> checked` delta = parser/error/request-check overhead
+   - `checked -> full HTTP` delta = remaining driver loop/state/control-flow overhead
+2. Update this file immediately with the exact medians and conclusion.
+3. If `end -> checked` is large, split parser `eval` and `_expect_continue` in a microbenchmark before touching production.
+4. If `checked -> full` is large, prototype a benchmark-only pure-Perl common-bodyless driver path that preserves protocol and callback semantics.
+5. Only consider native changes if a specific residual remains large and cannot be removed cleanly in Perl.
 6. If that point is reached, benchmark a focused `libh2o` integration before adding more bespoke XS/C.
