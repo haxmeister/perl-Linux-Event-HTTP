@@ -8,7 +8,9 @@ Repository: `haxmeister/perl-Linux-Event-HTTP`
 
 Working branch: `refactor/ecosystem-charter`
 
-The project has adopted `docs/ECOSYSTEM-CHARTER.md` from the Linux::Event core
+Draft PR: #14, `Refactor HTTP around Linux::Event ecosystem charter`
+
+The project follows `docs/ECOSYSTEM-CHARTER.md` from the Linux::Event core
 repository as an architectural constraint.
 
 For protocol-layer work the priority order is:
@@ -24,12 +26,12 @@ Aggressive reusable performance work belongs in Linux::Event core. Do not add
 protocol-specific complexity or public fast-path APIs merely to win a
 microbenchmark.
 
-## Namespace
+## Completed in this branch
 
-The supported namespace is now `Linux::Event::HTTP`, not
-`Linux::Event::Net::HTTP`.
+### Repository and public namespace
 
-The first migration stage introduces public facade packages under:
+The repository was renamed to `perl-Linux-Event-HTTP` and the supported public
+namespace is now:
 
 - `Linux::Event::HTTP`
 - `Linux::Event::HTTP::Server`
@@ -37,49 +39,90 @@ The first migration stage introduces public facade packages under:
 - `Linux::Event::HTTP::Request`
 - `Linux::Event::HTTP::Response`
 
-The existing Net-prefixed implementation is temporarily retained underneath so
-behavior can stay stable during migration. It is marked non-public/no_index and
-should be removed or renamed internally in a later cleanup once the public
-facade is green.
+`Linux::Event::Net` is no longer a supported umbrella namespace. The old
+Net-prefixed HTTP packages remain temporarily underneath as migration
+implementation details and are marked `no_index` in distribution metadata.
 
-## Benchmark policy
+Request and Response engine objects satisfy the new public Request/Response
+types so the namespace can migrate without destabilizing protocol behavior.
+
+### Public API policy
+
+The newly supported Server and Connection APIs reject `on_request_final`, both
+as a constructor callback and as a Connection subclass method. The ordinary
+`on_request -> Response` lifecycle is the supported response API for complete,
+streamed, and deferred responses.
+
+The old private engine still contains the former `on_request_final` and native
+default-response implementation. Do not optimize or advertise it. Remove that
+legacy implementation in a separate focused cleanup rather than mixing a large
+private-engine rewrite into the namespace migration.
+
+### Benchmark separation
+
+The entire in-repository `bench/` tree was removed from this branch, along with
+benchmark-era documentation and all benchmark execution from CI.
 
 Competitive and exploratory HTTP benchmarking belongs in
 `haxmeister/perl-Benchmark-Web`.
 
-The HTTP repository should not carry cross-server comparison machinery,
-transaction ladders, parser microbenchmarks, or CI jobs whose purpose is
-benchmark leadership. Protocol-local measurement should return only when a
-realistic workload demonstrates a material bottleneck.
+CI now focuses on:
 
-## Current implementation review
+- Perl 5.36
+- latest Perl
+- latest threaded Perl
+- build and behavioral tests
+- `disttest`
 
-The existing engine includes benchmark-driven complexity from the previous
-performance-first phase, notably `on_request_final` and the native default-final
-response builder. These remain under review and are intentionally omitted from
-the newly documented supported API.
+The current PR head passed all three CI variants, including `disttest` on latest
+non-threaded Perl.
 
-Do not optimize them further. The next cleanup pass should determine whether to
-remove them entirely in favor of the ordinary `on_request -> Response` path.
+### Documentation and packaging
+
+README, CONTRIBUTING, Changes, architecture, parser documentation, distribution
+metadata, and MANIFEST were rewritten around the ecosystem charter and the
+`Linux::Event::HTTP` identity.
+
+New policy documentation explicitly says:
+
+- correctness and easy correct use come before benchmark leadership
+- one coherent Request/Response API is preferred over benchmark-specialized
+  application paths
+- dependencies are implementation details and must not dictate the public API
+- HTTP remains a communication protocol library, not a web application framework
+- reusable optimization should be pushed down into Linux::Event core when
+  possible
+- HTTP Upgrade remains a bridge to separate protocols such as
+  `Linux::Event::WebSocket`
+
+## Parser policy
 
 The current picohttpparser integration remains for now because request framing
 and security behavior must not be destabilized during the policy transition.
-Parser choice is an implementation detail and should later be reevaluated under
-the ecosystem dependency policy rather than benchmark results.
+Parser choice is an implementation detail, not public API.
 
-## Next steps
+Reevaluate parser/standards dependencies later under the ecosystem dependency
+policy: correctness, standards behavior, maturity, maintenance, API fit,
+licensing, dependency weight, and realistic performance where material.
 
-1. Get the namespace/policy transition branch green.
-2. Remove the old benchmark directory and benchmark-era documentation from this
-   repository; retain benchmark work in perl-Benchmark-Web.
-3. Remove or simplify benchmark-specific public/implementation fast paths,
-   starting with `on_request_final`, if behavioral tests confirm no correctness
-   dependency.
-4. Rename the remaining internal Net-prefixed implementation packages to the
-   direct `Linux::Event::HTTP` namespace once the public migration is stable.
-5. Review the API for easy common-case use, bridgeability, and unnecessary
-   framework-like or performance-specific complexity.
-6. Evaluate community HTTP parsing/standards libraries only after the public API
-   is stable; dependencies must remain hidden implementation details.
+Do not replace pico merely for a small benchmark difference.
+
+## Remaining cleanup
+
+1. Remove the legacy private `on_request_final` path and dedicated
+   `_Native::Response1` XS extension, together with their old tests, while
+   preserving the ordinary Response behavior.
+2. Rename or collapse the remaining internal `Linux::Event::Net::HTTP::*`
+   implementation packages into the direct `Linux::Event::HTTP` namespace once
+   the migration facade has served its purpose.
+3. Review Server/Connection/Request/Response for common-case usability and
+   bridgeability rather than microbenchmark cost.
+4. Review which custom parser/serializer XS pieces materially serve correctness
+   or a realistic bottleneck and which can be simplified or replaced by mature
+   community work.
+5. Keep the PR draft until the private-engine cleanup and final namespace
+   consistency review are complete.
+
+Do not merge PR #14 without explicit authorization.
 
 Update this file whenever a policy conclusion or cleanup milestone is completed.
