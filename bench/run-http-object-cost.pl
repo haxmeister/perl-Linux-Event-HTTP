@@ -61,6 +61,65 @@ my @case = (
         code => sub { $sink += 1 },
     },
     {
+        name => 'parse_direct',
+        description => 'pico parse_request/native Request construction without Perl eval boundary',
+        code => sub {
+            my $parsed = $PARSER->parse_request($REQUEST_WIRE, 0, 100);
+            $sink += defined($parsed) ? 1 : 0;
+        },
+    },
+    {
+        name => 'parse_eval',
+        description => 'same parse_request call inside the production-style Perl eval boundary',
+        code => sub {
+            my $parsed;
+            my $ok = eval {
+                $parsed = $PARSER->parse_request($REQUEST_WIRE, 0, 100);
+                1;
+            };
+            die "benchmark parse unexpectedly failed\n" if !$ok;
+            $sink += defined($parsed) ? 1 : 0;
+        },
+    },
+    {
+        name => 'request_consumed',
+        description => 'Request->_consumed accessor',
+        code => sub {
+            $sink += $request->_consumed;
+        },
+    },
+    {
+        name => 'request_body_mode',
+        description => 'Request->body_mode accessor on bodyless GET',
+        code => sub {
+            $sink += $request->body_mode eq 'none' ? 1 : 0;
+        },
+    },
+    {
+        name => 'request_http_version',
+        description => 'Request->http_version accessor on HTTP/1.1 GET',
+        code => sub {
+            $sink += $request->http_version eq '1.1' ? 1 : 0;
+        },
+    },
+    {
+        name => 'expect_header_values',
+        description => q{Request->header_values('Expect') on request without Expect},
+        code => sub {
+            my @values = $request->header_values('Expect');
+            $sink += scalar @values;
+        },
+    },
+    {
+        name => 'expect_continue',
+        description => 'Production _expect_continue check on request without Expect',
+        code => sub {
+            $sink += Linux::Event::Net::HTTP::Connection::_expect_continue(
+                $request,
+            );
+        },
+    },
+    {
         name => 'response_hash_strong',
         description => 'Response-shaped blessed hash allocation with strong connection reference',
         code => sub {
@@ -173,7 +232,7 @@ my @case = (
     },
 );
 
-say 'Linux::Event::Net::HTTP object/state cost benchmark';
+say 'Linux::Event::Net::HTTP object/request cost benchmark';
 say "perl=$^V iterations=$iterations warmup=$warmup repeats=$repeats";
 say 'array cases are representation proxies only; they do not exercise Response methods';
 
