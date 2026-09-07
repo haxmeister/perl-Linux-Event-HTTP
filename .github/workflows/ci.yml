@@ -94,7 +94,7 @@ jobs:
           .venv/bin/pip install aiohttp
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Build Linux::Event::Net::HTTP
+      - name: Build Linux::Event::HTTP
         run: |
           perl Makefile.PL
           make
