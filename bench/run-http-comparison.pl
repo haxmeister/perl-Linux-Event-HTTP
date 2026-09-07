@@ -202,7 +202,7 @@ for my $name (@available) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my $report = {
-        benchmark => 'linux-event-net-http-cross-server',
+        benchmark => 'linux-event-http-cross-server',
         benchmark_contract_version => 2,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
