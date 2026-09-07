@@ -34,7 +34,7 @@ my %case = (
         label => '3c + transaction state',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'state',
-        description => 'Response binding plus _new_request_state and active transaction assignment/clear; prebuilt response write',
+        description => 'Response binding plus production-style bodyless state reuse and active transaction assignment/clear; prebuilt response write',
     },
     callbacks => {
         label => '3d + guarded callbacks',
@@ -73,10 +73,16 @@ my %case = (
         description => 'Response marking plus write-before-clear transaction commit and read-resume check',
     },
     end => {
-        label => '3j + public Response end',
+        label => '3j + guarded public Response end',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'end',
-        description => 'Fused request callbacks calling public Response->end through the native default-final fast path',
+        description => 'Two production-style guarded request callbacks with public Response->end through the native default-final fast path',
+    },
+    checked => {
+        label => '3k + production request checks',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'checked',
+        description => 'Guarded public Response end plus production parser eval/error boundary, request-head size guard, and Expect validation',
     },
     http => {
         label => '4 Full HTTP transaction',
@@ -132,7 +138,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(parse bound state callbacks fused eligibility build mark commit end http);
+my @names = qw(parse bound state callbacks fused eligibility build mark commit end checked http);
 my @records;
 
 say 'Linux::Event::Net::HTTP transaction lifecycle ladder';
@@ -183,11 +189,11 @@ for my $i (1 .. $#summary) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my %contract = map { $_ => $case{$_}{description} } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; stages parse through end use the same Connection subclass and are cumulative; full HTTP additionally uses Connection::_drive_http1';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; stages parse through checked use the same Connection subclass and are cumulative; full HTTP additionally uses Connection::_drive_http1';
 
     my $report = {
         benchmark => 'linux-event-net-http-transaction-ladder',
-        benchmark_contract_version => 3,
+        benchmark_contract_version => 4,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
@@ -518,7 +524,7 @@ Options:
 
 The stages cumulatively decompose the cost between a parsed Request with a
 prebuilt response and the full Connection::_drive_http1 lifecycle. Stages 3a
-through 3e use the same benchmark Connection subclass. All stages use the same
+through 3k use the same benchmark Connection subclass. All stages use the same
 raw client and Linux::Event Stream transport; no stage is product code and this
 benchmark adds no new XS/C implementation.
 USAGE
