@@ -14,7 +14,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|end)\z/;
+    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|end|checked)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -26,6 +26,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 
     my $PARSER = 'Linux::Event::Net::HTTP::_Parser::HTTP1';
     my $MAX_HEADERS = 100;
+    my $MAX_REQUEST_HEAD = 65_536;
     my $NOOP = sub ($connection, $request, $response) { return };
     my $END = sub ($connection, $request, $response) {
         $response->end($connection->data->{payload});
@@ -65,13 +66,50 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
         $self->{_bench_input} .= $bytes;
 
         while (length($self->{_bench_input})) {
-            my $request = $PARSER->parse_request(
-                $self->{_bench_input}, 0, $MAX_HEADERS,
-            );
-            last if !defined $request;
+            my $request;
+            if ($main::STAGE eq 'checked') {
+                my $parsed = eval {
+                    $request = $PARSER->parse_request(
+                        $self->{_bench_input}, 0, $MAX_HEADERS,
+                    );
+                    1;
+                };
+                if (!$parsed) {
+                    my $failure = "$@";
+                    my $status = $failure =~ /semantic error \(501\)/ ? 501 : 400;
+                    $self->_protocol_error($status);
+                    last;
+                }
+                if (!defined $request) {
+                    if (length($self->{_bench_input}) > $MAX_REQUEST_HEAD) {
+                        $self->_protocol_error(431);
+                    }
+                    last;
+                }
+            } else {
+                $request = $PARSER->parse_request(
+                    $self->{_bench_input}, 0, $MAX_HEADERS,
+                );
+                last if !defined $request;
+            }
 
             my $consumed = $request->_consumed;
+            if ($main::STAGE eq 'checked' && $consumed > $MAX_REQUEST_HEAD) {
+                $self->_protocol_error(431, $request->http_version);
+                last;
+            }
             substr($self->{_bench_input}, 0, $consumed, '');
+
+            my $expect = 0;
+            if ($main::STAGE eq 'checked') {
+                $expect = Linux::Event::Net::HTTP::Connection::_expect_continue(
+                    $request,
+                );
+                if ($expect < 0) {
+                    $self->_protocol_error(417, $request->http_version);
+                    last;
+                }
+            }
 
             if ($main::STAGE eq 'parse') {
                 $self->write($self->data->{wire});
@@ -113,14 +151,22 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             $self->{_http_request_state} = $request_state;
             $self->{_http_response_state} = undef;
 
+            if ($expect && Linux::Event::Net::HTTP::Connection::_body_pending($request_state)) {
+                $self->write("HTTP/1.1 100 Continue\r\n\r\n");
+            }
+
             if ($main::STAGE eq 'state') {
                 Linux::Event::Net::HTTP::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
                 next;
             }
 
-            my $handler = $main::STAGE eq 'end' ? $END : $NOOP;
-            if ($main::STAGE eq 'callbacks' || $main::STAGE eq 'end') {
+            my $handler
+                = ($main::STAGE eq 'end' || $main::STAGE eq 'checked')
+                ? $END : $NOOP;
+            if ($main::STAGE eq 'callbacks'
+                || $main::STAGE eq 'end'
+                || $main::STAGE eq 'checked') {
                 last if !$self->_invoke_http_callback(
                     $NOOP, $request, $response,
                 );
@@ -159,7 +205,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            next if $main::STAGE eq 'end';
+            next if $main::STAGE eq 'end' || $main::STAGE eq 'checked';
 
             my $native_request = $self->native_default_context($response)
                 or die "native default response unexpectedly ineligible\n";
