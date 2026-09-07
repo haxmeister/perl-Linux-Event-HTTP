@@ -29,6 +29,8 @@ Updated: 2026-09-06 (America/Chicago)
 - `b930e2d` - benchmark callback-return API shapes
 - `71dc181` - checkpoint callback-return result
 - `5cbff47` - add private integrated fast-final Connection experiment, semantic tests, and focused benchmark
+- `c87c3c9` - checkpoint first integrated result
+- `0f65517` - compare fast-final with natural and optimized current APIs in one focused harness
 
 PR #13 and PR #11 remain unmerged.
 
@@ -42,12 +44,12 @@ Earlier controlled end-to-end work showed the native default-final response is a
 
 Representative microcosts are bounded:
 
-- parser direct ~0.63-0.66 us
-- parser under eval ~0.74-0.81 us
-- no-Expect validation ~0.35 us
-- `Response->_new_bound` ~1.0 us
-- cached bodyless state reset ~0.15 us
-- active transaction assign/clear ~0.48-0.51 us
+- parser direct ~0.6 us
+- parser under eval ~0.7-0.8 us
+- no-Expect validation ~0.3-0.35 us
+- `Response->_new_bound` ~0.9-1.0 us
+- cached bodyless state reset ~0.13-0.15 us
+- active transaction assign/clear ~0.44-0.50 us
 
 None individually justifies more XS/C.
 
@@ -102,63 +104,75 @@ Realistic application callback return shapes:
 
 A real Perl application callback returning a body preserves essentially all of the stripped-path performance. The callback itself is not the large cost. Eager Response allocation/binding and the general transaction lifecycle are.
 
-## Integrated fast-final Connection experiment - commit 5cbff47 / CI 34083140432
+## Integrated fast-final Connection experiment
 
-A private branch-only module now exists:
+Private branch-only module:
 
 `Linux::Event::Net::HTTP::_Experiment::FastFinalConnection`
 
-It uses the actual `Server -> Listener -> Connection` stack and tests an explicit method/callback:
+Explicit callback shape:
 
 `on_request_final($connection, $request)`
 
-Semantics implemented and tested:
+Semantics implemented/tested through the real `Server -> Listener -> Connection` stack:
 
-- only considered for bodyless requests after normal parse/head-size/Expect validation
+- considered only for bodyless requests after normal parse/head-size/Expect validation
 - scalar return => default `200 OK` final response
 - `undef` => ordinary `on_request` / Response path
 - HEAD and HTTP/1.0/native-ineligible cases preserve the returned body through ordinary Response serialization
 - body-bearing requests stay on ordinary streaming callbacks
 - callback exceptions become protocol-safe 500 responses
-- invalid Expect is rejected before the fast callback
+- invalid Expect is rejected before fast callback
 - no new XS/C
 
-`t/50-fast-final-experiment.t` exercises these cases using the real Server and socket stack.
+`t/50-fast-final-experiment.t` covers these cases. CI is green on Perl 5.36, latest, latest threaded, and disttest.
 
-CI `34083140432` is fully green across Perl 5.36, latest, latest threaded, disttest, all semantic tests, and benchmark smokes.
+### First focused run - CI 34083140432
 
-### Focused integrated benchmark
+- natural `on_request -> Response->end`: `14,568.8 req/s`
+- integrated fast-final: `46,858.1 req/s`
+- apparent +221.6%
+
+Important caveat discovered: normal `on_request` runs before the body's `body_done` flag is set for a bodyless request, so `Response->end` there cannot engage the native default-final shortcut. The existing optimized comparison server instead responds from `on_request_end` after `body_done = 1`.
+
+### Decision-grade same-stack comparison - commit 0f65517 / CI 34083452101
+
+The focused benchmark now rotates three modes through the exact same `Linux::Event::Net::HTTP::Server`, client, workload, connection count, pipeline, and response size.
 
 20k measured, 2k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
 
-- ordinary `on_request -> Response->end`: `14,568.8 req/s`
-- integrated fast-final callback return: `46,858.1 req/s`
-- reported change: `+221.63%` / about `3.22x`
+- `on_request -> Response->end`: **`25,324.8 req/s`**
+- no-op `on_request`, then `on_request_end -> Response->end`: **`50,498.8 req/s`**
+- integrated `on_request_final -> scalar body`: **`73,722.1 req/s`**
+
+Throughput deltas:
+
+- fast-final vs natural `on_request -> end`: **`+191.11%`**
+- fast-final vs optimized `on_request_end -> end`: **`+45.99%`**
 
 Latency medians:
 
-- ordinary p50: `6,732.9 us`
-- fast-final p50: `2,003.0 us`
+- natural current API p50: `3,855.9 us`
+- optimized current API p50: `1,893.0 us`
+- fast-final p50: `1,280.1 us`
 
-### Important interpretation caveat
+This is the key result: **the fast-final architecture retains a very substantial ~46% same-harness gain even against the fastest current normal Response API usage.** It is no longer merely benefiting from the natural `on_request` callback missing the native end shortcut.
 
-The +222% number is real for the simplest natural `on_request -> $res->end(...)` API, but it is **not yet the fair comparison against the fastest existing ordinary usage**.
+Same-run transaction-ladder context (runner was unusually fast; use only same-run ratios):
 
-Reason: during `on_request`, the current bodyless request state still has `body_done = 0`. `Response->end` therefore cannot use the native default-final shortcut there. The existing cross-server benchmark instead does a no-op `on_request` and calls `Response->end` from `on_request_end`, after `body_done = 1`, which enables the native shortcut.
+- parsed Request + prebuilt write: `106,250.3 req/s`
+- Response binding: `95,176.9`
+- transaction state: `85,908.1`
+- guarded callbacks: `73,214.5`
+- fused callbacks: `78,929.1`
+- full HTTP: `50,616.8`
 
-Same CI run for context:
+Same-run direct callback experiment:
 
-- transaction-ladder full HTTP: `32,874.0 req/s`
-- cross-server production Linux::Event (uses `on_request_end`): `32,071.9 req/s`
-- integrated fast-final focused path: `46,858.1 req/s` (different focused harness; do not directly claim a percentage yet)
+- checked callback-return-body: `76,372.0 req/s`
+- integrated real-stack fast-final: `73,722.1 req/s`
 
-Thus the integrated experiment is clearly promising, but the next benchmark must put all three API shapes in the **same focused harness**:
-
-1. `on_request -> Response->end` (natural current API)
-2. `on_request` no-op + `on_request_end -> Response->end` (current optimized/native-eligible API)
-3. `on_request_final -> scalar body` (experimental fast-final API)
-
-Only that same-harness result should determine the production value of the new callback.
+That close agreement is encouraging: most of the synthetic request-only gain survives integration through the real Server stack.
 
 ## Current conclusions
 
@@ -166,21 +180,22 @@ Only that same-harness result should determine the production value of the new c
 2. libh2o is not the current HTTP/1 solution.
 3. The duplicated bodyless-driver path is closed.
 4. A complete-response callback-return path has repeatedly shown large headroom and now works through the real Server stack with semantic fallback tests.
-5. The integrated private fast-final implementation is viable enough to keep testing, but it is not a public API yet.
-6. The current natural `on_request -> end` path has an additional performance problem: it misses the native final shortcut because bodyless completion is marked only after `on_request` returns.
-7. Before changing public API, benchmark fast-final against the optimized `on_request_end` baseline in the same focused harness.
+5. Fast-final is ~46% faster than the optimized existing `on_request_end -> Response->end` path in an identical focused harness.
+6. The private implementation is technically viable enough to continue toward a design decision, but it is not a public API yet and must not be merged as-is.
+7. Before adding a new public callback, test a less invasive ordering change: for a request whose parser has already proven `body_mode eq 'none'`, mark its internal request state `body_done = 1` immediately before invoking normal `on_request`. That should allow ordinary `$response->end(...)` from `on_request` to use the native final shortcut while retaining the existing Response object/API.
 8. PR #13 and PR #11 remain unmerged.
 
 ## Immediate next work
 
-Modify `bench/run-http-fast-final-experiment.pl` to compare these three same-stack modes:
+Add a benchmark-only fourth focused mode, using the ordinary production `Connection` driver with one narrow override/hook that marks a bodyless request complete immediately before the normal `on_request` callback. Keep Response allocation/binding and all ordinary transaction machinery intact.
 
-- `ordinary_request`
-- `ordinary_request_end`
-- `fast_final`
+Compare in one harness:
 
-Keep the same real `Linux::Event::Net::HTTP::Server`, client workload, rotation, request count, connection count, pipeline, and response size for all three.
+1. natural `on_request -> Response->end`
+2. optimized `on_request_end -> Response->end`
+3. experimental early-body-done `on_request -> Response->end`
+4. fast-final `on_request_final -> scalar body`
 
-If fast-final still shows a substantial gain over `ordinary_request_end`, then evaluate the cleanest production design. Also separately consider whether marking bodyless input complete before `on_request` could safely allow the existing natural `on_request -> end` API to use the native final shortcut; benchmark that idea before deciding that a new public callback is necessary.
+If early-body-done closes most of the ~46% gap to fast-final, prefer improving existing API semantics/order over adding a new public callback. If it remains materially slower, the separate complete-response path is justified by measurement.
 
 Do not merge PR #13 or PR #11 without explicit authorization.
