@@ -88,7 +88,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             }
 
             # Mirror Connection::_drive_http1 exactly for the benchmark's
-            # bodyless GET request.  The production path reuses one per-
+            # bodyless GET request. The production path reuses one per-
             # connection state hash instead of allocating _new_request_state
             # for every bodyless transaction.
             my $body_mode = $request->body_mode;
@@ -120,7 +120,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             }
 
             my $handler = $main::STAGE eq 'end' ? $END : $NOOP;
-            if ($main::STAGE eq 'callbacks') {
+            if ($main::STAGE eq 'callbacks' || $main::STAGE eq 'end') {
                 last if !$self->_invoke_http_callback(
                     $NOOP, $request, $response,
                 );
