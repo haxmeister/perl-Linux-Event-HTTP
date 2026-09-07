@@ -58,8 +58,8 @@ sub schedule ($class, $response, $target) {
         or croak 'upgrade(): response is not bound to an active HTTP connection';
     croak 'upgrade(): response output has already started'
         if $response->is_started;
-    croak 'upgrade(): response has already ended'
-        if $response->is_ended;
+    croak 'upgrade(): response is already complete'
+        if $response->is_complete;
     croak 'upgrade(): response already has an Upgrade handoff pending'
         if $response->{upgrade_pending};
     croak 'upgrade(): connection is closing or closed'
@@ -186,12 +186,10 @@ sub _handoff ($timer) {
     }
 
     $response->_mark_started;
-    $response->_mark_ended;
+    $response->_mark_complete;
     $response->{upgrade_pending} = 0;
     $conn->{_http_response_state} = undef;
 
-    # The switching response must enter the existing output queue before the
-    # target protocol can synchronously write during transition readiness.
     $conn->write($head);
 
     my $input = $conn->{_http_input};
@@ -210,8 +208,6 @@ sub _handoff ($timer) {
         1;
     };
     if (!$transitioned) {
-        # A 101 response is already queued, so an HTTP error response is no
-        # longer possible. Terminal close is the only coherent failure mode.
         eval { $conn->close; 1 };
     }
     return;

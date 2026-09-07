@@ -32,8 +32,6 @@ my $key = File::Spec->catfile($temp, 'server-key.pem');
 
 my $generated;
 {
-    # Hosted Perl builds can export OPENSSL_CONF relative to the Perl prefix,
-    # while this test deliberately invokes the system OpenSSL command.
     local $ENV{OPENSSL_CONF};
     delete $ENV{OPENSSL_CONF};
     $generated = system(
@@ -66,7 +64,7 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
         $state->{server_tls_protocol} = $self->tls_protocol;
         $state->{server_tls_cipher} = $self->tls_cipher;
         $res->header('Content-Type', 'text/plain');
-        $res->end("secure\n");
+        $res->complete("secure\n");
     }
 }
 
@@ -176,7 +174,7 @@ like(
     );
 
     sub on_request ($self, $req, $res) {
-        $res->end("unreachable\n");
+        $res->complete("unreachable\n");
     }
 }
 

@@ -22,11 +22,11 @@ use Linux::Event::HTTP::Server::Connection;
             push @{$self->data->{write_status}}, $res->write("one\n");
             push @{$self->data->{write_status}}, $res->write('');
             push @{$self->data->{write_status}}, $res->write("two\n");
-            $res->end("three\n");
+            $res->complete("three\n");
             return;
         }
 
-        $res->end("done\n");
+        $res->complete("done\n");
         return;
     }
 }
@@ -91,7 +91,7 @@ is_deeply(
     'pipelined request after chunked response dispatches in order',
 );
 ok($state->{write_status}[0], 'first chunked write exposes Stream backpressure status');
-ok($state->{write_status}[1], 'empty chunked write is accepted without ending response');
+ok($state->{write_status}[1], 'empty chunked write is accepted without completing response');
 ok($state->{write_status}[2], 'later chunked write exposes Stream backpressure status');
 
 my $wire = $state->{wire};
@@ -108,7 +108,7 @@ unlike(
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\ndone\n\z/s,
-    'next scalar response follows the terminated chunked response',
+    'next scalar response follows the completed chunked response',
 );
 
 {
@@ -118,7 +118,7 @@ like(
     sub on_request ($self, $req, $res) {
         $res->header('Content-Type', 'text/plain');
         $self->data->{write_status} = $res->write('old ');
-        $res->end("school\n");
+        $res->complete("school\n");
         return;
     }
 }

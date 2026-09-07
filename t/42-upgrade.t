@@ -87,7 +87,7 @@ sub run_client ($loop, $server, $wire, $state, $done) {
         my $state = $self->data;
         $state->{request_end_hits}++;
         $state->{pending_at_request_end} = $res->is_upgrading ? 1 : 0;
-        $state->{ended_at_request_end} = $res->is_ended ? 1 : 0;
+        $state->{complete_at_request_end} = $res->is_complete ? 1 : 0;
     }
 }
 
@@ -128,8 +128,8 @@ is($state->{request_end_hits}, 1,
     'normal on_request_end lifecycle runs before handoff');
 ok($state->{pending_at_request_end},
     'handoff remains pending during on_request_end');
-ok(!$state->{ended_at_request_end},
-    'Response is not ended until switching response commits');
+ok(!$state->{complete_at_request_end},
+    'Response is not complete until switching response commits');
 is($state->{target_hits}, 1,
     'target protocol receives preserved post-HTTP input');
 is($state->{target_input}, 'PING',

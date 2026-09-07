@@ -20,9 +20,9 @@ use Linux::Event::HTTP::Server;
         die "request boom\n" if $state->{request_die};
 
         if (($state->{mode} // '') eq 'invalid-body') {
-            $response->end([]);
+            $response->complete([]);
         } elsif (($state->{mode} // '') ne 'body') {
-            $response->end($state->{response_body});
+            $response->complete($state->{response_body});
         }
         return;
     }
@@ -37,7 +37,7 @@ use Linux::Event::HTTP::Server;
         my $state = $self->data;
         ++$state->{request_end_hits};
         if (($state->{mode} // '') eq 'body') {
-            $response->end('post:' . $state->{body} . "\n");
+            $response->complete('post:' . $state->{body} . "\n");
         }
         return;
     }
@@ -124,7 +124,7 @@ my $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.1 200 OK\r\nContent-Length: 5\r\n\r\nfast\n\z/s,
-    'ordinary on_request plus Response->end completes eligible scalar response',
+    'ordinary on_request plus Response->complete completes eligible scalar response',
 );
 is($state->{request_hits}, 1, 'ordinary request callback runs once');
 
@@ -186,7 +186,7 @@ $wire = run_exchange(
 like(
     $wire,
     qr/\AHTTP\/1\.1 500 [^\r\n]+\r\nContent-Length: 0\r\nConnection: close\r\n\r\n\z/s,
-    'invalid Response->end body becomes protocol-safe 500',
+    'invalid Response->complete body becomes protocol-safe 500',
 );
 is($state->{request_hits}, 1, 'invalid body is handled inside ordinary request callback');
 

@@ -37,7 +37,7 @@ use Linux::Event::HTTP::Server;
     sub on_request_end ($self, $request, $response) {
         my $state = $self->data;
         ++$state->{seen};
-        $response->end($state->{payload});
+        $response->complete($state->{payload});
 
         if ($state->{seen} == $state->{expected}) {
             Linux::Event::Kernel::Timer->new(

@@ -31,9 +31,9 @@ use Linux::Event::HTTP::Server::Connection;
         if ($request->target eq '/one') {
             $response->header('Content-Length', 4);
             push @{$self->data->{write_status}}, $response->write('on');
-            $response->end("e\n");
+            $response->complete("e\n");
         } else {
-            $response->end("two\n");
+            $response->complete("two\n");
         }
     }
 
@@ -129,12 +129,12 @@ is_deeply(
 );
 ok($state->{write_status}[0], 'Response write exposes Stream backpressure status');
 ok(
-    $state->{responses}[0]->is_ended && $state->{responses}[1]->is_ended,
-    'each Response is ended when its transaction completes',
+    $state->{responses}[0]->is_complete && $state->{responses}[1]->is_complete,
+    'each Response is complete when its transaction completes',
 );
 my $mutation_ok = eval { $state->{responses}[0]->status(201); 1 };
 ok(!$mutation_ok, 'completed Response metadata is immutable');
-like($@, qr/cannot change|already ended/, 'completed metadata rejection is clear');
+like($@, qr/cannot change|already complete/, 'completed metadata rejection is clear');
 ok($state->{eof}, 'Connection close request drains responses then ends stream');
 
 my $wire = $state->{response};
@@ -144,12 +144,12 @@ is(scalar @status, 2, 'two HTTP responses were serialized on one connection');
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 4\r\n\r\none\n/s,
-    'fixed-length Response write/end emits first body without buffering it whole',
+    'fixed-length Response write/complete emits first body without buffering it whole',
 );
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntwo\n\z/s,
-    'Response end adds Content-Length and drains close response',
+    'Response complete adds Content-Length and drains close response',
 );
 
 {
@@ -170,7 +170,7 @@ like(
                 my $connection = $response->connection;
                 $connection->data->{paused_before_response}
                     = $connection->is_read_paused ? 1 : 0;
-                $response->end("later\n");
+                $response->complete("later\n");
             },
         );
         return;
@@ -232,7 +232,7 @@ is(
     'deferred Response retains its paired Request',
 );
 ok(
-    $deferred->{bound_response}->is_ended,
+    $deferred->{bound_response}->is_complete,
     'deferred Response records transaction completion',
 );
 like(

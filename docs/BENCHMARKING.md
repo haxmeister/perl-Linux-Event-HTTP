@@ -34,7 +34,7 @@ repeats:                    5
 Each repeat starts a fresh server process. Connections stay persistent through
 warmup and measurement. The server returns a fixed scalar response with
 Content-Length so the default result measures the ordinary HTTP/1.1 request and
-Response->end path rather than chunked response framing.
+Response->complete path rather than chunked response framing.
 
 Useful variations:
 

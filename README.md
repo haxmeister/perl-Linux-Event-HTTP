@@ -1,17 +1,15 @@
 # Linux::Event::HTTP
 
-Native high-performance HTTP protocol support for [Linux::Event](https://github.com/haxmeister/perl-linux-event).
+HTTP protocol support for [Linux::Event](https://github.com/haxmeister/perl-linux-event).
 
 ## Status
 
-Early development. The initial target is HTTP/1.1 server protocol support.
+Early development. The current implementation provides HTTP/1.1 server support.
 
-This distribution is intended to provide the HTTP protocol layer, not a web
-framework. Linux::Event remains responsible for transport, TLS, buffering,
-backpressure, deadlines, and event dispatch.
+Linux::Event::HTTP is a protocol layer, not a web framework. Routing,
+middleware, sessions, templates, and PSGI/PAGI integration belong elsewhere.
 
-The simplest server form hides Listener plumbing while retaining the same
-cached callback model used by Linux::Event:
+## Quick start
 
 ```perl
 use v5.36;
@@ -24,50 +22,144 @@ my $server = Linux::Event::HTTP::Server->new(
     loop => $loop,
     host => '127.0.0.1',
     port => 8080,
+
     on_request => sub ($conn, $req, $res) {
         $res->header('Content-Type', 'text/plain');
-        $res->end("hello\n");
+        $res->complete("hello\n");
     },
 );
 
 $loop->run;
 ```
 
-`HTTP::Server` is a thin convenience over `Linux::Event::IO::Sock::Listener`.
-It retains one callback CV and reuses it for accepted HTTP connections; it does
-not create a wrapper closure per connection or add another per-request dispatch
-layer.
+That is the normal server API.
 
-Scalar `Response->end(...)` is also the complete-response path for simple
-bodyless requests. Eligible default scalar responses may use a private native
-finalization path internally; applications use the same `on_request`/`Response`
-API whether that optimization applies or not.
+The callback receives three objects:
 
-A Connection subclass remains the declarative form for reusable protocol,
-tuning, socket, and TLS policy:
+- `$conn` is the persistent HTTP connection.
+- `$req` is the current request.
+- `$res` is the response for that request.
+
+`$res->complete(...)` completes **that HTTP response**. It does not mean close
+the socket. With normal HTTP/1.1 keep-alive, the same connection can carry more
+requests after the response is complete.
+
+## Requests
+
+Request metadata is available from `$req`:
 
 ```perl
-package HelloHTTP;
+my $method = $req->method;
+my $target = $req->target;
+my $host   = $req->header('Host');
+```
+
+Useful methods include:
+
+```text
+method
+target
+http_version
+header
+header_values
+body_mode
+content_length
+keep_alive
+```
+
+Header names are matched case-insensitively without rewriting the original wire
+names.
+
+## Responses
+
+Set response metadata before output begins:
+
+```perl
+$res->status(404);
+$res->header('Content-Type', 'text/plain');
+$res->complete("Not found\n");
+```
+
+For a simple response, `complete($bytes)` sends the optional final body bytes and
+marks the HTTP response complete.
+
+For streaming output, use `write` and then `complete`:
+
+```perl
+$res->header('Content-Type', 'text/plain');
+$res->write("one\n");
+$res->write("two\n");
+$res->complete;
+```
+
+`write($bytes)` means body bytes are being written. `complete()` means no more
+bytes belong to this HTTP response. It normally does **not** close the
+connection.
+
+HTTP/1.1 automatically uses chunked transfer coding for streaming responses
+when no Content-Length was declared. If Content-Length is declared, the emitted
+body length must match it.
+
+## Request bodies
+
+Request bodies are streaming-first. `on_request` runs after the validated
+request head is available. Body bytes can arrive afterward through `on_body`.
+`on_request_end` runs when the complete request input boundary has been consumed.
+
+```perl
+my $server = Linux::Event::HTTP::Server->new(
+    loop => $loop,
+    port => 8080,
+    data => { body => '' },
+
+    on_request => sub ($conn, $req, $res) {
+        $conn->data->{body} = '';
+    },
+
+    on_body => sub ($conn, $req, $res, $bytes) {
+        $conn->data->{body} .= $bytes;
+    },
+
+    on_request_end => sub ($conn, $req, $res) {
+        $res->complete("received " . length($conn->data->{body}) . " bytes\n");
+    },
+);
+```
+
+If no `on_body` callback is installed, the protocol layer drains the request
+body without accumulating it into a whole-body scalar.
+
+## Connection subclasses
+
+Most applications can stay with the callback form above.
+
+Subclass `Linux::Event::HTTP::Server::Connection` when reusable connection
+policy belongs on a class, such as TLS, stream tuning, socket policy, or named
+callback methods:
+
+```perl
+package MyHTTP;
 use parent 'Linux::Event::HTTP::Server::Connection';
 
 sub on_request ($self, $req, $res) {
-    $res->status(200);
-    $res->header('Content-Type', 'text/plain');
-    $res->end("hello\n");
+    $res->complete("hello\n");
 }
 
 package main;
 
 my $server = Linux::Event::HTTP::Server->new(
     loop             => $loop,
-    host             => '127.0.0.1',
     port             => 8080,
-    connection_class => 'HelloHTTP',
+    connection_class => 'MyHTTP',
 );
 ```
 
-HTTPS uses the same HTTP classes. TLS remains Linux::Event transport policy on
-the accepted Connection subclass rather than a separate HTTPS protocol class:
+This is an advanced extension point, not a separate competing server API.
+
+## HTTPS
+
+HTTPS uses the same HTTP Server API. TLS remains Linux::Event transport policy
+on the Connection subclass:
 
 ```perl
 package SecureHTTP;
@@ -78,92 +170,49 @@ use Linux::Event::TLS
     alpn      => ['http/1.1'];
 
 sub on_request ($self, $req, $res) {
-    $res->end("secure\n");
+    $res->complete("secure\n");
 }
-
-package main;
-
-my $server = Linux::Event::HTTP::Server->new(
-    loop             => $loop,
-    host             => '0.0.0.0',
-    port             => 443,
-    connection_class => 'SecureHTTP',
-);
 ```
 
-Accepted TLS Connections use Linux::Event server-handshake semantics
-automatically. `on_ready` fires after the TLS handshake, and HTTP parsing sees
-only decrypted application bytes. The Connection can inspect negotiated
-`selected_alpn`, `tls_protocol`, and `tls_cipher` through Linux::Event.
+## Protocol Upgrade
 
-HTTP Upgrade hands the same live stream socket to another Linux::Event protocol
-class. HTTP performs the switching response and transport handoff; the target
-protocol remains a separate distribution or application class:
+HTTP/1.1 Upgrade can hand the same live Linux::Event stream to another protocol
+class:
 
 ```perl
-sub on_request ($self, $req, $res) {
-    return $res->end("not an upgrade\n")
-        if ($req->header('Upgrade') // '') ne 'my-protocol';
-
-    $res->header('Upgrade', 'my-protocol');
-    $res->upgrade('MyProtocolConnection');
-}
+$res->header('Upgrade', 'my-protocol');
+$res->upgrade('MyProtocolConnection');
 ```
 
-`upgrade()` sends a validated HTTP/1.1 `101 Switching Protocols` response and
-uses Linux::Event `transition_to()` after the HTTP request lifecycle has
-finished. The target retains the same socket, TLS transport, output queue,
-backpressure, deadlines, and application data. Bytes already read after the HTTP
-request head are preserved and become the target protocol's first input. This
-is the boundary intended for a separate `Linux::Event::WebSocket`
-distribution.
+HTTP owns validation and the `101 Switching Protocols` transaction. The target
+protocol owns everything after the handoff. This is the intended boundary for a
+separate `Linux::Event::WebSocket` distribution.
 
-Applications use the Response object but do not construct it or pass it back to
-the Connection. Response is the writable handle for a server transaction and may
-be retained and completed from a later event.
+## Public modules
 
-Streaming response output uses the same `write`/`end` shape. HTTP/1.1 adds
-chunked transfer coding automatically when no Content-Length was declared:
-
-```perl
-sub on_request ($self, $req, $res) {
-    $res->header('Content-Type', 'text/plain');
-    $res->write("one\n");
-    $res->write("two\n");
-    $res->end("three\n");
-}
+```text
+Linux::Event::HTTP
+Linux::Event::HTTP::Server
+Linux::Event::HTTP::Server::Connection
+Linux::Event::HTTP::Request
+Linux::Event::HTTP::Response
 ```
 
-Request bodies are also streaming-first. Fixed-length and chunked bodies are
-delivered without whole-request accumulation:
+Native client support is planned under:
 
-```perl
-sub on_body ($self, $req, $res, $bytes) {
-    process_bytes($bytes);
-}
-
-sub on_request_end ($self, $req, $res) {
-    $res->end("done\n");
-}
+```text
+Linux::Event::HTTP::Client
+Linux::Event::HTTP::Client::Connection
 ```
 
-If no `on_body` callback is installed, the protocol engine drains the body so
-framing and keep-alive remain correct without building an unused body scalar.
-`on_request_end` runs once when the complete request input boundary has been
-consumed, including for requests with no body.
+It is not implemented yet.
 
-HTTP/1 request-head parsing and chunked request decoding use
-[picohttpparser](https://github.com/h2o/picohttpparser), vendored directly in
-this distribution at a recorded upstream revision. Builds and installations do
-not depend on the upstream repository or any network fetch.
-Linux::Event::HTTP keeps parsed request metadata in native state and
-materializes Perl strings only when application code asks for them.
+## More detail
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design constraints,
-[docs/BENCHMARKING.md](docs/BENCHMARKING.md) for the end-to-end benchmark and
-profiling contract, and
-[docs/PICOHTTPPARSER-EXPERIMENT.md](docs/PICOHTTPPARSER-EXPERIMENT.md) for parser
-provenance, design details, and parser microbenchmark results.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) describes protocol and transport boundaries.
+- [docs/BENCHMARKING.md](docs/BENCHMARKING.md) describes the benchmark contract.
+- [docs/PICOHTTPPARSER-EXPERIMENT.md](docs/PICOHTTPPARSER-EXPERIMENT.md) records parser provenance and measurements.
+- Module POD documents the complete public methods and advanced behavior.
 
 ## Contributing
 

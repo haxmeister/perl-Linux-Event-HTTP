@@ -64,7 +64,7 @@ my %case = (
         label => '3h + response marking',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'mark',
-        description => 'Native wire build plus Response started/ended marking; generated response write',
+        description => 'Native wire build plus Response started/complete marking; generated response write',
     },
     commit => {
         label => '3i + transaction commit',
@@ -72,23 +72,23 @@ my %case = (
         stage => 'commit',
         description => 'Response marking plus write-before-clear transaction commit and read-resume check',
     },
-    end => {
-        label => '3j + guarded public Response end',
+    complete => {
+        label => '3j + guarded public Response complete',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
-        stage => 'end',
-        description => 'Two production-style guarded request callbacks with public Response->end through the private native default-final path',
+        stage => 'complete',
+        description => 'Two production-style guarded request callbacks with public Response->complete through the private native default-final path',
     },
     checked => {
         label => '3k + production request checks',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'checked',
-        description => 'Guarded public Response end plus production parser eval/error boundary, request-head size guard, and Expect validation',
+        description => 'Guarded public Response complete plus production parser eval/error boundary, request-head size guard, and Expect validation',
     },
     bodyless => {
         label => '3l semantic bodyless driver',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'bodyless',
-        description => 'Benchmark-only bodyless common path retaining production driver guards, parser/error checks, guarded callbacks, post-callback lifecycle checks, and public Response end while omitting generic body-mode branches',
+        description => 'Benchmark-only bodyless common path retaining production driver guards, parser/error checks, guarded callbacks, post-callback lifecycle checks, and public Response complete while omitting generic body-mode branches',
     },
     http => {
         label => '4 Full HTTP transaction',
@@ -144,7 +144,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(parse bound state callbacks fused eligibility build mark commit end checked bodyless http);
+my @names = qw(parse bound state callbacks fused eligibility build mark commit complete checked bodyless http);
 my @records;
 
 say 'Linux::Event::HTTP transaction lifecycle ladder';
@@ -257,7 +257,6 @@ sub run_case ($name, $wire) {
         unlink $stderr_path;
         die "$case{$name}{label} failed: $error$detail";
     }
-
     unlink $stdout_path;
     unlink $stderr_path;
     return {

@@ -14,7 +14,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|end|checked|bodyless)\z/;
+    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -28,8 +28,8 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
     my $MAX_HEADERS = 100;
     my $MAX_REQUEST_HEAD = 65_536;
     my $NOOP = sub ($connection, $request, $response) { return };
-    my $END = sub ($connection, $request, $response) {
-        $response->end($connection->data->{payload});
+    my $COMPLETE = sub ($connection, $request, $response) {
+        $response->complete($connection->data->{payload});
         return;
     };
 
@@ -70,9 +70,6 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
         local $self->{_http_driving} = 1;
 
         while (!$self->{_http_closing} && !$self->is_closed) {
-            # A production version would fall back to the generic body driver
-            # when an earlier transaction is active. This benchmark exercises
-            # only the no-body persistent-GET common path.
             last if $self->{_http_active_request};
             last if !length($self->{_bench_input});
 
@@ -130,10 +127,6 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             $self->{_http_request_state} = $request_state;
             $self->{_http_response_state} = undef;
 
-            # Preserve the production callback/error boundaries and the
-            # post-callback connection/transaction checks. Expect can only
-            # trigger a 100 response when a body is pending, which is false for
-            # this deliberately bodyless path.
             if (!$self->_invoke_http_callback($NOOP, $request, $response)) {
                 last;
             }
@@ -141,13 +134,13 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             next if !$self->{_http_active_request};
 
             $request_state->{body_done} = 1;
-            if (!$self->_invoke_http_callback($END, $request, $response)) {
+            if (!$self->_invoke_http_callback($COMPLETE, $request, $response)) {
                 last;
             }
             last if $self->{_http_closing} || $self->is_closed;
             next if !$self->{_http_active_request};
 
-            if ($response->is_ended) {
+            if ($response->is_complete) {
                 $self->_finalize_transaction;
                 next;
             }
@@ -225,10 +218,6 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            # Mirror Connection::_drive_http1 exactly for the benchmark's
-            # bodyless GET request. The production path reuses one per-
-            # connection state hash instead of allocating _new_request_state
-            # for every bodyless transaction.
             my $body_mode = $request->body_mode;
             my $bodyless = $body_mode eq 'none';
             my $request_state;
@@ -262,10 +251,10 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             }
 
             my $handler
-                = ($main::STAGE eq 'end' || $main::STAGE eq 'checked')
-                ? $END : $NOOP;
+                = ($main::STAGE eq 'complete' || $main::STAGE eq 'checked')
+                ? $COMPLETE : $NOOP;
             if ($main::STAGE eq 'callbacks'
-                || $main::STAGE eq 'end'
+                || $main::STAGE eq 'complete'
                 || $main::STAGE eq 'checked') {
                 last if !$self->_invoke_http_callback(
                     $NOOP, $request, $response,
@@ -305,7 +294,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            next if $main::STAGE eq 'end' || $main::STAGE eq 'checked';
+            next if $main::STAGE eq 'complete' || $main::STAGE eq 'checked';
 
             my $native_request = $self->native_default_context($response)
                 or die "native default response unexpectedly ineligible\n";

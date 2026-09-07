@@ -22,7 +22,7 @@ $SIG{PIPE} = 'IGNORE';
     use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
-        $response->end($self->data->{payload});
+        $response->complete($self->data->{payload});
         return;
     }
 }
@@ -36,11 +36,10 @@ $SIG{PIPE} = 'IGNORE';
     }
 
     sub on_request_end ($self, $request, $response) {
-        $response->end($self->data->{payload});
+        $response->complete($self->data->{payload});
         return;
     }
 }
-
 
 my $requests = 20_000;
 my $warmup = 2_000;
@@ -86,8 +85,8 @@ die "timeout must be > 0\n" if $timeout <= 0;
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
 my @mode = qw(ordinary_request ordinary_request_end);
 my %label = (
-    ordinary_request     => 'on_request -> Response->end',
-    ordinary_request_end => 'on_request_end -> Response->end',
+    ordinary_request     => 'on_request -> Response->complete',
+    ordinary_request_end => 'on_request_end -> Response->complete',
 );
 my %class = (
     ordinary_request     => 'Linux::Event::HTTP::Bench::OrdinaryRequestConnection',
@@ -97,8 +96,8 @@ my %records;
 
 say 'Linux::Event::HTTP response finalization benchmark';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats";
-say 'ordinary_request = real Connection on_request($conn,$req,$res) + Response->end';
-say 'ordinary_request_end = real Connection no-op on_request + on_request_end($conn,$req,$res) + Response->end';
+say 'ordinary_request = real Connection on_request($conn,$req,$res) + Response->complete';
+say 'ordinary_request_end = real Connection no-op on_request + on_request_end($conn,$req,$res) + Response->complete';
 
 for my $repeat (1 .. $repeats) {
     my @order = $repeat % 2 ? @mode : reverse @mode;

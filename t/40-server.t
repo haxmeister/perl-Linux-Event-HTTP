@@ -67,7 +67,7 @@ my $server = Linux::Event::HTTP::Server->new(
         $state->{body} .= $bytes;
     },
     on_request_end => sub ($conn, $req, $res) {
-        $res->end($prefix . $state->{body} . "\n");
+        $res->complete($prefix . $state->{body} . "\n");
     },
 );
 
@@ -122,7 +122,7 @@ like(
     sub on_request ($self, $req, $res) {
         $self->data->{class_method_hits}++;
         $self->data->{actual_class} = ref($self);
-        $res->end("class\n");
+        $res->complete("class\n");
     }
 }
 
@@ -173,7 +173,7 @@ $server = Linux::Event::HTTP::Server->new(
     on_request => sub ($conn, $req, $res) {
         $override->{callback_hits}++;
         $override->{actual_class} = ref($conn);
-        $res->end("override\n");
+        $res->complete("override\n");
     },
 );
 
@@ -212,10 +212,8 @@ $ok = eval {
         loop => Linux::Event::Loop->new,
         host => '127.0.0.1',
         port => 0,
-        on_request => sub ($conn, $req, $res) { $res->end("ok
-") },
-        on_request_final => sub { return "old
-" },
+        on_request => sub ($conn, $req, $res) { $res->complete("ok\n") },
+        on_request_final => sub { return "old\n" },
     );
     1;
 };

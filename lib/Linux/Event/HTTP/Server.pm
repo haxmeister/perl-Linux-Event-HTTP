@@ -46,7 +46,7 @@ sub new ($class, %option) {
         if exists $option{on_data};
     croak 'new(): HTTP Server cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
-    croak 'new(): on_request_final was removed; use on_request and Response->end'
+    croak 'new(): on_request_final was removed; use on_request and Response->complete'
         if exists $option{on_request_final};
 
     my $connection_class = _load_connection_class(
@@ -121,7 +121,7 @@ __END__
 
 =head1 NAME
 
-Linux::Event::HTTP::Server - HTTP server endpoint convenience
+Linux::Event::HTTP::Server - HTTP server endpoint
 
 =head1 SYNOPSIS
 
@@ -137,7 +137,7 @@ Linux::Event::HTTP::Server - HTTP server endpoint convenience
         port => 8080,
         on_request => sub ($conn, $req, $res) {
             $res->header('Content-Type', 'text/plain');
-            $res->end("hello\n");
+            $res->complete("hello\n");
         },
     );
 
@@ -145,76 +145,79 @@ Linux::Event::HTTP::Server - HTTP server endpoint convenience
 
 =head1 DESCRIPTION
 
-C<Linux::Event::HTTP::Server> is a small convenience layer around
-L<Linux::Event::IO::Sock::Listener>. It owns no socket or HTTP transport engine
-of its own. The Listener accepts connections and the configured
-L<Linux::Event::HTTP::Server::Connection> subclass owns each HTTP connection.
+C<Linux::Event::HTTP::Server> is the ordinary entry point for an HTTP server.
+It listens using Linux::Event and invokes C<on_request> whenever a validated
+request head is available.
 
-The callback form retains each configured CV once and reuses it for every
-accepted Connection. No wrapper closure is created per connection and no extra
-Server dispatch is inserted into the per-request callback path.
+The callback receives:
 
-The object relationship is:
+=over 4
 
-    HTTP::Server
-        -> Linux::Event::IO::Sock::Listener
-            -> HTTP::Server::Connection
-                -> Request + Response
+=item * C<$conn> - the persistent HTTP connection
 
-=head1 CONSTRUCTION
+=item * C<$req> - the current L<Linux::Event::HTTP::Request>
 
-=head2 Callback form
+=item * C<$res> - the L<Linux::Event::HTTP::Response> for that request
+
+=back
+
+Completing a Response does not normally close the connection. HTTP keep-alive
+may reuse the same connection for later requests.
+
+=head1 REQUEST BODIES
+
+Request bodies are streaming-first. Add C<on_body> when body bytes are needed,
+and C<on_request_end> when work should happen after the complete request input
+has arrived:
 
     my $server = Linux::Event::HTTP::Server->new(
         loop => $loop,
-        host => '0.0.0.0',
         port => 8080,
-        data => $application_state,
+
         on_request => sub ($conn, $req, $res) {
-            $res->end("ok\n");
+            $conn->data->{body} = '';
+        },
+
+        on_body => sub ($conn, $req, $res, $bytes) {
+            $conn->data->{body} .= $bytes;
+        },
+
+        on_request_end => sub ($conn, $req, $res) {
+            $res->complete("received\n");
         },
     );
 
-C<on_request> is required unless C<connection_class> provides an
-C<on_request> method. Optional C<on_body> and C<on_request_end> callbacks use
-the same signatures and semantics as L<Linux::Event::HTTP::Server::Connection>
-and are retained once by the Server.
+If C<on_body> is absent, the server drains request-body bytes without building a
+whole-body scalar.
 
-C<data> becomes the C<data> value of each accepted HTTP Connection. The private
-Server acceptance state is not exposed through C<< $conn->data >>.
+=head1 CONNECTION SUBCLASSES
 
-=head2 Connection subclass form
+Most applications do not need to subclass the HTTP connection. Use
+C<connection_class> when reusable TLS, stream tuning, socket policy, or callback
+methods belong on a class:
 
     package MyHTTP;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
-        $res->end("hello\n");
+        $res->complete("hello\n");
     }
 
     package main;
 
     my $server = Linux::Event::HTTP::Server->new(
         loop             => $loop,
-        host             => '127.0.0.1',
         port             => 8080,
         connection_class => 'MyHTTP',
     );
 
-C<connection_class> defaults to L<Linux::Event::HTTP::Server::Connection> and must
-name one of its subclasses. Constructor callbacks may still be supplied; as on
-direct Connection construction, they override same-named class methods for
-accepted instances.
-
-The configured class continues to own C<stream_options>, socket policy, TLS,
-and other Connection subclass policy. Server validates that accepted-connection
-policy when it is constructed, then leaves the policy on the Connection class
-rather than copying settings into the Server object.
+C<connection_class> defaults to
+L<Linux::Event::HTTP::Server::Connection>.
 
 =head1 TLS
 
-HTTPS uses the same Server and Connection classes. Declare TLS on the configured
-Connection subclass using L<Linux::Event::TLS>:
+HTTPS uses the same Server API. TLS remains Linux::Event transport policy on a
+Connection subclass:
 
     package SecureHTTP;
     use parent 'Linux::Event::HTTP::Server::Connection';
@@ -224,50 +227,14 @@ Connection subclass using L<Linux::Event::TLS>:
         alpn      => ['http/1.1'];
 
     sub on_request ($self, $req, $res) {
-        $res->end("secure\n");
+        $res->complete("secure\n");
     }
-
-    package main;
-
-    my $server = Linux::Event::HTTP::Server->new(
-        loop             => $loop,
-        host             => '0.0.0.0',
-        port             => 443,
-        connection_class => 'SecureHTTP',
-    );
-
-Accepted TLS Connections automatically use Linux::Event server-handshake
-semantics. Server validates the configured Connection TLS declaration at
-construction time, including the requirement for a server certificate and key.
-The HTTP layer does not create a separate HTTPS Connection type and does not
-reimplement TLS state.
-
-C<on_ready> for a TLS Connection runs only after handshake and verification have
-completed. HTTP request parsing therefore sees decrypted application bytes, and
-Response output travels through the established TLS transport. Negotiated
-C<selected_alpn>, C<tls_protocol>, C<tls_cipher>, and C<tls_stats> remain
-available directly from the Connection through Linux::Event.
-
-=head1 LISTENER OPTIONS
-
-Socket-source and listener-tuning options are passed to
-L<Linux::Event::IO::Sock::Listener>. This includes C<loop>, C<host>/C<port>,
-C<unix>, adopted C<fh>, C<backlog>, C<max_accept_per_tick>, C<edge_triggered>,
-C<reuseaddr>, C<reuseport>, C<v6only>, C<bind_device>, and Unix ownership
-options.
-
-The ordinary accepted-Stream lifecycle callbacks such as C<on_ready>,
-C<on_drain>, C<on_eof>, C<on_error>, and C<on_close> may also be supplied and
-are forwarded by Linux::Event to the accepted HTTP Connection. C<on_data>,
-C<on_message>, and C<on_messages> are reserved because HTTP Connection owns its
-input protocol engine.
 
 =head1 METHODS
 
 =head2 listener
 
-Returns the underlying L<Linux::Event::IO::Sock::Listener> for advanced
-inspection. Application code normally does not need it.
+Returns the underlying L<Linux::Event::IO::Sock::Listener> for advanced use.
 
 =head2 connection_class
 
@@ -279,8 +246,7 @@ Returns the application data supplied to the Server.
 
 =head2 loop, fh, fd, host, port, path, family, family_number, is_tcp, is_unix, state
 
-Delegate to the underlying Listener. C<port> is useful when C<port =E<gt> 0>
-asks the kernel to select an available TCP port.
+Delegate to the underlying Listener.
 
 =head2 pause
 
@@ -292,13 +258,12 @@ Resumes acceptance and returns the Server.
 
 =head2 close
 
-Closes the underlying Listener and returns the Server. Existing accepted HTTP
-Connections retain their independent lifecycles.
+Closes the listening endpoint and returns the Server. Existing accepted HTTP
+connections keep their independent lifecycles.
 
 =head1 SEE ALSO
 
 L<Linux::Event::HTTP::Server::Connection>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::IO::Sock::Listener>,
-L<Linux::Event::TLS>.
+L<Linux::Event::HTTP::Response>, L<Linux::Event::TLS>.
 
 =cut

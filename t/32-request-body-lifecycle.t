@@ -18,7 +18,7 @@ use Linux::Event::HTTP::Server::Connection;
         my $target = $request->target;
         push @{$self->data->{requests}}, $target;
         $self->data->{bodies}{$target} = '';
-        $response->end($target eq '/early' ? "early\n" : "next\n");
+        $response->complete($target eq '/early' ? "early\n" : "next\n");
     }
 
     sub on_body ($self, $request, $response, $bytes) {
@@ -90,9 +90,9 @@ $loop->run;
 is_deeply($state->{requests}, [ '/early', '/next' ],
     'next request waits until response-first transaction consumes its body');
 is($state->{bodies}{'/early'}, 'data',
-    'request body continues streaming after its response has ended');
+    'request body continues streaming after its response is complete');
 is_deeply($state->{ends}, [ '/early', '/next' ],
-    'on_request_end runs even when responses end first, including close response');
+    'on_request_end runs even when responses complete first, including close response');
 like($state->{response}, qr/early\n.*?next\n\z/s,
     'response-first transaction preserves response ordering');
 

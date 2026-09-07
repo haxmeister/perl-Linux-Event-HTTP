@@ -22,7 +22,7 @@ my $payload = 'x' x $response_bytes;
     }
 
     sub on_request ($self, $request, $response) {
-        $response->end($self->data->{payload});
+        $response->complete($self->data->{payload});
         return;
     }
 }
@@ -40,11 +40,10 @@ my $payload = 'x' x $response_bytes;
     }
 
     sub on_request_end ($self, $request, $response) {
-        $response->end($self->data->{payload});
+        $response->complete($self->data->{payload});
         return;
     }
 }
-
 
 my $connection_class = $mode eq 'natural'
     ? 'Linux::Event::HTTP::Bench::NaturalCompareConnection'
