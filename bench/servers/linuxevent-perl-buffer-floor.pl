@@ -22,7 +22,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
     }
 
     sub on_data ($self, $bytes) {
-        $self->{_bench_input} .= $bytes;
+        ($self->{_bench_input} //= '') .= $bytes;
 
         while (1) {
             my $head_end = index($self->{_bench_input}, "\r\n\r\n");
