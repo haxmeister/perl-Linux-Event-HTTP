@@ -9,7 +9,7 @@ Updated: 2026-09-06 (America/Chicago)
 - Draft PR: #13, `Experiment: native default final-response fast path`
 - Base: `feature/http-comparison-benchmarks`
 - DO NOT merge PR #13 or PR #11 without explicit authorization.
-- `handoff.md` is the live checkpoint. Update it after every meaningful result or conclusion.
+- `handoff.md` is the live checkpoint. Update it after every meaningful benchmark, experiment, or conclusion.
 
 ## Strategy
 
@@ -31,11 +31,7 @@ Updated: 2026-09-06 (America/Chicago)
 - `4746a80` - `Benchmark production request checks separately`
 - `64771bc` - `Split HTTP request-check microcosts`
 
-The transaction ladder contract is version 4:
-
-`parse -> bound -> state -> callbacks -> fused -> eligibility -> build -> mark -> commit -> end -> checked -> full HTTP`
-
-The `checked` stage is benchmark-only. It starts from the guarded public `Response->end` path and additionally performs the production driver's parser `eval`/error boundary, incomplete-request handling, maximum request-head guard, and `_expect_continue` validation. No production HTTP implementation changed.
+No production HTTP implementation changed in the recent request-check benchmark commits.
 
 ## Native final-response result
 
@@ -54,102 +50,114 @@ Controlled same-host end-to-end run, 100k requests, 100 connections, pipeline=1,
 
 Conclusion: native default-final response is a real end-to-end win. Callback fusion adds a smaller increment and must not be promoted unless callback/error semantics remain equivalent.
 
-## Request-check / driver split - CI run 34078945128
+## Production request-check / driver split
 
-Ubuntu 24.04, Perl 5.44.0 non-threaded, Linux::Event 0.112, 20k measured + 2k warmup, 100 connections, pipeline=1, response=32B, 3 rotated repeats.
+CI run `34078945128` first isolated the remaining guarded-end gap:
 
-Median ladder:
-
-- parse: `69,553.8 req/s`
-- Response binding: `61,468.3` (`-11.62%`)
-- transaction state: `54,416.7` (`-11.47%`)
-- guarded callbacks: `46,741.8` (`-14.10%`)
-- fused callbacks: `49,953.4` (`+6.87%` vs guarded)
-- native eligibility: `44,255.7` (`-11.41%`)
-- native wire build: `40,286.0` (`-8.97%`)
-- response marking: `40,691.7` (`+1.01%`, noise)
-- transaction commit: `39,659.6` (`-2.54%`)
-- guarded public `Response->end`: `37,338.7`
+- guarded public `Response->end`: `37,338.7 req/s`
 - production request checks: `35,540.3`
 - full production HTTP: `33,267.4`
+- end -> checked: `-4.82%`
+- checked -> full HTTP: `-6.40%`
 
-Crucial isolated deltas:
+This showed two moderate buckets rather than one large hotspot: request validation and generic `_drive_http1` control flow.
 
-- **guarded end -> checked: `-4.82%`**
-- **checked -> full HTTP: `-6.40%`**
+## Request-check microbenchmark - CI run 34079189363
 
-Interpretation:
+Commit `64771bc` extended `bench/run-http-object-cost.pl` to split the request-validation cost. Ubuntu 24.04, Perl 5.44.0 non-threaded, 300k iterations, 30k warmup, 5 rotated repeats.
 
-- About 4.8% of the remaining common-path throughput cost is attributable to production parser/error/request-validation scaffolding: parser `eval`, incomplete/error branching, max-head validation, and `_expect_continue`.
-- About another 6.4% remains in generic `_drive_http1` loop/state/control-flow work not present in the staged checked server.
-- There is no single huge driver hotspot left. The residual is split into two moderate Perl-side/control-flow buckets.
-- This does not justify adding more custom XS/C.
+Median microcosts:
 
-Latency medians:
+- no-op benchmark floor: `78.8 ns/op`
+- direct pico `parse_request`: `613.5 ns/op`
+- same parse inside production-style Perl `eval`: `742.7 ns/op`
+- `Request->_consumed`: `163.1 ns/op`
+- `Request->body_mode`: `192.5 ns/op`
+- `Request->http_version`: `243.6 ns/op`
+- `Request->header_values('Expect')` with no Expect header: `219.7 ns/op`
+- production `_expect_continue` with no Expect header: `334.5 ns/op`
 
-- guarded public end: p50 `2,558.9 us`, p95 `2,929.9 us`, p99 `5,152.0 us`
-- checked: p50 `2,714.9 us`, p95 `2,867.9 us`, p99 `5,451.9 us`
-- full HTTP: p50 `2,906.1 us`, p95 `3,071.1 us`, p99 `5,825.0 us`
+Derived results:
 
-## Cross-server result from CI run 34078945128
+- Parser exception boundary overhead: `742.7 - 613.5 = 129.2 ns/request`.
+- Full normal-GET `_expect_continue` work above the common benchmark-call floor is about `334.5 - 78.8 = 255.7 ns/request`.
+- `_expect_continue` wrapper work beyond the underlying `header_values('Expect')` call is about `114.8 ns/request`.
+- Parser `eval` plus the no-Expect check therefore account for only about `0.385 us/request` in this microbenchmark.
 
-10k measured, 1k warmup, 100 connections, pipeline=1, response=32B, 3 repeats:
+The same CI run's transaction ladder was internally consistent:
 
-- Linux::Event::Net::HTTP: `32,481.0 req/s`
-- Feersum: `73,447.3`
-- Go net/http: `58,333.9`
-- Node.js: `21,759.7`
-- aiohttp: `19,549.5`
-- Mojolicious: `1,750.2`
+- guarded public end: `44,418.1 req/s`
+- checked: `43,402.2` (`-2.29%`)
+- full HTTP: `39,534.9` (`-8.91%` from checked)
 
-Same-run ratios: Linux::Event was about `44.2%` of Feersum and `55.7%` of Go. GitHub-hosted runner performance varies substantially; use same-run ratios and within-run stage deltas, not absolute cross-run req/s.
+The end -> checked wall-cost difference on this run is about `0.53 us/request`, which is reasonably explained by the ~`0.385 us` parser-eval + Expect microcost plus the remaining branch/max-head/error scaffolding.
 
-## Object/state microbenchmark baseline
+### Request-check conclusion
 
-The latest pre-split run reconfirmed:
+**Do not optimize this bucket in C/XS.**
 
-- no-op: `75.6 ns/op`
-- Response-shaped hash, strong connection: `659.6 ns`
-- same + `weaken(connection)`: `724.0 ns`
-- production `Response->_new_bound`: `1006.0 ns`
-- 8-slot array proxy weak: `389.1 ns`
-- `_new_request_state` bodyless allocation: `776.6 ns`
-- cached bodyless-state reset: `144.9 ns`
-- active assign + clear: `500.6 ns`
+- Removing the parser `eval` would at best target roughly `0.13 us/request` and would weaken/complicate error semantics.
+- Folding Expect detection into native Request state could at best avoid roughly `0.26 us/request` on the common no-Expect case.
+- Even recovering both completely would be only around `0.4 us/request`, roughly a low-single-digit end-to-end gain on these runs and not worth extra native API/state complexity at this point.
+- Keep the production request validation semantics intact and move on.
 
-Conclusions: `weaken` is negligible; an array Response might save ~0.6 us/request but is not worth rewriting yet; production already benefits from cached bodyless state.
+This is important strategically: the current benchmark does **not** justify extending custom parser C merely to cache Expect state or avoid the Perl eval boundary.
 
-## Current microbenchmark experiment
+## Object/state baseline
 
-Commit `64771bc` extends `bench/run-http-object-cost.pl` without changing production code. New cases isolate:
+Latest same-run medians remain similar to prior measurements:
 
-- `parse_direct`: pico `parse_request` / native Request construction with no Perl `eval`
-- `parse_eval`: same parse inside the production-style `eval` boundary
-- `request_consumed`: `_consumed`
-- `request_body_mode`: `body_mode`
-- `request_http_version`: `http_version`
-- `expect_header_values`: `header_values('Expect')` on a normal GET without Expect
-- `expect_continue`: production `_expect_continue` on the same request
+- Response-shaped hash strong: `629.8 ns`
+- same + weak connection: `677.6 ns`
+- production `Response->_new_bound`: `985.5 ns`
+- weak array proxy: `379.2 ns`
+- `_new_request_state` bodyless allocation: `728.3 ns`
+- cached bodyless-state reset: `155.2 ns`
+- active transaction assign + clear: `500.1 ns`
 
-The existing CI comparison job already runs this benchmark, so the branch push will produce nanosecond medians for the new cases.
+Conclusions: `weaken` is negligible; an array Response could save roughly 0.6 us/request but is not worth a representation rewrite yet; production bodyless-state reuse is already correct.
+
+## Cross-server status - CI run 34079189363
+
+Same run, 10k measured, 1k warmup, 100 connections, pipeline=1, response=32B, 3 repeats:
+
+- Linux::Event::Net::HTTP: `40,061.2 req/s`
+- Feersum: `76,037.5`
+- Go net/http: `60,882.4`
+- Node.js: `30,907.4`
+- aiohttp: `28,379.8`
+- Mojolicious: `2,134.2`
+
+Same-run ratios:
+
+- Linux::Event is about `52.7%` of Feersum throughput; Feersum ~`1.90x` faster.
+- Linux::Event is about `65.8%` of Go throughput; Go ~`1.52x` faster.
+- Linux::Event remains faster than Node.js and aiohttp on throughput.
+
+GitHub runner absolute throughput varies heavily. Use same-run ratios and within-run deltas, not absolute comparisons between separate runs.
+
+All standard CI jobs remain green, including latest threaded Perl.
 
 ## Current conclusions
 
 1. Native default-final response is worthwhile and should remain the candidate.
-2. Response allocation and weak-reference handling are not dominant.
-3. Bodyless state reuse is already correct.
-4. Guarded callback dispatch is measurable, but fusion remains a semantic-risk experiment rather than an automatic production change.
-5. The production-driver residual is decomposed into about 4.8% request-check scaffolding plus about 6.4% generic driver control flow on the latest run.
-6. Optimization should now be surgical rather than broad.
-7. More bespoke XS/C is premature.
-8. `libh2o` remains the fallback architecture if useful progress would otherwise require substantial custom native HTTP code.
+2. Response allocation, weak references, bodyless state, parser `eval`, and normal no-Expect checking are now individually quantified; none is large enough to justify a broad/native rewrite.
+3. The request-check bucket is effectively closed for now: there is only about 0.4-0.5 us/request of common-path work there, and removing it would cost semantic/native complexity.
+4. The most promising remaining target is the **generic `_drive_http1` control-flow bucket**, measured around 6-9% after request checks depending on runner.
+5. Guarded callback dispatch is also measurable, but callback fusion remains a semantic-risk experiment rather than an automatic production change.
+6. More bespoke XS/C is premature.
+7. `libh2o` remains the fallback architecture if the remaining performance gap ultimately requires substantial custom native HTTP code.
 
 ## Immediate next work
 
-1. Let CI measure commit `64771bc` and record the nanosecond medians immediately.
-2. Compare `parse_direct -> parse_eval` to isolate exception-boundary cost.
-3. Compare `expect_header_values` with `expect_continue` to determine whether Expect header lookup or wrapper logic dominates.
-4. Use `_consumed`, `body_mode`, and `http_version` numbers to estimate smaller request-accessor contributions.
-5. If request checks contain a worthwhile semantic-safe Perl optimization, prototype it benchmark-only first.
-6. Then address the remaining ~6.4% generic driver bucket with a benchmark-only common-bodyless path only if it avoids large protocol-logic duplication.
-7. Only consider native changes if a specific residual remains large and cannot be removed cleanly in Perl; at that point evaluate `libh2o` before adding more bespoke XS/C.
+1. Build a benchmark-only **common bodyless driver** stage that preserves:
+   - parser `eval` and protocol error semantics
+   - max-head and Expect validation
+   - production bodyless-state reuse
+   - both guarded callback boundaries
+   - native default-final `Response->end`
+   but removes generic branches/state checks that are unnecessary once the parsed request is known to be bodyless.
+2. Compare that stage against `checked` and full `_drive_http1` to determine how much of the remaining 6-9% generic driver bucket is actually recoverable with a clean Perl fast path.
+3. Do not alter production until that benchmark demonstrates a meaningful gain and the fast-path semantics can be shown equivalent.
+4. If the benchmark-only bodyless path recovers little, stop micro-optimizing this driver and evaluate `libh2o` before adding more custom XS/C.
+5. If it recovers a meaningful amount, prototype the smallest production Perl change and run full tests plus cross-server benchmarks before deciding whether to keep it.
