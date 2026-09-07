@@ -19,7 +19,8 @@ $SIG{PIPE} = 'IGNORE';
 my %case = (
     parse => {
         label => '3a Parsed Request + prebuilt write',
-        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-parse-floor.pl"],
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'parse',
         description => 'Perl input buffer plus pico parse_request/native Request construction; prebuilt response write',
     },
     bound => {
@@ -158,7 +159,7 @@ if (defined $json_path) {
     my %contract = map {
         $_ => $case{$_}{description}
     } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; stages are cumulative except full HTTP additionally uses Connection::_drive_http1';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; stages parse through end use the same Connection subclass and are cumulative; full HTTP additionally uses Connection::_drive_http1';
 
     my $report = {
         benchmark => 'linux-event-net-http-transaction-ladder',
@@ -512,9 +513,10 @@ Options:
   --help                  show this help
 
 The stages cumulatively decompose the cost between a parsed Request with a
-prebuilt response and the full Connection::_drive_http1 lifecycle. All stages
-use the same raw client and Linux::Event Stream transport; no stage is product
-code and this benchmark adds no new XS/C implementation.
+prebuilt response and the full Connection::_drive_http1 lifecycle. Stages 3a
+through 3e use the same benchmark Connection subclass. All stages use the same
+raw client and Linux::Event Stream transport; no stage is product code and this
+benchmark adds no new XS/C implementation.
 USAGE
     exit $exit;
 }
