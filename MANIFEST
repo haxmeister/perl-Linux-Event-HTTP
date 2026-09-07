@@ -9,8 +9,10 @@ SECURITY.md
 bench/pico-parser.pl
 bench/run-http-comparison.pl
 bench/run-http-end-to-end.pl
+bench/run-http-transport-floor.pl
 bench/servers/aiohttp-http.py
 bench/servers/linuxevent-http.pl
+bench/servers/linuxevent-stream-floor.pl
 bench/servers/mojo-http.pl
 bench/servers/node-http.js
 bench/servers/twiggy-http.pl
