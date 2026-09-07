@@ -162,3 +162,26 @@ jobs:
             --pipeline=1 \
             --response-bytes=32 \
             --repeats=3
+
+      - name: Cross-server fast-final smoke
+        env:
+          BENCH_LINUXEVENT_MODE: fast-final
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent,feersum,mojo,node,go,aiohttp,h2o \
+            --smoke \
+            --strict
+
+      - name: Cross-server fast-final directional benchmark
+        env:
+          BENCH_LINUXEVENT_MODE: fast-final
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent,feersum,mojo,node,go,aiohttp,h2o \
+            --strict \
+            --requests=10000 \
+            --warmup=1000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=32 \
+            --repeats=3
