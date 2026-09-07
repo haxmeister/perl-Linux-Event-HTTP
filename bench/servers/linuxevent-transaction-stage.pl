@@ -14,7 +14,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|end|checked)\z/;
+    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|end|checked|bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -61,7 +61,107 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
         return $request;
     }
 
+    sub _on_data_bodyless_fast ($self, $bytes) {
+        return if $self->{_http_closing} || $self->is_closed;
+        $self->{_bench_input} = '' if !defined $self->{_bench_input};
+        $self->{_bench_input} .= $bytes;
+
+        return if $self->{_http_driving};
+        local $self->{_http_driving} = 1;
+
+        while (!$self->{_http_closing} && !$self->is_closed) {
+            # A production version would fall back to the generic body driver
+            # when an earlier transaction is active. This benchmark exercises
+            # only the no-body persistent-GET common path.
+            last if $self->{_http_active_request};
+            last if !length($self->{_bench_input});
+
+            my $request;
+            my $parsed = eval {
+                $request = $PARSER->parse_request(
+                    $self->{_bench_input}, 0, $MAX_HEADERS,
+                );
+                1;
+            };
+            if (!$parsed) {
+                my $failure = "$@";
+                my $status = $failure =~ /semantic error \(501\)/ ? 501 : 400;
+                $self->_protocol_error($status);
+                last;
+            }
+            if (!defined $request) {
+                if (length($self->{_bench_input}) > $MAX_REQUEST_HEAD) {
+                    $self->_protocol_error(431);
+                }
+                last;
+            }
+
+            my $consumed = $request->_consumed;
+            if ($consumed > $MAX_REQUEST_HEAD) {
+                $self->_protocol_error(431, $request->http_version);
+                last;
+            }
+            substr($self->{_bench_input}, 0, $consumed, '');
+
+            my $expect = Linux::Event::Net::HTTP::Connection::_expect_continue(
+                $request,
+            );
+            if ($expect < 0) {
+                $self->_protocol_error(417, $request->http_version);
+                last;
+            }
+
+            my $response = Linux::Event::Net::HTTP::Response->_new_bound(
+                $self, $request,
+            );
+            my $body_mode = $request->body_mode;
+            die "bodyless benchmark unexpectedly parsed $body_mode request\n"
+                if $body_mode ne 'none';
+
+            my $request_state = $self->{_http_bodyless_state} //= {
+                mode      => 'none',
+                body_done => 0,
+            };
+            $request_state->{body_done} = 0;
+            delete $request_state->{close_after_response};
+
+            $self->{_http_active_request} = $request;
+            $self->{_http_active_response} = $response;
+            $self->{_http_request_state} = $request_state;
+            $self->{_http_response_state} = undef;
+
+            # Preserve the production callback/error boundaries and the
+            # post-callback connection/transaction checks. Expect can only
+            # trigger a 100 response when a body is pending, which is false for
+            # this deliberately bodyless path.
+            if (!$self->_invoke_http_callback($NOOP, $request, $response)) {
+                last;
+            }
+            last if $self->{_http_closing} || $self->is_closed;
+            next if !$self->{_http_active_request};
+
+            $request_state->{body_done} = 1;
+            if (!$self->_invoke_http_callback($END, $request, $response)) {
+                last;
+            }
+            last if $self->{_http_closing} || $self->is_closed;
+            next if !$self->{_http_active_request};
+
+            if ($response->is_ended) {
+                $self->_finalize_transaction;
+                next;
+            }
+
+            $self->pause_read if !$self->is_read_paused;
+            last;
+        }
+        return;
+    }
+
     sub on_data ($self, $bytes) {
+        return $self->_on_data_bodyless_fast($bytes)
+            if $main::STAGE eq 'bodyless';
+
         $self->{_bench_input} = '' if !defined $self->{_bench_input};
         $self->{_bench_input} .= $bytes;
 
