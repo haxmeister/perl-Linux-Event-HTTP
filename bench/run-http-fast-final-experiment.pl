@@ -19,10 +19,24 @@ use Linux::Event::Net::HTTP::_Experiment::FastFinalConnection;
 $SIG{PIPE} = 'IGNORE';
 
 {
-    package Linux::Event::Net::HTTP::Bench::OrdinaryFinalConnection;
+    package Linux::Event::Net::HTTP::Bench::OrdinaryRequestConnection;
     use parent 'Linux::Event::Net::HTTP::Connection';
 
     sub on_request ($self, $request, $response) {
+        $response->end($self->data->{payload});
+        return;
+    }
+}
+
+{
+    package Linux::Event::Net::HTTP::Bench::OrdinaryRequestEndConnection;
+    use parent 'Linux::Event::Net::HTTP::Connection';
+
+    sub on_request ($self, $request, $response) {
+        return;
+    }
+
+    sub on_request_end ($self, $request, $response) {
         $response->end($self->data->{payload});
         return;
     }
@@ -86,21 +100,24 @@ die "repeats must be > 0\n" if $repeats <= 0;
 die "timeout must be > 0\n" if $timeout <= 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @mode = qw(ordinary fast_final);
+my @mode = qw(ordinary_request ordinary_request_end fast_final);
 my %label = (
-    ordinary   => 'ordinary Response->end',
-    fast_final => 'integrated fast-final return',
+    ordinary_request     => 'on_request -> Response->end',
+    ordinary_request_end => 'on_request_end -> Response->end',
+    fast_final           => 'integrated fast-final return',
 );
 my %class = (
-    ordinary   => 'Linux::Event::Net::HTTP::Bench::OrdinaryFinalConnection',
-    fast_final => 'Linux::Event::Net::HTTP::Bench::FastFinalConnection',
+    ordinary_request     => 'Linux::Event::Net::HTTP::Bench::OrdinaryRequestConnection',
+    ordinary_request_end => 'Linux::Event::Net::HTTP::Bench::OrdinaryRequestEndConnection',
+    fast_final           => 'Linux::Event::Net::HTTP::Bench::FastFinalConnection',
 );
 my %records;
 
 say 'Linux::Event::Net::HTTP integrated fast-final experiment';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats";
-say 'ordinary = real Server/Connection + on_request($conn,$req,$res) + Response->end';
-say 'fast_final = same Server stack + on_request_final($conn,$req) returning scalar body before Response allocation';
+say 'ordinary_request = on_request($conn,$req,$res) + Response->end before bodyless completion marking';
+say 'ordinary_request_end = no-op on_request + on_request_end($conn,$req,$res) + Response->end';
+say 'fast_final = on_request_final($conn,$req) returns scalar body before Response allocation';
 
 for my $repeat (1 .. $repeats) {
     my @order = $repeat % 2 ? @mode : reverse @mode;
@@ -132,11 +149,13 @@ for my $mode (@mode) {
         @{$median{$mode}}{qw(requests_per_second latency_us_p50 latency_us_p95 latency_us_p99 latency_us_max)};
 }
 
-my $gain = 100 * (
-    $median{fast_final}{requests_per_second}
-        / $median{ordinary}{requests_per_second} - 1
-);
-printf "fast-final throughput change: %+.2f%%\n", $gain;
+for my $baseline (qw(ordinary_request ordinary_request_end)) {
+    my $gain = 100 * (
+        $median{fast_final}{requests_per_second}
+            / $median{$baseline}{requests_per_second} - 1
+    );
+    printf "fast-final vs %-20s %+.2f%%\n", $baseline, $gain;
+}
 
 sub run_case ($mode, $wire) {
     my ($pid, $result_fh, $port) = start_server($mode);
