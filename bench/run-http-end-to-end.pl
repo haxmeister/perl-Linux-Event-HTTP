@@ -193,13 +193,13 @@ printf "median %.1f req/s p50=%.1f us p95=%.1f us p99=%.1f us max=%.1f us server
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my $report = {
-        benchmark => 'linux-event-net-http-end-to-end',
+        benchmark => 'linux-event-http-end-to-end',
         benchmark_contract_version => 1,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
             linux_event => "$Linux::Event::Loop::VERSION",
-            linux_event_net_http => "$Linux::Event::HTTP::VERSION",
+            linux_event_http => "$Linux::Event::HTTP::VERSION",
             os => $sysname,
             kernel => $release,
             machine => $machine,
