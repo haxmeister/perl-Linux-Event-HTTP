@@ -5,10 +5,18 @@ use warnings;
 
 use parent 'Linux::Event::Net::HTTP::Connection';
 
+use Carp qw(croak);
 use Linux::Event::HTTP::Request ();
 use Linux::Event::HTTP::Response ();
 
 our $VERSION = '0.001';
+
+sub new ($class, %option) {
+    croak 'new(): on_request_final is not part of the Linux::Event::HTTP public API; use on_request and Response'
+        if exists($option{on_request_final}) || $class->can('on_request_final');
+
+    return $class->SUPER::new(%option);
+}
 
 1;
 
@@ -39,8 +47,9 @@ C<on_request_end> callbacks provide streaming request-body handling. Response
 output is written through the paired L<Linux::Event::HTTP::Response> object.
 
 Protocol-specific benchmark shortcuts are not part of the supported public API.
-If realistic workloads expose a material bottleneck, optimization should first
-be considered in reusable Linux::Event primitives.
+Use the ordinary Request/Response lifecycle for complete, streamed, and deferred
+responses. If realistic workloads expose a material bottleneck, optimization
+should first be considered in reusable Linux::Event primitives.
 
 =head1 SEE ALSO
 
