@@ -5,7 +5,6 @@ use warnings;
 
 use Scalar::Util qw(refaddr weaken);
 
-use Linux::Event::Net::HTTP::_Native::Response1 ();
 use Linux::Event::Net::HTTP::_Parser::HTTP1 ();
 use Linux::Event::Net::HTTP::_Upgrade ();
 
@@ -147,50 +146,12 @@ sub write ($self, $bytes) {
     return $connection->_write_response($self, $bytes, 0);
 }
 
-sub _try_native_default_final ($self, $connection, $body) {
-    return 0 if ref($self) ne __PACKAGE__;
-    return 0 if $self->{status} != 200 || defined($self->{reason});
-    return 0 if @{$self->{headers}};
-    return 0 if $connection->{_http_closing} || $connection->is_closed;
-    return 0 if $connection->{_http_response_state};
-
-    my $active = $connection->{_http_active_response} or return 0;
-    return 0 if refaddr($active) != refaddr($self);
-
-    my $request = $connection->{_http_active_request} or return 0;
-    return 0 if !defined($self->{request})
-        || refaddr($request) != refaddr($self->{request});
-
-    my $request_state = $connection->{_http_request_state} or return 0;
-    return 0 if !$request_state->{body_done};
-
-    my $wire = Linux::Event::Net::HTTP::_Native::Response1
-        ->build_default_final($request, $body);
-    return 0 if !defined $wire;
-
-    $self->{started} = 1;
-    $self->{ended} = 1;
-    $connection->{_http_response_state} = undef;
-
-    $connection->write($wire);
-
-    $connection->{_http_active_request} = undef;
-    $connection->{_http_active_response} = undef;
-    $connection->{_http_request_state} = undef;
-    $connection->{_http_response_state} = undef;
-
-    $connection->resume_read if $connection->is_read_paused;
-    return 1;
-}
-
 sub end ($self, $bytes = '') {
     die 'end(): response has an Upgrade handoff pending'
         if $self->{upgrade_pending};
     die 'end(): response has already ended' if $self->{ended};
     my $connection = $self->{connection}
         or die 'end(): response is not bound to an active HTTP connection';
-
-    return $self if $self->_try_native_default_final($connection, $bytes);
 
     $connection->_write_response($self, $bytes, 1);
     return $self;
@@ -244,179 +205,34 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Response - response half of an HTTP transaction
-
-=head1 SYNOPSIS
-
-    sub on_request ($self, $req, $res) {
-        $res->status(200);
-        $res->header('Content-Type', 'text/plain');
-        $res->end("hello\n");
-    }
+Linux::Event::Net::HTTP::Response - private transitional HTTP response implementation
 
 =head1 DESCRIPTION
 
-Every successfully dispatched HTTP request receives one Response object created
-and bound by L<Linux::Event::Net::HTTP::Connection>. Applications do not
-construct Response objects and do not pass them back to Connection.
+This Net-prefixed package is retained temporarily while the implementation is
+migrated to L<Linux::Event::HTTP>. New application code should use
+L<Linux::Event::HTTP::Response>.
 
-Response is the writable, transaction-scoped output handle for one HTTP
-response. It is bound to its owning Connection and paired Request. Status and
-headers may be configured until output begins. C<write> streams response bytes;
-C<end> emits optional final bytes and completes the response half of the
-transaction.
+Each dispatched request receives one Response object created and bound by the
+HTTP Connection. Applications configure status and headers, use C<write> for
+streaming output, and use C<end> to complete the response.
 
-The HTTP/1 response head is serialized in XS. Header names and values are
-validated before they can be emitted, including rejection of CR/LF/NUL control
-characters that could otherwise permit response splitting.
-
-=head1 TRANSACTION RELATIONSHIP
-
-C<connection> returns the owning Connection while it is alive. C<request>
-returns the Request paired with this response. The connection reference is weak
-so retaining a completed Response does not retain the socket.
-
-A Connection may serve many request/response transactions over its lifetime;
-a Response represents only one of them. Response output delegates to the bound
-Connection, which owns transport and HTTP/1 ordering state.
+All complete responses now use the same ordinary response state machine. The
+previous native default-response shortcut has been removed from this path so
+complete, streamed, and deferred output share one behavior model.
 
 =head1 METHODS
 
-=head2 status
+The implementation provides C<status>, C<reason>, C<header>, C<add_header>,
+C<header_values>, C<write>, C<end>, C<upgrade>, C<connection>, C<request>,
+C<is_started>, C<is_ended>, and C<is_upgrading>.
 
-    my $status = $res->status;
-    $res->status(404);
+HTTP/1 framing, Content-Length validation, automatic chunked streaming,
+connection persistence, HEAD behavior, and body-forbidden status handling are
+owned by the Connection protocol state machine.
 
-Gets or sets the three-digit status code. It defaults to 200.
+=head1 SEE ALSO
 
-=head2 reason
-
-    my $reason = $res->reason;
-    $res->reason('Not Here');
-
-Gets or sets the optional reason phrase. Passing undef restores the serializer's
-default phrase for the status code.
-
-=head2 header
-
-    $res->header('Content-Type', 'text/plain');
-    my $type = $res->header('Content-Type');
-
-With a value, replaces all existing fields of the same ASCII
-case-insensitive name with one field. Without a value, returns the first
-matching value or undef.
-
-=head2 add_header
-
-    $res->add_header('Set-Cookie', 'a=1');
-    $res->add_header('Set-Cookie', 'b=2');
-
-Appends another field without removing existing fields of the same name.
-
-=head2 header_values
-
-    my @cookies = $res->header_values('Set-Cookie');
-
-Returns all matching values in output order.
-
-=head2 write
-
-    my $accepted = $res->write("hello ");
-    $res->write("world");
-    $res->end("\n");
-
-Begins or continues a streaming response body.
-
-For HTTP/1.1, if Content-Length was not set before the first C<write>, the
-Connection automatically adds C<Transfer-Encoding: chunked> and frames each
-write. C<end> emits any supplied final bytes followed by the terminating zero
-chunk. An empty C<write> emits no chunk and does not terminate the response.
-
-If Content-Length was set explicitly, streaming remains fixed-length and the
-final emitted byte count must match it exactly.
-
-HTTP/1.0 does not support chunked transfer coding. A streaming response without
-Content-Length is therefore close-delimited and the Connection closes after the
-response completes.
-
-The return value mirrors Linux::Event Stream write backpressure: false means the
-bytes were accepted but the configured high watermark has been reached.
-Status and headers become immutable when the first output is committed.
-
-=head2 end
-
-    $res->end("hello\n");
-
-Completes the response. When C<end> is the first body operation and no transfer
-coding was requested, Content-Length is added automatically from the supplied
-byte-string length.
-
-For a response already started with C<write>, C<end> follows the framing mode
-chosen by that first write: fixed-length, HTTP/1.1 chunked, or HTTP/1.0
-close-delimited.
-
-HEAD and body-forbidden status handling is enforced by the connection protocol
-layer. If HTTP persistence requires close, C<end> drains queued output before
-ending the transport write side.
-
-=head2 upgrade
-
-    $res->header('Upgrade', 'websocket');
-    $res->header('Sec-WebSocket-Accept', $accept);
-    $res->upgrade('MyWebSocketConnection');
-
-Completes an HTTP/1.1 protocol switch and hands the same live stream-socket
-object to another L<Linux::Event::IO::Sock::Stream> subclass. C<upgrade> sets
-status 101, supplies C<Connection: Upgrade> when absent, serializes the switching
-response, and uses Linux::Event C<transition_to> for the protocol handoff.
-
-The request must contain C<Connection: Upgrade> and an C<Upgrade> offer, must not
-request connection close, and must have no message body. The response must set
-at least one C<Upgrade> protocol selected from the request offer and cannot use
-C<Content-Length> or C<Transfer-Encoding>.
-
-The actual transition is deferred until the current HTTP callback stack and
-C<on_request_end> have completed. Reads remain paused during that boundary.
-Any bytes already read beyond the HTTP request head are supplied to the target
-protocol, while Linux::Event retains the same socket, TLS transport, output
-queue, backpressure state, deadlines, and application data. The 101 response is
-queued before target-protocol input can run, so target writes remain ordered
-after the switching response.
-
-After C<upgrade> is requested, response metadata and ordinary C<write>/C<end>
-output are locked. Use C<is_upgrading> to distinguish this pending handoff.
-
-=head2 connection
-
-Returns the owning L<Linux::Event::Net::HTTP::Connection> while it remains
-alive.
-
-=head2 request
-
-Returns the L<Linux::Event::Net::HTTP::Request> paired with this response.
-
-=head2 is_started
-
-True after the response head has been committed.
-
-=head2 is_ended
-
-True after C<end> completes the response half of the HTTP transaction, or after
-a pending Upgrade switching response is committed immediately before handoff.
-
-=head2 is_upgrading
-
-True after C<upgrade> has validated and scheduled a protocol handoff but before
-the 101 response has been committed and the live stream has transitioned.
-
-=head1 INTERNAL SERIALIZATION
-
-The private C<_serialize_head> method serializes the HTTP/1 status line and
-field section. It is used by the connection protocol layer and is not the
-application response-writing API.
-
-The serializer rejects invalid field names and control characters, multiple
-C<Content-Length> fields, and a response containing both C<Content-Length> and
-C<Transfer-Encoding>.
+L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Connection>.
 
 =cut
