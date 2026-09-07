@@ -157,10 +157,10 @@ jobs:
           xs_make.write_text(text)
 
           # Remove obsolete loaders/build directories after their code has been merged.
-          subprocess.check_call(['git', 'rm', '-r', 'lib/Linux/Event/HTTP/_Parser'])
-          subprocess.check_call(['git', 'rm', '-r', 'lib/Linux/Event/HTTP/_Native'])
-          subprocess.check_call(['git', 'rm', '-r', 'xschunked'])
-          subprocess.check_call(['git', 'rm', '-r', 'xsresponse1'])
+          subprocess.check_call(['git', 'rm', '-r', '-f', 'lib/Linux/Event/HTTP/_Parser'])
+          subprocess.check_call(['git', 'rm', '-r', '-f', 'lib/Linux/Event/HTTP/_Native'])
+          subprocess.check_call(['git', 'rm', '-r', '-f', 'xschunked'])
+          subprocess.check_call(['git', 'rm', '-r', '-f', 'xsresponse1'])
 
           # Keep MANIFEST exact without introducing this temporary workflow.
           manifest = Path('MANIFEST').read_text().splitlines()
