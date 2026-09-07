@@ -43,6 +43,37 @@ $SIG{PIPE} = 'IGNORE';
 }
 
 {
+    package Linux::Event::Net::HTTP::Bench::EarlyBodyDoneConnection;
+    use parent 'Linux::Event::Net::HTTP::Connection';
+    use Scalar::Util qw(refaddr);
+
+    sub on_request ($self, $request, $response) {
+        $response->end($self->data->{payload});
+        return;
+    }
+
+    sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
+        my $state = $self->{_http_request_state};
+        if ($state
+            && $state->{mode} eq 'none'
+            && !$state->{body_done}
+            && !$self->{_http_on_request_end}
+            && $self->{_http_on_request}
+            && refaddr($handler) == refaddr($self->{_http_on_request})) {
+            # Benchmark-only simulation of the least invasive production
+            # ordering change: when a parsed request is provably bodyless and
+            # no request-end callback exists, expose that completion to
+            # Response->end before invoking the normal on_request callback.
+            $state->{body_done} = 1;
+        }
+
+        return $self->SUPER::_invoke_http_callback(
+            $handler, $request, $response, @extra,
+        );
+    }
+}
+
+{
     package Linux::Event::Net::HTTP::Bench::FastFinalConnection;
     use parent 'Linux::Event::Net::HTTP::_Experiment::FastFinalConnection';
 
@@ -100,15 +131,17 @@ die "repeats must be > 0\n" if $repeats <= 0;
 die "timeout must be > 0\n" if $timeout <= 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @mode = qw(ordinary_request ordinary_request_end fast_final);
+my @mode = qw(ordinary_request ordinary_request_end early_body_done fast_final);
 my %label = (
     ordinary_request     => 'on_request -> Response->end',
     ordinary_request_end => 'on_request_end -> Response->end',
+    early_body_done      => 'early body_done -> on_request end',
     fast_final           => 'integrated fast-final return',
 );
 my %class = (
     ordinary_request     => 'Linux::Event::Net::HTTP::Bench::OrdinaryRequestConnection',
     ordinary_request_end => 'Linux::Event::Net::HTTP::Bench::OrdinaryRequestEndConnection',
+    early_body_done      => 'Linux::Event::Net::HTTP::Bench::EarlyBodyDoneConnection',
     fast_final           => 'Linux::Event::Net::HTTP::Bench::FastFinalConnection',
 );
 my %records;
@@ -117,6 +150,7 @@ say 'Linux::Event::Net::HTTP integrated fast-final experiment';
 say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline response_bytes=$response_bytes repeats=$repeats";
 say 'ordinary_request = on_request($conn,$req,$res) + Response->end before bodyless completion marking';
 say 'ordinary_request_end = no-op on_request + on_request_end($conn,$req,$res) + Response->end';
+say 'early_body_done = ordinary on_request API, but bodyless completion is visible before callback when no request-end handler exists';
 say 'fast_final = on_request_final($conn,$req) returns scalar body before Response allocation';
 
 for my $repeat (1 .. $repeats) {
@@ -124,7 +158,7 @@ for my $repeat (1 .. $repeats) {
     for my $mode (@order) {
         my $row = run_case($mode, $request_wire);
         push @{$records{$mode}}, $row;
-        printf "%-29s repeat=%d %10.1f req/s p50=%8.1f us p95=%8.1f us p99=%8.1f us max=%8.1f us\n",
+        printf "%-31s repeat=%d %10.1f req/s p50=%8.1f us p95=%8.1f us p99=%8.1f us max=%8.1f us\n",
             $label{$mode}, $repeat,
             @{$row}{qw(requests_per_second latency_us_p50 latency_us_p95 latency_us_p99 latency_us_max)};
     }
@@ -132,7 +166,7 @@ for my $repeat (1 .. $repeats) {
 
 say '';
 say 'Median comparison';
-printf "%-29s %12s %12s %12s %12s %12s\n",
+printf "%-31s %12s %12s %12s %12s %12s\n",
     'mode', 'req/s', 'p50 us', 'p95 us', 'p99 us', 'max us';
 my %median;
 for my $mode (@mode) {
@@ -144,18 +178,26 @@ for my $mode (@mode) {
         latency_us_p99 => median(map { $_->{latency_us_p99} } @set),
         latency_us_max => median(map { $_->{latency_us_max} } @set),
     };
-    printf "%-29s %12.1f %12.1f %12.1f %12.1f %12.1f\n",
+    printf "%-31s %12.1f %12.1f %12.1f %12.1f %12.1f\n",
         $label{$mode},
         @{$median{$mode}}{qw(requests_per_second latency_us_p50 latency_us_p95 latency_us_p99 latency_us_max)};
 }
 
-for my $baseline (qw(ordinary_request ordinary_request_end)) {
-    my $gain = 100 * (
-        $median{fast_final}{requests_per_second}
-            / $median{$baseline}{requests_per_second} - 1
-    );
-    printf "fast-final vs %-20s %+.2f%%\n", $baseline, $gain;
+for my $candidate (qw(early_body_done fast_final)) {
+    for my $baseline (qw(ordinary_request ordinary_request_end)) {
+        my $gain = 100 * (
+            $median{$candidate}{requests_per_second}
+                / $median{$baseline}{requests_per_second} - 1
+        );
+        printf "%-15s vs %-20s %+.2f%%\n",
+            $candidate, $baseline, $gain;
+    }
 }
+my $fast_over_early = 100 * (
+    $median{fast_final}{requests_per_second}
+        / $median{early_body_done}{requests_per_second} - 1
+);
+printf "fast_final vs early_body_done      %+.2f%%\n", $fast_over_early;
 
 sub run_case ($mode, $wire) {
     my ($pid, $result_fh, $port) = start_server($mode);
