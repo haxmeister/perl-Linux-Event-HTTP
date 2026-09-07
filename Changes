@@ -7,11 +7,22 @@ Revision history for Linux-Event-HTTP
       bridgeability, and then good performance for protocol-layer work.
     - Move competitive and exploratory HTTP benchmarking out of this distribution;
       perl-Benchmark-Web is the benchmark repository for cross-server work.
-    - Remove benchmark execution from normal and manual CI; CI now focuses on build,
-      behavioral tests, threaded Perl, and distribution integrity.
+    - Remove the in-distribution benchmark tree and benchmark execution from CI; CI
+      now focuses on build, behavioral tests, threaded Perl, and distribution
+      integrity.
     - Add Linux::Event::HTTP public facades while treating the previous
       Linux::Event::Net::HTTP packages as non-public implementation details during
       the namespace migration.
+    - Reject the former benchmark-only on_request_final callback from the supported
+      Linux::Event::HTTP Server and Connection APIs.
+    - Remove on_request_final forwarding from the private Server acceptance adapter.
+    - Remove the native default-response shortcut from ordinary Response->end so
+      complete, streamed, and deferred responses use one response state machine.
+    - Retire and delete the dedicated xsresponse1 extension; the temporary private
+      Response1 compatibility shim now only forces fallback to ordinary Response
+      serialization while the old Connection implementation is being removed.
+    - Remove benchmark-specific native-response and final-response tests while
+      retaining the general response/framing/connection behavioral coverage.
     - Keep HTTP as a protocol library rather than a web application framework.
     - Preserve Linux::Event ownership of transport, TLS, buffering, backpressure,
       deadlines, event dispatch, and protocol handoff primitives.
@@ -30,5 +41,3 @@ Revision history for Linux-Event-HTTP
       Transfer-Encoding, persistence, and ambiguous request framing.
     - Retain chunked request decoding, response framing, Expect: 100-continue,
       keep-alive, pipelining, and TLS integration correctness coverage.
-    - Existing benchmark-specific implementation shortcuts remain under review and
-      are not part of the newly documented supported public API.
