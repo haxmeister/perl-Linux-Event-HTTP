@@ -37,6 +37,7 @@ Updated: 2026-09-06 (America/Chicago)
 - `1ea8d91` - `Add libh2o comparison target`
 - `cb99a0c` - `Benchmark libh2o upper bound in PR CI`
 - `4fa08af` - `Build libh2o benchmark against evloop API`
+- `b9f6ba7` - `Checkpoint libh2o feasibility spike`
 
 `bd11439` and `a0be02c` are benchmark-only changes. They do not change the production HTTP driver.
 
@@ -127,30 +128,9 @@ The semantic fast path proves that stripping generic body handling can recover o
 
 This satisfies the earlier stop condition: the remaining generic-driver Perl headroom is too small to justify another production fast path.
 
-## Cross-server status - CI run 34079490485
+## libh2o feasibility spike - CI run 34080176589
 
-Same-run directional benchmark, 10k measured, 1k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
-
-- Linux::Event::Net::HTTP: `32,457.4 req/s`
-- Feersum: `72,728.9 req/s`
-- Go net/http: `58,536.0 req/s`
-- Node.js: `22,879.7 req/s`
-- aiohttp: `19,358.4 req/s`
-- Mojolicious: `1,731.8 req/s`
-
-Ratios on this runner:
-
-- Linux::Event is about `44.6%` of Feersum; Feersum is about `2.24x` faster.
-- Linux::Event is about `55.4%` of Go; Go is about `1.80x` faster.
-- Linux::Event remains faster than Node.js, aiohttp, and Mojolicious on throughput.
-
-GitHub runner absolute throughput varies heavily. Use same-run ratios and within-run deltas, not absolute comparisons between separate runs.
-
-CI run `34079490485` is fully green, including latest threaded Perl.
-
-## libh2o feasibility spike - in progress
-
-The smallest useful upper-bound experiment is now implemented as an explicit-only benchmark competitor:
+The smallest useful upper-bound experiment is implemented as an explicit-only benchmark competitor:
 
 - `bench/servers/libh2o-http.c` embeds libh2o directly.
 - H2O owns HTTP parsing, keep-alive, protocol transaction state, and response serialization.
@@ -160,43 +140,68 @@ The smallest useful upper-bound experiment is now implemented as an explicit-onl
 - H2O is not in the default competitor list and is not a project/runtime dependency.
 - PR diagnostic CI installs Ubuntu 24.04 `libh2o-evloop-dev` and includes H2O in smoke/directional comparisons.
 
-### First libh2o CI attempt - run 34080016461
+The first attempt, CI run `34080016461`, failed only while compiling the new H2O benchmark because Ubuntu's `libh2o-evloop.pc` does not define the backend macro and H2O headers defaulted to libuv. Commit `4fa08af` explicitly defines `H2O_USE_LIBUV 0`. All project tests were already green in the failed run.
 
-All normal project jobs, including latest threaded Perl, were green. The comparison job reached the H2O smoke and failed while compiling only the new benchmark server:
+Corrected CI run `34080176589` is fully green, including the H2O smoke and latest threaded Perl.
 
-`/usr/include/h2o/socket/uv-binding.h:25:10: fatal error: uv.h: No such file or directory`
+Same-run directional benchmark, 10k measured, 1k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
 
-This was not a Linux::Event::Net::HTTP failure. Ubuntu's `libh2o-evloop.pc` supplies include/link flags but does not define the H2O backend macro; H2O headers therefore defaulted to libuv. Commit `4fa08af` fixes the benchmark by explicitly defining `H2O_USE_LIBUV 0` before including `h2o.h`.
+- Linux::Event::Net::HTTP: `51,256.1 req/s`
+- Feersum: `98,551.3 req/s`
+- libh2o evloop: `97,387.0 req/s`
+- Go net/http: `80,660.8 req/s`
+- Node.js: `40,562.7 req/s`
+- aiohttp: `37,221.6 req/s`
+- Mojolicious: `2,957.4 req/s`
 
-Corrected CI run `34080176589` is currently in progress. Do not treat the failed first smoke as a performance result.
+Same-run ratios:
 
-### libh2o architecture finding already established
+- libh2o is about `1.90x` Linux::Event.
+- Feersum is about `1.92x` Linux::Event.
+- libh2o is about `98.8%` of Feersum; they are effectively in the same throughput tier on this test.
+- Linux::Event remains ahead of Node.js, aiohttp, and Mojolicious.
+
+### Critical same-run transaction-ladder observation
+
+The transaction ladder in the same CI run measured:
+
+- parsed Request + prebuilt write: `87,584.9 req/s`
+- + Response binding: `80,496.5 req/s`
+- + transaction state: `75,450.4 req/s`
+- + guarded callbacks: `66,594.1 req/s`
+- fused callbacks: `70,414.9 req/s`
+- full HTTP transaction: `51,533.5 req/s`
+
+This is the strongest architectural result so far:
+
+- the existing pico parser + Linux::Event transport baseline is already about `89.9%` of libh2o and `88.9%` of Feersum on the same runner;
+- therefore replacing pico or Linux::Event's socket loop with libh2o cannot explain most of the current full-stack gap;
+- most of the gap appears after parsing, in Perl transaction/API machinery: Response binding, active transaction state, guarded callback boundaries, response eligibility/build/mark/commit work, and generic lifecycle semantics.
+
+### libh2o architecture finding
 
 H2O's evloop is not a generic externally-driven readiness callback abstraction. On Linux its evloop backend directly owns socket polling state and invokes `epoll_ctl` / `epoll_wait` itself. Therefore libh2o does **not** drop cleanly into the existing Linux::Event reactor as a parser-only replacement.
 
-If the upper-bound performance is compelling, the next decision must explicitly address loop ownership. Plausible choices are:
+Because standalone libh2o merely ties Feersum before any Perl callback bridge or Linux::Event integration cost, and our current parser/transport baseline is already within roughly 10% of it, **do not pursue production libh2o integration now**. It would trade our current small pico/parser native surface for substantial event-loop integration complexity without attacking the largest measured cost bucket.
 
-1. H2O owns the HTTP loop and Linux::Event is integrated/nested around it.
-2. Build a deliberate small socket/backend adapter for H2O and accept that native maintenance burden.
-3. Reject libh2o integration if preserving Linux::Event as the reactor would require too much private/backend-specific glue.
-
-Do not assume libh2o is a production solution merely because its standalone benchmark is fast.
+libh2o remains useful as a benchmark upper bound and as a future HTTP/2/HTTP/3 architecture reference, but it is not currently justified as the HTTP/1 performance solution.
 
 ## Current conclusions
 
 1. Native default-final response remains the worthwhile production candidate from this experiment.
 2. Callback fusion is measurable but remains a semantic-risk experiment, not an automatic production change.
-3. Response allocation, weak references, cached bodyless state, parser `eval`, Expect checking, and generic Perl bodyless-driver branches are now individually bounded.
-4. No remaining Perl-side micro-optimization has demonstrated enough gain to justify meaningful extra complexity.
+3. Response allocation, weak references, cached bodyless state, parser `eval`, Expect checking, and generic Perl bodyless-driver branches are individually bounded.
+4. No remaining small Perl micro-optimization has demonstrated enough gain by itself to justify complexity.
 5. More bespoke HTTP XS/C is not justified by these measurements.
-6. The generic bodyless-driver experiment closes the current Perl-driver optimization path: the best semantic duplicate recovered only about `2.44%` versus full HTTP.
-7. libh2o has a small embedding API, but its event-loop ownership is the main architectural integration concern.
-8. We need the corrected same-run libh2o number before deciding whether even a thin Perl bridge experiment is worth doing.
+6. The generic bodyless-driver experiment closes the duplicated-driver path: the semantic duplicate recovered only about `2.44%` in the controlled run.
+7. libh2o's standalone ceiling is real but essentially identical to Feersum's and only about 11% above our parser+raw-write stage.
+8. The largest remaining opportunity is architectural simplification of the Perl transaction API/control path, not replacing pico or the Linux::Event reactor.
+9. PR #13 and PR #11 remain unmerged.
 
 ## Immediate next work
 
-1. Finish corrected CI run `34080176589` and capture the same-run libh2o/Linux::Event/Feersum/Go directional result.
-2. If H2O's native ceiling is materially higher, estimate/measure the smallest Perl callback bridge cost before considering production integration.
-3. Evaluate whether Linux::Event can host or nest H2O without duplicating epoll ownership or creating a large custom socket backend.
-4. If the loop integration cost is large, prefer retaining the current pico-based architecture rather than trading custom HTTP code for a fragile H2O integration layer.
+1. Add a benchmark-only Feersum-shaped path: one parsed Request object, one guarded Perl application callback, and a direct default-final response operation, omitting the separately allocated/bound Response object and generic active-transaction machinery.
+2. Keep normal parser/error/size/Expect checks in a second semantic version of that stage if the first ceiling is promising.
+3. Compare it against the existing `87.6k` parsed/write baseline, `70.4k` fused-callback stage, `51.5k` full HTTP, `97.4k` libh2o, and `98.6k` Feersum.
+4. Use that result to decide whether a lower-overhead public API shape could recover meaningful performance without adding native code. Do not change the production API until the benchmark proves the value and semantics are reviewed.
 5. Keep PR #13 and PR #11 unmerged until explicit authorization.
