@@ -28,6 +28,7 @@ Relevant commits:
 - `cbda5d4` - `Match bodyless transaction benchmark to production state reuse`
 - `4bcdbb8` - `Run transaction ladder in PR diagnostics`
 - `195c6ce` - `Add HTTP object allocation cost benchmark`
+- `a568fed` - `Run HTTP object cost diagnostic in PR CI`
 
 The transaction ladder is:
 
@@ -100,9 +101,11 @@ Median results after correcting the bodyless request-state benchmark to match pr
 - + public `Response->end`: `93,574.2 req/s` (`-2.62%`)
 - full production HTTP: `74,616.8 req/s` (`-20.26%` from end stage)
 
-Key correction: the older ladder dramatically overstated transaction-state cost because it allocated a new state hash for every bodyless GET. Production already reuses `_http_bodyless_state`. After fixing the benchmark, the state cost is much smaller than the old result implied.
+Key correction: the older ladder dramatically overstated transaction-state cost because it allocated a new state hash for every bodyless GET. Production already reuses `_http_bodyless_state`.
 
-## Cross-server directional comparison from the same CI run
+IMPORTANT BENCHMARK CAVEAT: the current `end` rung uses fused callbacks, while full production HTTP uses the ordinary guarded callback path. Therefore the reported `end -> http` gap is not pure `_drive_http1` overhead; it includes the loss of the fusion advantage. This must be corrected before treating the full 20% gap as driver cost.
+
+## Cross-server directional comparison - CI run 34078143517
 
 Configuration:
 
@@ -122,55 +125,72 @@ Median throughput:
 - Python aiohttp: `40,607.5 req/s`
 - Mojolicious: `3,629.2 req/s`
 
-Linux::Event::Net::HTTP is therefore about:
+Linux::Event::Net::HTTP was `52.9%` of Feersum throughput and `63.4%` of Go throughput in this particular run. Do not compare these absolute CI numbers directly to older local-machine runs.
 
-- `52.9%` of Feersum throughput (Feersum ~`1.89x` faster)
-- `63.4%` of Go throughput (Go ~`1.58x` faster)
-- `28.2%` faster than Node on throughput in this run
-- `88.8%` faster than aiohttp on throughput in this run
+## Object/state cost benchmark - CI run 34078368402
 
-Do not compare these absolute CI numbers directly to older local-machine runs; use same-run ratios for directional conclusions.
+Command:
 
-All three ordinary CI test jobs passed, including latest threaded Perl.
+```text
+perl -Mblib bench/run-http-object-cost.pl \
+  --iterations=300000 \
+  --warmup=30000 \
+  --repeats=5
+```
 
-## New object/state cost benchmark
+Environment: Ubuntu 24.04 GitHub runner, Perl 5.44.0 non-threaded.
 
-Commit `195c6ce` adds `bench/run-http-object-cost.pl` to isolate inexpensive pure-Perl design questions before any production rewrite.
+Median results:
 
-It measures:
+- no-op floor: `78.9 ns/op`
+- Response-shaped blessed hash, strong connection: `661.1 ns/op`
+- same hash plus `weaken(connection)`: `733.7 ns/op`
+- production `Response->_new_bound`: `1043.5 ns/op`
+- eight-slot blessed-array proxy, strong connection: `345.3 ns/op`
+- eight-slot blessed-array proxy plus weak connection: `391.1 ns/op`
+- `_new_request_state` allocation for bodyless GET: `771.6 ns/op`
+- production-style cached bodyless-state reset: `150.2 ns/op`
+- active transaction assign + clear with cached objects: `504.6 ns/op`
 
-- benchmark loop/no-op floor
-- Response-shaped blessed hash allocation with a strong connection reference
-- the same hash plus `weaken(connection)`
-- production `Response->_new_bound`
-- an eight-slot blessed-array Response representation proxy, strong and weak variants
-- `_new_request_state` allocation for the bodyless GET
-- production-style cached bodyless-state reset
-- active transaction hash assignment/clear using cached objects
+Derived costs:
 
-The array cases are representation proxies only; no production Response methods have been ported. Their purpose is to determine whether an array-backed internal representation has enough allocation advantage to justify a real prototype.
+- `weaken(connection)` adds only about `72.6 ns` to the Response-shaped hash allocation.
+- production `_new_bound` is about `309.8 ns` slower than the equivalent manually inlined weak hash creation; this is largely constructor/call-path overhead, not weak-reference cost.
+- the weak array proxy is about `342.6 ns` faster than the weak hash proxy (`46.7%` lower representation/allocation cost).
+- the weak array proxy is about `652.4 ns` faster than production `_new_bound` (`62.5%` lower in this microbenchmark).
+- cached bodyless state reset is about `5.1x` faster than allocating `_new_request_state`, saving about `621 ns`; production already gets this benefit.
 
-No production code is changed by this benchmark.
+Conclusion: do NOT rewrite Response around arrays yet. The maximum measured constructor/representation saving is well under `1 us/request`; that can matter later, but it is not large enough to justify a broad internal representation rewrite before we finish isolating control-flow cost. `weaken` is definitively not a worthwhile optimization target.
+
+The same CI run had much lower absolute server throughput than run 34078143517 because GitHub-hosted runner performance varies substantially:
+
+- Linux::Event::Net::HTTP: `31,263.7 req/s`
+- Feersum: `73,160.5 req/s`
+- Go net/http: `57,488.4 req/s`
+
+Same-run ratios were Linux::Event at `42.7%` of Feersum and `54.4%` of Go. This variance reinforces that CI absolute req/s values are directional only; microbenchmark deltas and same-run ratios are more useful than cross-run absolute comparisons.
+
+All normal CI jobs passed again, including latest threaded Perl.
 
 ## Current conclusions
 
-1. We have made real headway: on this controlled CI runner the gap to Feersum is now under 2x, not the 3-5x picture seen in earlier local runs.
-2. Response binding is measurable but only about a 10% throughput step in this ladder.
-3. Correct production-style transaction-state handling is another ~10% step, not the enormous cost suggested by the old benchmark.
-4. Guarded callback dispatch costs about 14.5% relative to the preceding rung; benchmark-only fusion recovers about 8.4%, but production semantic preservation remains a concern.
-5. Native response eligibility/build/mark/commit/end after fused callbacks is comparatively modest in aggregate.
-6. The largest remaining unexplained gap is `public Response->end -> full Connection::_drive_http1`, about 20% in this ladder. That means control-flow/bookkeeping in the real driver is now a major target.
-7. Do not respond to the remaining gap by adding more custom XS/C yet. There are still significant Perl-side costs to isolate.
-8. `libh2o` is now an explicit fallback architecture candidate if the only route to Feersum-class performance is extensive bespoke C/XS. Any libh2o evaluation should compare maintenance burden, HTTP/1+2 capability, integration semantics, and measured throughput—not just peak speed.
+1. The native default-final response fast path is a real end-to-end improvement and should remain the candidate under evaluation.
+2. `weaken(connection)` is negligible at ~73 ns and should be ignored as an optimization target.
+3. An array-backed Response could save roughly 0.65 us per construction versus current `_new_bound`, but that is not enough to justify the semantic/code churn yet.
+4. Production bodyless-state reuse is already doing the right thing and avoids roughly 0.62 us/request versus allocation.
+5. Callback guarding remains a meaningful Perl-side cost; fusion benchmarks recover roughly 8-13% at the corresponding ladder rung, but production error/callback semantics must not be weakened casually.
+6. The previously reported ~20% `end -> full HTTP` gap is contaminated by fused-vs-guarded callback differences. Correct this benchmark before attributing the entire gap to `_drive_http1`.
+7. There is still enough plausible Perl-side/control-flow headroom that adding more custom XS/C is premature.
+8. `libh2o` remains an explicit fallback architecture candidate if achieving the desired performance requires a growing bespoke native HTTP implementation.
 
 ## Immediate next work
 
-1. Run `bench/run-http-object-cost.pl` on the same CI class and record medians.
-2. Use the result to decide whether `weaken`, hash representation, or state allocation deserves any production prototype.
-3. Inspect the real `_drive_http1` bodyless GET path for work absent from the `end` ladder stage: input-buffer handling, `_expect_continue`, body-mode accesses, driving/dispatch flags, repeated active-transaction checks, finalize/resume/loop control.
-4. Build cumulative benchmark rungs for those missing production-driver operations before changing production code.
-5. Prefer pure-Perl representation/control-flow changes first. Consider new custom XS only if a specific measured residual remains materially large.
-6. If pure-Perl headroom proves insufficient, run a focused libh2o feasibility benchmark before committing to additional bespoke native HTTP machinery.
+1. Correct the lifecycle comparison so a public `Response->end` stage uses the same guarded callback semantics as production; retain fused end as a separate experimental stage if useful.
+2. Re-measure the true guarded-end -> full `_drive_http1` gap.
+3. Isolate common bodyless GET driver work absent from the staged path: `_expect_continue`, `_http_driving`, repeated closing/is_closed/active checks, and loop/branch control.
+4. Prefer a benchmark-only pure-Perl driver simplification or common-bodyless fast branch before changing Response representation.
+5. Only promote an optimization if it preserves semantics and shows a meaningful end-to-end gain.
+6. If pure-Perl/control-flow work stops yielding useful gains, run a focused `libh2o` feasibility/benchmark experiment before adding more bespoke XS/C.
 
 ## Important architecture constraints
 
