@@ -29,8 +29,9 @@ Updated: 2026-09-06 (America/Chicago)
 - `503eb9f` - `Match end-stage callback semantics to production`
 - `a2cd2cd` - `Add checked HTTP transaction benchmark stage`
 - `4746a80` - `Benchmark production request checks separately`
+- `64771bc` - `Split HTTP request-check microcosts`
 
-The transaction ladder contract is now version 4:
+The transaction ladder contract is version 4:
 
 `parse -> bound -> state -> callbacks -> fused -> eligibility -> build -> mark -> commit -> end -> checked -> full HTTP`
 
@@ -55,17 +56,7 @@ Conclusion: native default-final response is a real end-to-end win. Callback fus
 
 ## Request-check / driver split - CI run 34078945128
 
-Environment:
-
-- Ubuntu 24.04 GitHub runner
-- Perl 5.44.0 non-threaded
-- Linux::Event 0.112
-- 20,000 measured requests
-- 2,000 warmup
-- 100 connections
-- pipeline=1
-- response=32 bytes
-- 3 rotated repeats
+Ubuntu 24.04, Perl 5.44.0 non-threaded, Linux::Event 0.112, 20k measured + 2k warmup, 100 connections, pipeline=1, response=32B, 3 rotated repeats.
 
 Median ladder:
 
@@ -78,7 +69,7 @@ Median ladder:
 - native wire build: `40,286.0` (`-8.97%`)
 - response marking: `40,691.7` (`+1.01%`, noise)
 - transaction commit: `39,659.6` (`-2.54%`)
-- guarded public `Response->end`: `37,338.7` (`-5.85%` from commit; commit still follows fused callback semantics)
+- guarded public `Response->end`: `37,338.7`
 - production request checks: `35,540.3`
 - full production HTTP: `33,267.4`
 
@@ -89,10 +80,10 @@ Crucial isolated deltas:
 
 Interpretation:
 
-- Roughly 4.8% of the remaining common-path throughput cost is attributable to production parser/error/request-validation scaffolding added by the checked rung: parser `eval`, incomplete/error branching, max-head validation, and `_expect_continue`.
-- Roughly another 6.4% remains in generic `_drive_http1` loop/state/control-flow work not present in the staged checked server.
+- About 4.8% of the remaining common-path throughput cost is attributable to production parser/error/request-validation scaffolding: parser `eval`, incomplete/error branching, max-head validation, and `_expect_continue`.
+- About another 6.4% remains in generic `_drive_http1` loop/state/control-flow work not present in the staged checked server.
 - There is no single huge driver hotspot left. The residual is split into two moderate Perl-side/control-flow buckets.
-- This does **not** justify adding more custom XS/C. The next useful step is to split the 4.8% request-check bucket with microbenchmarks, then decide whether a semantic-safe Perl common-bodyless path is worthwhile for the 6.4% driver bucket.
+- This does not justify adding more custom XS/C.
 
 Latency medians:
 
@@ -100,9 +91,9 @@ Latency medians:
 - checked: p50 `2,714.9 us`, p95 `2,867.9 us`, p99 `5,451.9 us`
 - full HTTP: p50 `2,906.1 us`, p95 `3,071.1 us`, p99 `5,825.0 us`
 
-## Cross-server result from the same CI run 34078945128
+## Cross-server result from CI run 34078945128
 
-10,000 measured, 1,000 warmup, 100 connections, pipeline=1, response=32B, 3 repeats:
+10k measured, 1k warmup, 100 connections, pipeline=1, response=32B, 3 repeats:
 
 - Linux::Event::Net::HTTP: `32,481.0 req/s`
 - Feersum: `73,447.3`
@@ -111,17 +102,11 @@ Latency medians:
 - aiohttp: `19,549.5`
 - Mojolicious: `1,750.2`
 
-Same-run ratios:
+Same-run ratios: Linux::Event was about `44.2%` of Feersum and `55.7%` of Go. GitHub-hosted runner performance varies substantially; use same-run ratios and within-run stage deltas, not absolute cross-run req/s.
 
-- Linux::Event is about `44.2%` of Feersum throughput; Feersum ~`2.26x` faster.
-- Linux::Event is about `55.7%` of Go throughput; Go ~`1.80x` faster.
-- Linux::Event remains faster than Node.js and aiohttp on throughput in this run.
+## Object/state microbenchmark baseline
 
-GitHub-hosted runner performance varies substantially. Never compare absolute req/s across separate runners; use same-run ratios and within-run stage deltas.
-
-## Object/state microbenchmark
-
-The latest run reconfirmed prior results:
+The latest pre-split run reconfirmed:
 
 - no-op: `75.6 ns/op`
 - Response-shaped hash, strong connection: `659.6 ns`
@@ -134,27 +119,37 @@ The latest run reconfirmed prior results:
 
 Conclusions: `weaken` is negligible; an array Response might save ~0.6 us/request but is not worth rewriting yet; production already benefits from cached bodyless state.
 
+## Current microbenchmark experiment
+
+Commit `64771bc` extends `bench/run-http-object-cost.pl` without changing production code. New cases isolate:
+
+- `parse_direct`: pico `parse_request` / native Request construction with no Perl `eval`
+- `parse_eval`: same parse inside the production-style `eval` boundary
+- `request_consumed`: `_consumed`
+- `request_body_mode`: `body_mode`
+- `request_http_version`: `http_version`
+- `expect_header_values`: `header_values('Expect')` on a normal GET without Expect
+- `expect_continue`: production `_expect_continue` on the same request
+
+The existing CI comparison job already runs this benchmark, so the branch push will produce nanosecond medians for the new cases.
+
 ## Current conclusions
 
 1. Native default-final response is worthwhile and should remain the candidate.
 2. Response allocation and weak-reference handling are not dominant.
 3. Bodyless state reuse is already correct.
 4. Guarded callback dispatch is measurable, but fusion remains a semantic-risk experiment rather than an automatic production change.
-5. The production-driver residual is now decomposed: about 4.8% request-check scaffolding plus about 6.4% generic driver control flow on the latest run.
-6. There is still plausible Perl-side headroom, but optimization should now be surgical rather than broad.
+5. The production-driver residual is decomposed into about 4.8% request-check scaffolding plus about 6.4% generic driver control flow on the latest run.
+6. Optimization should now be surgical rather than broad.
 7. More bespoke XS/C is premature.
 8. `libh2o` remains the fallback architecture if useful progress would otherwise require substantial custom native HTTP code.
 
 ## Immediate next work
 
-1. Extend the object/hot-path microbenchmark to split the 4.8% request-check bucket into:
-   - direct `parse_request`
-   - `parse_request` inside the production-style `eval`
-   - `_expect_continue` for a normal GET with no `Expect` header
-   - relevant Request accessors such as `_consumed`, `body_mode`, `http_version`, and `header_values('Expect')`
-2. Run those cases in CI and update this file immediately with nanosecond-level medians.
-3. If `_expect_continue` dominates, look for a semantic-safe Perl optimization; do not simply skip `Expect` handling for bodyless requests because unsupported expectations can still require a 417 response.
-4. If parser `eval` dominates, do not remove error handling casually; first quantify whether a safer parser API adjustment is justified.
-5. After the request-check split, prototype a benchmark-only pure-Perl common-bodyless driver path only if the remaining 6.4% control-flow bucket appears recoverable without duplicating large amounts of protocol logic.
-6. Only consider native changes if a specific residual remains large and cannot be removed cleanly in Perl.
-7. If that point is reached, benchmark a focused `libh2o` integration before adding more bespoke XS/C.
+1. Let CI measure commit `64771bc` and record the nanosecond medians immediately.
+2. Compare `parse_direct -> parse_eval` to isolate exception-boundary cost.
+3. Compare `expect_header_values` with `expect_continue` to determine whether Expect header lookup or wrapper logic dominates.
+4. Use `_consumed`, `body_mode`, and `http_version` numbers to estimate smaller request-accessor contributions.
+5. If request checks contain a worthwhile semantic-safe Perl optimization, prototype it benchmark-only first.
+6. Then address the remaining ~6.4% generic driver bucket with a benchmark-only common-bodyless path only if it avoids large protocol-logic duplication.
+7. Only consider native changes if a specific residual remains large and cannot be removed cleanly in Perl; at that point evaluate `libh2o` before adding more bespoke XS/C.
