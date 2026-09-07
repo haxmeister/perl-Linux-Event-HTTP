@@ -30,8 +30,10 @@ Updated: 2026-09-06 (America/Chicago)
 - `a2cd2cd` - `Add checked HTTP transaction benchmark stage`
 - `4746a80` - `Benchmark production request checks separately`
 - `64771bc` - `Split HTTP request-check microcosts`
+- `bd11439` - `Add semantic bodyless driver benchmark stage`
+- `a0be02c` - `Measure semantic bodyless HTTP driver candidate`
 
-No production HTTP implementation changed in the recent request-check benchmark commits.
+`bd11439` and `a0be02c` are benchmark-only changes. They do not change the production HTTP driver.
 
 ## Native final-response result
 
@@ -50,114 +52,113 @@ Controlled same-host end-to-end run, 100k requests, 100 connections, pipeline=1,
 
 Conclusion: native default-final response is a real end-to-end win. Callback fusion adds a smaller increment and must not be promoted unless callback/error semantics remain equivalent.
 
-## Production request-check / driver split
+## Request-check bucket
 
-CI run `34078945128` first isolated the remaining guarded-end gap:
+CI run `34079189363` split the normal GET request-validation cost:
 
-- guarded public `Response->end`: `37,338.7 req/s`
-- production request checks: `35,540.3`
-- full production HTTP: `33,267.4`
-- end -> checked: `-4.82%`
-- checked -> full HTTP: `-6.40%`
+- parser direct: `613.5 ns/op`
+- parser inside production-style `eval`: `742.7 ns/op`
+- `_expect_continue` common no-Expect path: `334.5 ns/op`
+- parser `eval` overhead: about `129 ns/request`
+- parser `eval` + no-Expect checking together: about `0.385 us/request`
 
-This showed two moderate buckets rather than one large hotspot: request validation and generic `_drive_http1` control flow.
-
-## Request-check microbenchmark - CI run 34079189363
-
-Commit `64771bc` extended `bench/run-http-object-cost.pl` to split the request-validation cost. Ubuntu 24.04, Perl 5.44.0 non-threaded, 300k iterations, 30k warmup, 5 rotated repeats.
-
-Median microcosts:
-
-- no-op benchmark floor: `78.8 ns/op`
-- direct pico `parse_request`: `613.5 ns/op`
-- same parse inside production-style Perl `eval`: `742.7 ns/op`
-- `Request->_consumed`: `163.1 ns/op`
-- `Request->body_mode`: `192.5 ns/op`
-- `Request->http_version`: `243.6 ns/op`
-- `Request->header_values('Expect')` with no Expect header: `219.7 ns/op`
-- production `_expect_continue` with no Expect header: `334.5 ns/op`
-
-Derived results:
-
-- Parser exception boundary overhead: `742.7 - 613.5 = 129.2 ns/request`.
-- Full normal-GET `_expect_continue` work above the common benchmark-call floor is about `334.5 - 78.8 = 255.7 ns/request`.
-- `_expect_continue` wrapper work beyond the underlying `header_values('Expect')` call is about `114.8 ns/request`.
-- Parser `eval` plus the no-Expect check therefore account for only about `0.385 us/request` in this microbenchmark.
-
-The same CI run's transaction ladder was internally consistent:
-
-- guarded public end: `44,418.1 req/s`
-- checked: `43,402.2` (`-2.29%`)
-- full HTTP: `39,534.9` (`-8.91%` from checked)
-
-The end -> checked wall-cost difference on this run is about `0.53 us/request`, which is reasonably explained by the ~`0.385 us` parser-eval + Expect microcost plus the remaining branch/max-head/error scaffolding.
-
-### Request-check conclusion
-
-**Do not optimize this bucket in C/XS.**
-
-- Removing the parser `eval` would at best target roughly `0.13 us/request` and would weaken/complicate error semantics.
-- Folding Expect detection into native Request state could at best avoid roughly `0.26 us/request` on the common no-Expect case.
-- Even recovering both completely would be only around `0.4 us/request`, roughly a low-single-digit end-to-end gain on these runs and not worth extra native API/state complexity at this point.
-- Keep the production request validation semantics intact and move on.
-
-This is important strategically: the current benchmark does **not** justify extending custom parser C merely to cache Expect state or avoid the Perl eval boundary.
+Conclusion: do not move request checks into C/XS. The recoverable common-path work is too small relative to semantic/native complexity.
 
 ## Object/state baseline
 
-Latest same-run medians remain similar to prior measurements:
+Representative medians from the diagnostic runs:
 
-- Response-shaped hash strong: `629.8 ns`
-- same + weak connection: `677.6 ns`
-- production `Response->_new_bound`: `985.5 ns`
-- weak array proxy: `379.2 ns`
-- `_new_request_state` bodyless allocation: `728.3 ns`
-- cached bodyless-state reset: `155.2 ns`
-- active transaction assign + clear: `500.1 ns`
+- production `Response->_new_bound`: about `1.0 us`
+- weak-reference overhead is small
+- weak array Response proxy: about `0.39 us`
+- cached bodyless request-state reset: about `0.15 us`
+- active transaction assign + clear: about `0.47-0.50 us`
 
-Conclusions: `weaken` is negligible; an array Response could save roughly 0.6 us/request but is not worth a representation rewrite yet; production bodyless-state reuse is already correct.
+Conclusion: object representation/state work contains some measurable cost, but no isolated item justifies a broad representation rewrite.
 
-## Cross-server status - CI run 34079189363
+## Semantic bodyless driver experiment - CI run 34079490485
 
-Same run, 10k measured, 1k warmup, 100 connections, pipeline=1, response=32B, 3 repeats:
+Commits `bd11439` and `a0be02c` implemented the handoff's requested benchmark-only bodyless common-path driver. It preserves:
 
-- Linux::Event::Net::HTTP: `40,061.2 req/s`
-- Feersum: `76,037.5`
-- Go net/http: `60,882.4`
-- Node.js: `30,907.4`
-- aiohttp: `28,379.8`
-- Mojolicious: `2,134.2`
+- parser `eval` / protocol-error boundary
+- request-head limit checking
+- Expect validation
+- production cached bodyless-state reuse
+- both guarded callback invocations
+- post-callback connection/transaction checks
+- public/native-final `Response->end`
 
-Same-run ratios:
+It omits generic body-mode branches/state machinery once the benchmark has established the persistent GET request is bodyless.
 
-- Linux::Event is about `52.7%` of Feersum throughput; Feersum ~`1.90x` faster.
-- Linux::Event is about `65.8%` of Go throughput; Go ~`1.52x` faster.
-- Linux::Event remains faster than Node.js and aiohttp on throughput.
+Ubuntu 24.04, Perl 5.44.0 non-threaded, 20k measured, 2k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
+
+- guarded public end: `37,054.3 req/s`
+- production request checks: `35,229.5 req/s`
+- semantic bodyless driver: `34,248.5 req/s`
+- full production `_drive_http1`: `33,433.6 req/s`
+
+Step deltas:
+
+- end -> checked: `-4.92%`
+- checked -> bodyless: `-2.78%`
+- bodyless -> full HTTP: `-2.38%`
+- bodyless throughput advantage over full HTTP: about `+2.44%`
+
+Wall-cost interpretation from the medians:
+
+- checked: about `28.39 us/request`
+- bodyless: about `29.20 us/request`
+- full HTTP: about `29.91 us/request`
+- generic checked -> full driver overhead: about `1.53 us/request`
+- semantic bodyless path removes only about `0.71 us/request`, roughly half of that bucket
+
+### Bodyless-driver conclusion
+
+**Stop pursuing a duplicated production bodyless Perl driver.**
+
+The semantic fast path proves that stripping generic body handling can recover only about a 2.4% end-to-end throughput gain on this controlled run. A production implementation would also need entry/fallback logic and permanent duplicated control flow, so its real gain would likely be smaller while maintenance and semantic divergence risk would increase substantially.
+
+This satisfies the earlier stop condition: the remaining generic-driver Perl headroom is too small to justify another production fast path.
+
+## Cross-server status - CI run 34079490485
+
+Same-run directional benchmark, 10k measured, 1k warmup, 100 connections, pipeline=1, 32-byte response, 3 repeats:
+
+- Linux::Event::Net::HTTP: `32,457.4 req/s`
+- Feersum: `72,728.9 req/s`
+- Go net/http: `58,536.0 req/s`
+- Node.js: `22,879.7 req/s`
+- aiohttp: `19,358.4 req/s`
+- Mojolicious: `1,731.8 req/s`
+
+Ratios on this runner:
+
+- Linux::Event is about `44.6%` of Feersum; Feersum is about `2.24x` faster.
+- Linux::Event is about `55.4%` of Go; Go is about `1.80x` faster.
+- Linux::Event remains faster than Node.js, aiohttp, and Mojolicious on throughput.
 
 GitHub runner absolute throughput varies heavily. Use same-run ratios and within-run deltas, not absolute comparisons between separate runs.
 
-All standard CI jobs remain green, including latest threaded Perl.
+CI run `34079490485` is fully green, including latest threaded Perl.
 
 ## Current conclusions
 
-1. Native default-final response is worthwhile and should remain the candidate.
-2. Response allocation, weak references, bodyless state, parser `eval`, and normal no-Expect checking are now individually quantified; none is large enough to justify a broad/native rewrite.
-3. The request-check bucket is effectively closed for now: there is only about 0.4-0.5 us/request of common-path work there, and removing it would cost semantic/native complexity.
-4. The most promising remaining target is the **generic `_drive_http1` control-flow bucket**, measured around 6-9% after request checks depending on runner.
-5. Guarded callback dispatch is also measurable, but callback fusion remains a semantic-risk experiment rather than an automatic production change.
-6. More bespoke XS/C is premature.
-7. `libh2o` remains the fallback architecture if the remaining performance gap ultimately requires substantial custom native HTTP code.
+1. Native default-final response remains the worthwhile production candidate from this experiment.
+2. Callback fusion is measurable but remains a semantic-risk experiment, not an automatic production change.
+3. Response allocation, weak references, cached bodyless state, parser `eval`, Expect checking, and generic Perl bodyless-driver branches are now individually bounded.
+4. No remaining Perl-side micro-optimization has demonstrated enough gain to justify meaningful extra complexity.
+5. More bespoke HTTP XS/C is not justified by these measurements.
+6. The generic bodyless-driver experiment closes the current Perl-driver optimization path: the best semantic duplicate recovered only about `2.44%` versus full HTTP.
+7. The next architectural question is now `libh2o`: can it replace a growing custom HTTP native layer while keeping Linux::Event integration thin and maintainable?
 
 ## Immediate next work
 
-1. Build a benchmark-only **common bodyless driver** stage that preserves:
-   - parser `eval` and protocol error semantics
-   - max-head and Expect validation
-   - production bodyless-state reuse
-   - both guarded callback boundaries
-   - native default-final `Response->end`
-   but removes generic branches/state checks that are unnecessary once the parsed request is known to be bodyless.
-2. Compare that stage against `checked` and full `_drive_http1` to determine how much of the remaining 6-9% generic driver bucket is actually recoverable with a clean Perl fast path.
-3. Do not alter production until that benchmark demonstrates a meaningful gain and the fast-path semantics can be shown equivalent.
-4. If the benchmark-only bodyless path recovers little, stop micro-optimizing this driver and evaluate `libh2o` before adding more custom XS/C.
-5. If it recovers a meaningful amount, prototype the smallest production Perl change and run full tests plus cross-server benchmarks before deciding whether to keep it.
+1. Evaluate `libh2o` as an architecture, not yet as a production dependency:
+   - current embedding API and maintenance status
+   - HTTP/1, HTTP/2, HTTP/3 coverage
+   - event-loop integration requirements and whether Linux::Event/epoll can host it cleanly
+   - minimum C/XS bridge surface needed for Perl request callbacks and responses
+   - packaging/build implications for CPAN/Linux distributions
+2. Build the smallest useful benchmark feasibility spike if practical. Prefer a benchmark-only external/native H2O comparison or thin bridge over production integration.
+3. Use that spike to answer whether `libh2o` materially closes the Feersum/Go gap without recreating a large custom C HTTP implementation.
+4. Keep PR #13 and PR #11 unmerged until explicit authorization.
