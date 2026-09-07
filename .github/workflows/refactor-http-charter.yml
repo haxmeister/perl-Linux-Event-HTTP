@@ -41,6 +41,7 @@ jobs:
 
           python3 <<'PY'
           from pathlib import Path
+          import re
           import subprocess
 
           def tracked_files():
@@ -67,6 +68,7 @@ jobs:
                   path.write_bytes(changed)
 
           # Collapse the three private native extensions into xshttp1/HTTP1.xs.
+          # Plain C helpers must stay before the first XS MODULE declaration.
           http1_path = Path('xshttp1/HTTP1.xs')
           http1 = http1_path.read_text()
           chunked = Path('xschunked/Chunked.xs').read_text()
@@ -81,14 +83,19 @@ jobs:
           http1 = http1.replace(
               'MODULE = Linux::Event::HTTP::_Parser::HTTP1',
               'MODULE = Linux::Event::HTTP::_HTTP1',
-          )
-          http1 = http1.replace(
+          ).replace(
               'PACKAGE = Linux::Event::HTTP::_Parser::HTTP1',
               'PACKAGE = Linux::Event::HTTP::_HTTP1',
           )
 
-          chunk_tail = chunked[chunked.index('static struct phr_chunked_decoder *\ndecoder_from_object'):]
-          chunk_tail = chunk_tail.replace(
+          main_module = http1.index('MODULE = ')
+          main_c = http1[:main_module]
+          main_xsubs = http1[main_module:]
+
+          chunk_helper_start = chunked.index('static struct phr_chunked_decoder *\ndecoder_from_object')
+          chunk_module = chunked.index('MODULE = ')
+          chunk_helpers = chunked[chunk_helper_start:chunk_module]
+          chunk_xsubs = chunked[chunk_module:].replace(
               'MODULE = Linux::Event::HTTP::_Parser::HTTP1::Chunked',
               'MODULE = Linux::Event::HTTP::_HTTP1',
           ).replace(
@@ -96,8 +103,10 @@ jobs:
               'PACKAGE = Linux::Event::HTTP::_HTTP1::Chunked',
           )
 
-          response_tail = response1[response1.index('static int\nrequest_method_is_head'):]
-          response_tail = response_tail.replace(
+          response_helper_start = response1.index('static int\nrequest_method_is_head')
+          response_module = response1.index('MODULE = ')
+          response_helpers = response1[response_helper_start:response_module]
+          response_xsubs = response1[response_module:].replace(
               'MODULE = Linux::Event::HTTP::_Native::Response1',
               'MODULE = Linux::Event::HTTP::_HTTP1',
           ).replace(
@@ -106,26 +115,31 @@ jobs:
           )
 
           http1_path.write_text(
-              http1.rstrip() + '\n\n' + chunk_tail.strip() + '\n\n' + response_tail.strip() + '\n'
+              main_c.rstrip() + '\n\n'
+              + chunk_helpers.strip() + '\n\n'
+              + response_helpers.strip() + '\n\n'
+              + main_xsubs.rstrip() + '\n\n'
+              + chunk_xsubs.strip() + '\n\n'
+              + response_xsubs.strip() + '\n'
           )
 
           # One loader and one shared object now own all private HTTP/1 XSUBs.
           Path('lib/Linux/Event/HTTP/_HTTP1.pm').write_text('''package Linux::Event::HTTP::_HTTP1;
-          use v5.36;
-          use strict;
-          use warnings;
+use v5.36;
+use strict;
+use warnings;
 
-          our $VERSION = '0.001';
+our $VERSION = '0.001';
 
-          require XSLoader;
-          XSLoader::load(__PACKAGE__);
+require XSLoader;
+XSLoader::load(__PACKAGE__);
 
-          sub CLONE_SKIP { 1 }
+sub CLONE_SKIP { 1 }
 
-          1;
-          ''')
+1;
+''')
 
-          # Point Perl code and tests at the consolidated private extension.
+          # Point Perl code, docs, tests, and benchmarks at the consolidated extension.
           second = [
               (b'Linux::Event::HTTP::_Parser::HTTP1::Chunked', b'Linux::Event::HTTP::_HTTP1::Chunked'),
               (b'Linux::Event::HTTP::_Parser::HTTP1', b'Linux::Event::HTTP::_HTTP1'),
@@ -141,18 +155,21 @@ jobs:
               if changed != data:
                   path.write_bytes(changed)
 
-          # Build metadata now has one private XS directory.
+          # Build metadata now has one private XS directory and one private family.
           makefile = Path('Makefile.PL')
           text = makefile.read_text()
           text = text.replace("DIR              => [qw(xshttp1 xschunked xsresponse1)],", "DIR              => [qw(xshttp1)],")
-          text = text.replace("                Linux::Event::HTTP::_Native::Response1\n                Linux::Event::HTTP::_Parser::HTTP1\n                Linux::Event::HTTP::_Parser::HTTP1::Chunked\n", "                Linux::Event::HTTP::_HTTP1\n")
-          text = text.replace("'lib/Linux/Event/Net/HTTP.pm'", "'lib/Linux/Event/HTTP.pm'")
+          text = re.sub(
+              r"        no_index => \{\n            package => \[qw\(\n.*?            \)\],\n        \},",
+              "        no_index => {\n            package => [qw(\n                Linux::Event::HTTP::_HTTP1\n                Linux::Event::HTTP::_HTTP1::Chunked\n                Linux::Event::HTTP::_ServerConnection\n                Linux::Event::HTTP::_Upgrade\n            )],\n        },",
+              text,
+              flags=re.S,
+          )
           makefile.write_text(text)
 
           xs_make = Path('xshttp1/Makefile.PL')
           text = xs_make.read_text()
           text = text.replace("NAME             => 'Linux::Event::HTTP::_Parser::HTTP1'", "NAME             => 'Linux::Event::HTTP::_HTTP1'")
-          text = text.replace("VERSION_FROM     => '../lib/Linux/Event/Net/HTTP.pm'", "VERSION_FROM     => '../lib/Linux/Event/HTTP.pm'")
           text = text.replace('Private native HTTP/1 parser for Linux::Event::HTTP', 'Private native HTTP/1 wire primitives for Linux::Event::HTTP')
           xs_make.write_text(text)
 
