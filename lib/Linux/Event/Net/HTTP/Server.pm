@@ -46,14 +46,19 @@ sub new ($class, %option) {
         if exists $option{on_data};
     croak 'new(): HTTP Server cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
+    croak 'new(): on_request_final is no longer supported; use on_request and Response'
+        if exists $option{on_request_final};
 
     my $connection_class = _load_connection_class(
         delete($option{connection_class})
             // 'Linux::Event::Net::HTTP::Connection',
     );
 
+    croak 'new(): on_request_final is no longer supported; use on_request and Response'
+        if $connection_class->can('on_request_final');
+
     my %callbacks;
-    for my $name (qw(on_request on_body on_request_end on_request_final)) {
+    for my $name (qw(on_request on_body on_request_end)) {
         my $callback = _take_callback($name, \%option);
         $callbacks{$name} = $callback if $callback;
     }
@@ -119,216 +124,25 @@ __END__
 
 =head1 NAME
 
-Linux::Event::Net::HTTP::Server - HTTP server endpoint convenience
-
-=head1 SYNOPSIS
-
-    use v5.36;
-    use Linux::Event::Loop;
-    use Linux::Event::Net::HTTP::Server;
-
-    my $loop = Linux::Event::Loop->new;
-
-    my $server = Linux::Event::Net::HTTP::Server->new(
-        loop => $loop,
-        host => '127.0.0.1',
-        port => 8080,
-        on_request => sub ($conn, $req, $res) {
-            $res->header('Content-Type', 'text/plain');
-            $res->end("hello\n");
-        },
-    );
-
-    $loop->run;
+Linux::Event::Net::HTTP::Server - private transitional HTTP server implementation
 
 =head1 DESCRIPTION
 
-C<Linux::Event::Net::HTTP::Server> is a small convenience layer around
-L<Linux::Event::IO::Sock::Listener>. It owns no socket or HTTP transport engine
-of its own. The Listener accepts connections and the configured
-L<Linux::Event::Net::HTTP::Connection> subclass owns each HTTP connection.
+This Net-prefixed package is retained temporarily while the implementation is
+migrated to L<Linux::Event::HTTP>. New application code should use
+L<Linux::Event::HTTP::Server>.
 
-The callback form retains each configured CV once and reuses it for every
-accepted Connection. No wrapper closure is created per connection and no extra
-Server dispatch is inserted into the per-request callback path.
+The Server is a thin convenience over L<Linux::Event::IO::Sock::Listener>. It
+accepts HTTP Connections and retains C<on_request>, C<on_body>, and
+C<on_request_end> callbacks without introducing a web application framework.
 
-The object relationship is:
-
-    HTTP::Server
-        -> Linux::Event::IO::Sock::Listener
-            -> HTTP::Connection
-                -> Request + Response
-
-=head1 CONSTRUCTION
-
-=head2 Callback form
-
-    my $server = Linux::Event::Net::HTTP::Server->new(
-        loop => $loop,
-        host => '0.0.0.0',
-        port => 8080,
-        data => $application_state,
-        on_request => sub ($conn, $req, $res) {
-            $res->end("ok\n");
-        },
-    );
-
-C<on_request> is required unless C<connection_class> provides an
-C<on_request> method. Optional C<on_body>, C<on_request_end>, and
-C<on_request_final> callbacks use the same signatures and semantics as
-L<Linux::Event::Net::HTTP::Connection> and are retained once by the Server.
-
-C<data> becomes the C<data> value of each accepted HTTP Connection. The private
-Server acceptance state is not exposed through C<< $conn->data >>.
-
-=head2 Complete final-response callback
-
-Applications whose common bodyless request can be answered with a default
-C<200 OK> scalar body may additionally provide C<on_request_final>:
-
-    my $server = Linux::Event::Net::HTTP::Server->new(
-        loop => $loop,
-        host => '0.0.0.0',
-        port => 8080,
-        on_request_final => sub ($conn, $req) {
-            return "ok\n" if $req->target eq '/health';
-            return undef;
-        },
-        on_request => sub ($conn, $req, $res) {
-            $res->status(404);
-            $res->end("not found\n");
-        },
-    );
-
-For a validated request with no message body, a defined scalar return lets
-Connection attempt its narrow default final-response path before allocating a
-Response object. C<undef> falls through to ordinary C<on_request>. Requests with
-a body always use the ordinary request/body callbacks. HEAD, HTTP/1.0,
-non-persistent requests, and other cases that cannot use the native default
-serialization still preserve the returned body through the ordinary Response
-machinery without calling the application twice.
-
-C<on_request> remains required because it is the general fallback and the API
-for body-bearing requests, custom status/headers, streaming, and deferred
-responses. C<on_request_final> is an optimization surface, not a replacement for
-Response.
-
-=head2 Connection subclass form
-
-    package MyHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
-
-    sub on_request ($self, $req, $res) {
-        $res->end("hello\n");
-    }
-
-    package main;
-
-    my $server = Linux::Event::Net::HTTP::Server->new(
-        loop             => $loop,
-        host             => '127.0.0.1',
-        port             => 8080,
-        connection_class => 'MyHTTP',
-    );
-
-C<connection_class> defaults to L<Linux::Event::Net::HTTP::Connection> and must
-name one of its subclasses. Constructor callbacks may still be supplied; as on
-direct Connection construction, they override same-named class methods for
-accepted instances.
-
-The configured class continues to own C<stream_options>, socket policy, TLS,
-and other Connection subclass policy. Server validates that accepted-connection
-policy when it is constructed, then leaves the policy on the Connection class
-rather than copying settings into the Server object.
-
-=head1 TLS
-
-HTTPS uses the same Server and Connection classes. Declare TLS on the configured
-Connection subclass using L<Linux::Event::TLS>:
-
-    package SecureHTTP;
-    use parent 'Linux::Event::Net::HTTP::Connection';
-    use Linux::Event::TLS
-        cert_file => '/etc/myapp/server-cert.pem',
-        key_file  => '/etc/myapp/server-key.pem',
-        alpn      => ['http/1.1'];
-
-    sub on_request ($self, $req, $res) {
-        $res->end("secure\n");
-    }
-
-    package main;
-
-    my $server = Linux::Event::Net::HTTP::Server->new(
-        loop             => $loop,
-        host             => '0.0.0.0',
-        port             => 443,
-        connection_class => 'SecureHTTP',
-    );
-
-Accepted TLS Connections automatically use Linux::Event server-handshake
-semantics. Server validates the configured Connection TLS declaration at
-construction time, including the requirement for a server certificate and key.
-The HTTP layer does not create a separate HTTPS Connection type and does not
-reimplement TLS state.
-
-C<on_ready> for a TLS Connection runs only after handshake and verification have
-completed. HTTP request parsing therefore sees decrypted application bytes, and
-Response output travels through the established TLS transport. Negotiated
-C<selected_alpn>, C<tls_protocol>, C<tls_cipher>, and C<tls_stats> remain
-available directly from the Connection through Linux::Event.
-
-=head1 LISTENER OPTIONS
-
-Socket-source and listener-tuning options are passed to
-L<Linux::Event::IO::Sock::Listener>. This includes C<loop>, C<host>/C<port>,
-C<unix>, adopted C<fh>, C<backlog>, C<max_accept_per_tick>, C<edge_triggered>,
-C<reuseaddr>, C<reuseport>, C<v6only>, C<bind_device>, and Unix ownership
-options.
-
-The ordinary accepted-Stream lifecycle callbacks such as C<on_ready>,
-C<on_drain>, C<on_eof>, C<on_error>, and C<on_close> may also be supplied and
-are forwarded by Linux::Event to the accepted HTTP Connection. C<on_data>,
-C<on_message>, and C<on_messages> are reserved because HTTP Connection owns its
-input protocol engine.
-
-=head1 METHODS
-
-=head2 listener
-
-Returns the underlying L<Linux::Event::IO::Sock::Listener> for advanced
-inspection. Application code normally does not need it.
-
-=head2 connection_class
-
-Returns the configured HTTP Connection class name.
-
-=head2 data
-
-Returns the application data supplied to the Server.
-
-=head2 loop, fh, fd, host, port, path, family, family_number, is_tcp, is_unix, state
-
-Delegate to the underlying Listener. C<port> is useful when C<port =E<gt> 0>
-asks the kernel to select an available TCP port.
-
-=head2 pause
-
-Pauses acceptance and returns the Server.
-
-=head2 resume
-
-Resumes acceptance and returns the Server.
-
-=head2 close
-
-Closes the underlying Listener and returns the Server. Existing accepted HTTP
-Connections retain their independent lifecycles.
+The former benchmark-specific C<on_request_final> callback is no longer
+supported. Complete, streamed, and deferred responses all use the ordinary
+Request/Response lifecycle.
 
 =head1 SEE ALSO
 
-L<Linux::Event::Net::HTTP::Connection>, L<Linux::Event::Net::HTTP::Request>,
-L<Linux::Event::Net::HTTP::Response>, L<Linux::Event::IO::Sock::Listener>,
-L<Linux::Event::TLS>.
+L<Linux::Event::HTTP::Server>, L<Linux::Event::HTTP::Connection>,
+L<Linux::Event::IO::Sock::Listener>.
 
 =cut
