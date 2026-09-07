@@ -5,23 +5,24 @@ Updated: 2026-09-07 (America/Chicago)
 ## Start here next session
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
-- Working branch: `refactor/http-charter-structure`
-- Draft integration PR: #15, `Restructure Linux::Event::HTTP around protocol roles`
-- Base `main` when this work started: `e38254d6513e2044019f2516ea1a45633932facc`
-- Namespace/native consolidation implementation commit:
-  `d5018cd9979be7be3d6e439509c69563e8d8a180`
-- Public fast-final callback removal commit:
-  `a3d91c42808fd9ba99869c6bafa736acaf32fe7e`
-- Final terminology/audit cleanup code head before this handoff-only update:
-  `826bbfcfb45341dba9b087c20a6c1cf82d16ea93`
-- PR CI run `34162582933` passed on that code head.
-- Do **not** merge PR #15 or this branch to `main` without Joshua's explicit
-  authorization.
+- Current working branch: `main`
+- Structural integration PR #15, `Restructure Linux::Event::HTTP around protocol
+  roles`, was explicitly authorized and merged.
+- Structural merge commit: `122b749600d6a17246e0165f8b15cc4dfa4a6af6`
+- Final PR head before merge: `2ce7af84bb6bcdc68ea6dbc01ec95790a62f66de`
+- CI run `34162687196` passed on that exact PR head before merge.
+- Post-merge architecture wording cleanup was committed directly to `main` as
+  `ce5a7eb27bc2e94cd9000b3e2407e291f2248941`.
+- Older draft PR #14 was closed as superseded and must not be used as design
+  guidance.
 
-The older draft PR #14 belongs to `refactor/ecosystem-charter` and is stale. Do
-not use its description as the current design or integration proposal.
+Merged/abandoned feature and refactor branches are considered disposable by
+default. Keep a branch only when it contains unique work that is still useful.
+At the time of the post-merge audit, `experiment/fused-request-index` still had
+seven unique commits containing the request-index fusion experiment and was the
+only non-main branch with a concrete reason to preserve it.
 
-## Charter being applied
+## Charter
 
 Linux::Event is the Linux-native communications engine. Reusable low-level
 performance work belongs in Linux::Event core so multiple protocol layers can
@@ -33,16 +34,17 @@ composability over winning isolated HTTP microbenchmarks.
 
 Do not add routing, middleware, sessions, templates, PSGI/PAGI, or other web
 framework responsibilities here. Those are separate layers for other projects.
+There is no planned PSGI layer inside this distribution.
 
 Use established CPAN/community libraries for standards and utilities when they
 fit the protocol boundary. Do not force a dependency or object model into the
 hot wire path merely because a prominent module exists.
 
 Do not add HTTP-specific XS merely to improve a benchmark. First determine
-whether the expensive primitive is generic transport/buffer/write machinery
+whether the expensive primitive is generic transport, buffer, or write machinery
 that belongs in Linux::Event core.
 
-## Final public structure
+## Public structure
 
 Current server-side public modules:
 
@@ -58,22 +60,16 @@ The old `Linux::Event::Net::HTTP` namespace is gone. There is no public generic
 `Linux::Event::HTTP::Connection`; the implemented connection is specifically
 the server-direction protocol connection.
 
-Future client structure is reserved as:
+Future native client structure is reserved as:
 
 ```text
 Linux::Event::HTTP::Client
 Linux::Event::HTTP::Client::Connection
 ```
 
-The client is **not implemented on this branch** and must remain a separate
-feature effort.
-
-`HTTP::Request` and `HTTP::Response` remain the current protocol object names,
-but this does not force a future client to combine incompatible server/client
-lifecycle semantics into those same implementations. If client-direction live
-roles differ materially, keep them under `Linux::Event::HTTP::Client` rather
-than adding mode switches to the server Response API merely for naming
-symmetry.
+The client is not implemented yet and should be developed as a separate feature
+effort. Do not force client lifecycle behavior into `Server::Connection` merely
+for naming symmetry.
 
 ## Request/Response CPAN audit conclusion
 
@@ -101,15 +97,7 @@ should use appropriate external libraries where suitable.
 
 ## Consolidated native HTTP/1 boundary
 
-Before this branch the distribution built three private native extensions:
-
-```text
-xshttp1
-xschunked
-xsresponse1
-```
-
-The refactor now builds only:
+The distribution now builds one private HTTP-local native extension:
 
 ```text
 xshttp1/HTTP1.xs
@@ -123,9 +111,9 @@ The single private `_HTTP1` shared object owns:
 - response-head serializer
 - narrow default scalar response builder
 
-picohttpparser is compiled once. The old `Response1.xs` duplicated the native
-request-state structure layout from the parser extension; that maintenance risk
-is gone.
+picohttpparser is compiled once. The old separate `xschunked` and `xsresponse1`
+extensions are gone, eliminating duplicated native request-state structure
+layouts.
 
 This consolidation reduces HTTP-local native maintenance. It is not a reason to
 move HTTP semantics into Linux::Event core.
@@ -163,8 +151,8 @@ The historical `on_request_final` experiment was useful, but its public API was
 rejected.
 
 Measured work showed that eager general Response/transaction machinery can be
-expensive for trivial complete responses. The public lesson is **not** to expose
-a benchmark-specific callback. The ordinary `Response->end(...)` path therefore
+expensive for trivial complete responses. The public lesson is not to expose a
+benchmark-specific callback. The ordinary `Response->end(...)` path therefore
 retains the private `_try_native_default_final` /
 `_HTTP1->build_default_final` optimization when eligible.
 
@@ -214,7 +202,7 @@ application data, and bytes already read beyond the HTTP head are preserved.
 WebSocket semantics belong in a separate `Linux::Event::WebSocket`
 distribution. HTTP owns only the HTTP Upgrade transaction and handoff.
 
-## Client decision
+## Client direction
 
 A native HTTP client belongs in Linux::Event::HTTP because initiating and
 speaking HTTP is protocol functionality in this communications ecosystem.
@@ -228,9 +216,9 @@ belong in separate adapter distributions. The native client should use
 `Linux::Event::HTTP::Client` / `Client::Connection` and share private HTTP wire
 machinery only where semantics are genuinely common with the server.
 
-## Final structural audit completed
+## Structural audit result
 
-The branch-diff audit confirmed:
+The merged structure has been checked for the following invariants:
 
 - no live `lib/Linux/Event/Net/HTTP` package tree
 - no public generic `HTTP::Connection`
@@ -238,7 +226,7 @@ The branch-diff audit confirmed:
 - one HTTP-local native extension, `_HTTP1`
 - old `xschunked` and `xsresponse1` extension directories removed
 - old parser/Response1 private wrapper packages removed
-- `on_request_final` present only in explicit rejection tests/errors and
+- `on_request_final` retained only in explicit rejection tests/errors and
   historical discussion
 - superseded unshipped `bench/run-http-hotpath.pl` removed
 - superseded unshipped `bench/run-http-response-path.pl` removed
@@ -249,38 +237,20 @@ The branch-diff audit confirmed:
 - transaction-ladder wording uses `_HTTP1` and `Server::Connection`, not the old
   `Response1` or generic Connection names
 
-The transaction-ladder whole-file edit also removed one blank separator and the
-final newline at EOF. CI passed with it; this is formatting-only and not an API,
-behavior, or integration issue. It may be tidied later if desired without
-reopening the structural design.
+The maintained architecture, README, Request/Response POD, Server POD, and
+Server::Connection POD reflect the flat namespace and canonical API.
 
-## Validation completed
+## Validation
 
-Earlier guarded validation during namespace/native consolidation passed:
+Namespace/native consolidation and API cleanup were validated through build,
+full tests, end-to-end benchmark smoke, and distribution testing during the
+refactor.
 
-- `perl Makefile.PL`
-- `make`
-- full test suite
-- end-to-end benchmark smoke
-- `make disttest`
-
-The public fast-final removal was separately validated in Actions run
-`34159940212` with 15 test files / 292 tests passing plus benchmark smoke and
-`make disttest`.
-
-After the final audit cleanup, draft PR #15 ran normal CI at code head
-`826bbfcfb45341dba9b087c20a6c1cf82d16ea93`:
-
-- GitHub Actions run: `34162582933`
-- overall conclusion: SUCCESS
-- Perl latest: SUCCESS, including build/test, end-to-end smoke, and distribution
-  integrity
-- Perl 5.36: SUCCESS
-- Perl latest threaded: SUCCESS
-- heavy cross-server diagnostic: skipped by normal-CI policy
-
-This handoff update itself advances the branch after that validated code head;
-it contains documentation only.
+The final PR head `2ce7af84bb6bcdc68ea6dbc01ec95790a62f66de`
+passed GitHub Actions run `34162687196` before merge. The normal CI matrix
+covered Perl latest, Perl 5.36, latest threaded Perl, HTTP benchmark smoke, and
+distribution integrity. Heavy cross-server diagnostics remain intentionally
+manual/workflow-dispatch work rather than ordinary CI performance claims.
 
 ## Closed performance experiments
 
@@ -295,7 +265,7 @@ Do not reopen these without a new measured hypothesis:
   submit primitive
 - broad native HTTP connection driver: not justified by measurements
 
-## Current benchmark policy
+## Benchmark policy
 
 `bench/run-http-final-response.pl` measures only supported public callback
 shapes. The cross-server benchmark has no `fast-final` Linux::Event mode.
@@ -303,11 +273,24 @@ shapes. The cross-server benchmark has no `fast-final` Linux::Event mode.
 Heavy comparison/performance CI remains `workflow_dispatch` only. Ordinary CI
 covers supported Perl configurations, HTTP smoke, and distribution integrity.
 
-## Next steps
+## Branch policy
 
-1. Keep PR #15 draft and unmerged until Joshua explicitly authorizes integration.
-2. If desired, remove the tiny transaction-ladder formatting-only artifact
-   (blank separator/final newline) without changing semantics.
-3. Do not mix native client implementation into this structural PR.
-4. After this branch lands, start the native client as a separate feature effort
-   under `Linux::Event::HTTP::Client` / `Client::Connection`.
+Do not keep merged or abandoned working branches merely as history; Git already
+preserves the commits. Delete them unless they contain unique work that has a
+specific reason to remain accessible.
+
+The request-index fusion experiment is currently the notable exception because
+its branch contains unique benchmark/research work. Re-evaluate and delete that
+branch once the experiment is either incorporated, documented elsewhere, or
+formally closed.
+
+## Next substantive steps
+
+1. Native HTTP client work can begin as a separate feature under
+   `Linux::Event::HTTP::Client` / `Client::Connection`.
+2. Keep HTTP protocol work within the charter: correctness and simple protocol
+   APIs first; move reusable low-level performance primitives into Linux::Event
+   core when appropriate.
+3. Do not add PSGI/PAGI/framework responsibilities to this distribution.
+4. Preserve `handoff.md` as current-state continuity documentation after major
+   conclusions or integration changes.
