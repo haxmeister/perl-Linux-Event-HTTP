@@ -22,6 +22,32 @@ is(
     'native builder emits default persistent HTTP/1.1 final response',
 );
 
+is(
+    $native->build_default_final($get, undef),
+    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+    'undefined body is treated as an empty byte string',
+);
+
+my $number = 12345;
+is(
+    $native->build_default_final($get, $number),
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n12345",
+    'non-PV scalar retains existing stringification behavior',
+);
+
+my $downgradable = "\x{e9}";
+utf8::upgrade($downgradable);
+ok(utf8::is_utf8($downgradable), 'downgradable test scalar starts UTF-8 flagged');
+is(
+    $native->build_default_final($get, $downgradable),
+    "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n\xe9",
+    'downgradable UTF-8 scalar is emitted as bytes',
+);
+ok(
+    utf8::is_utf8($downgradable),
+    'native builder does not mutate caller UTF-8 flag while downgrading copy',
+);
+
 my $head = $parser->parse_request(
     "HEAD / HTTP/1.1\r\nHost: example.test\r\n\r\n",
     0,
