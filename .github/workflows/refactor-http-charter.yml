@@ -33,6 +33,11 @@ jobs:
         run: |
           python3 .github/refactor-http-charter.py
           python3 .github/refactor-http-loader-fix.py
+          if ! git diff --quiet -- .github/workflows; then
+            echo 'refactor attempted to modify workflow files' >&2
+            git diff -- .github/workflows
+            exit 1
+          fi
 
       - name: Build and test refactor
         run: |
@@ -41,6 +46,7 @@ jobs:
           make test
           perl -Mblib bench/run-http-end-to-end.pl --smoke
           make disttest
+          make clean
 
       - name: Commit refactor
         run: |
