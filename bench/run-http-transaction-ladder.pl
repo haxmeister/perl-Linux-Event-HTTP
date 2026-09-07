@@ -84,6 +84,12 @@ my %case = (
         stage => 'checked',
         description => 'Guarded public Response end plus production parser eval/error boundary, request-head size guard, and Expect validation',
     },
+    bodyless => {
+        label => '3l semantic bodyless driver',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'bodyless',
+        description => 'Benchmark-only bodyless common path retaining production driver guards, parser/error checks, guarded callbacks, post-callback lifecycle checks, and public Response end while omitting generic body-mode branches',
+    },
     http => {
         label => '4 Full HTTP transaction',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
@@ -138,7 +144,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(parse bound state callbacks fused eligibility build mark commit end checked http);
+my @names = qw(parse bound state callbacks fused eligibility build mark commit end checked bodyless http);
 my @records;
 
 say 'Linux::Event::Net::HTTP transaction lifecycle ladder';
@@ -189,11 +195,11 @@ for my $i (1 .. $#summary) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my %contract = map { $_ => $case{$_}{description} } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; stages parse through checked use the same Connection subclass and are cumulative; full HTTP additionally uses Connection::_drive_http1';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; parse through checked are cumulative staged costs; bodyless is a semantic-safety common-path candidate; full HTTP uses Connection::_drive_http1';
 
     my $report = {
         benchmark => 'linux-event-net-http-transaction-ladder',
-        benchmark_contract_version => 4,
+        benchmark_contract_version => 5,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
@@ -293,10 +299,7 @@ sub wait_ready ($name, $pid, $port, $stdout_path, $stderr_path) {
     my $deadline = time + $timeout;
     while (time < $deadline) {
         my $fh = IO::Socket::INET->new(
-            PeerAddr => '127.0.0.1',
-            PeerPort => $port,
-            Proto => 'tcp',
-            Timeout => 0.1,
+            PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 0.1,
         );
         if ($fh) {
             close $fh;
@@ -342,8 +345,7 @@ sub stop_server ($pid) {
 
 sub free_port () {
     my $fh = IO::Socket::INET->new(
-        LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
-        Listen => 1, ReuseAddr => 1,
+        LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp', Listen => 1, ReuseAddr => 1,
     ) or die "allocate benchmark port: $!\n";
     my $port = $fh->sockport;
     close $fh;
@@ -523,10 +525,10 @@ Options:
   --help                  show this help
 
 The stages cumulatively decompose the cost between a parsed Request with a
-prebuilt response and the full Connection::_drive_http1 lifecycle. Stages 3a
-through 3k use the same benchmark Connection subclass. All stages use the same
-raw client and Linux::Event Stream transport; no stage is product code and this
-benchmark adds no new XS/C implementation.
+prebuilt response and the full Connection::_drive_http1 lifecycle. The bodyless
+stage is a benchmark-only semantic-safety candidate for the persistent no-body
+request common path. All stages use the same raw client and Linux::Event Stream
+transport; this benchmark adds no new XS/C implementation.
 USAGE
     exit $exit;
 }
