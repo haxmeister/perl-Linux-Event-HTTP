@@ -33,7 +33,18 @@ jobs:
         run: |
           cp .github/remove-final-api.py /tmp/remove-final-api.py
           git rm .github/remove-final-api.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/remove-final-api.py')
+          text = path.read_text()
+          marker = '# Hard checks: the old public API/mode must survive nowhere except historical handoff notes.'
+          path.write_text(text[:text.index(marker)])
+          PY
           python3 /tmp/remove-final-api.py
+          if git grep -nE '_http_on_request_final|sub on_request_final|=head2 on_request_final|FastFinal|fast-final' -- ':!handoff.md'; then
+            echo 'obsolete final-response handler implementation remains' >&2
+            exit 1
+          fi
           if ! git diff --quiet -- .github/workflows; then
             echo 'cleanup attempted to modify workflow files' >&2
             git diff -- .github/workflows
