@@ -9,7 +9,7 @@ Updated: 2026-09-07 (America/Chicago)
 - Draft PR: #16
 - Base branch: `main`
 - Main baseline for PR #16: `aff0249bb151371b1297d5efda50d8bfd4d711e7`
-- Validated feature head before this handoff-only commit: `85d8ed654c38b394827782237d32b55da9389a62`
+- Validated feature head before handoff-only commits: `85d8ed654c38b394827782237d32b55da9389a62`
 - CI run `34181760630` on that head: success
 - DO NOT merge PR #16 without explicit user authorization.
 
@@ -264,7 +264,7 @@ Do not reintroduce Response-level `write`/`complete` examples.
 
 The transaction benchmark still has a stage identifier named `complete`. That is a historical benchmark stage name, not a public Response method. Its callback now uses `Response->body(...)`. The benchmark contract version is 6.
 
-## Linux::Event core follow-up
+## Linux::Event paused-read / terminal-readiness investigation
 
 A separate generic Linux::Event behavior was discovered while testing body cancellation.
 
@@ -278,13 +278,24 @@ EPOLLHUP
 EPOLLRDHUP
 ```
 
-but `_ByteStream::_on_read_terminal_ready` currently only enters the read path when `read_paused` is false. Immediate peer EOF/half-close observation can therefore be delayed while application reads are paused.
+but `_ByteStream::_on_read_terminal_ready` currently only enters the read path when `read_paused` is false. Immediate input-side EOF/half-close observation can therefore be delayed while application reads are paused.
 
-Do NOT solve this in HTTP with polling, duplicate buffering, or another HTTP queue.
+Important semantic conclusion from the investigation:
 
-If immediate peer terminal observability while application payload reads are paused is desired, investigate it separately as a reusable Linux::Event core socket/reactor capability with correct unread-data and TLS semantics.
+- This is NOT currently established as a Linux::Event correctness bug.
+- `pause_read()` deliberately pauses application input consumption/delivery.
+- Forcing `_read_ready` while paused could consume or expose unread application payload before the pause is lifted, violating pause semantics.
+- TCP FIN / `EPOLLRDHUP` means the peer has finished SENDING to us. It does NOT mean the peer has stopped READING the response we are sending.
+- Therefore peer read-side EOF is not valid evidence by itself that an outgoing HTTP `Body::Stream` should be cancelled.
+- TLS already has separate transport-progress behavior while application reads are paused, so any future generic terminal-observation mechanism must preserve that distinction.
 
-For the HTTP API, `on_cancel` is deterministic when the HTTP connection itself closes/abandons the unfinished body.
+Current decision: DO NOT change Linux::Event core merely to make HTTP observe peer FIN sooner. DO NOT add an HTTP workaround, polling, duplicate buffering, or another response queue.
+
+If a future protocol or concrete test demonstrates a correctness need for observing transport/peer terminal state independently from paused application payload delivery, investigate that as a reusable Linux::Event capability. Such a design must explicitly handle unread buffered data, half-close semantics, normal full close, and TLS transport state.
+
+For the current HTTP API, `on_cancel` remains deterministic when the HTTP connection itself closes or abandons an unfinished streaming body.
+
+This issue is intentionally parked, not solved. It should be reopened only with a concrete semantic requirement or failing real-world case, rather than because `EPOLLRDHUP` happens to be observable underneath a paused stream.
 
 ## Charter and architecture rules
 
@@ -357,8 +368,10 @@ Do not reopen closed native-performance experiments without a new measured hypot
 
 ## Immediate next steps
 
-1. Review the final PR diff for accidental stale Response `write`/`complete` documentation or call sites; distinguish the transaction-ladder stage name `complete` from the removed public method.
-2. Keep PR #16 draft/unmerged until the user explicitly authorizes merge.
-3. If further HTTP API review finds no issue, the response body redesign is ready for user review rather than another compatibility pass.
-4. Separately investigate Linux::Event terminal-readiness behavior while application reads are paused if desired; do not make HTTP own that solution.
-5. Keep this handoff current after every major test or conclusion.
+1. Do not spend the next session trying to force a reconciliation of paused application reads and peer terminal readiness. The semantic requirement is not yet established, and a naive fix risks making Linux::Event less correct.
+2. Keep the finding above documented as an open core design question. Reopen it only if a concrete protocol requirement, failing test, or real-world behavior demonstrates that terminal observation must be independent from `pause_read()`.
+3. Move the main HTTP design work forward to CLIENT ARCHITECTURE. Start by evaluating the public object model and responsibilities for an HTTP client in the same spirit as the server work: protocol layer only, easy/correct API, reusable Linux::Event transport machinery, no framework concerns, and no premature native complexity.
+4. During client architecture work, explicitly examine connection lifecycle, request/response ownership, persistent connections, streaming request bodies, streaming response bodies, backpressure, cancellation, redirects, timeouts, TLS, and how HTTP/1.1 connection reuse should compose with Linux::Event without inventing a second transport queue.
+5. Before implementing substantial client code, compare the proposed API against prominent CPAN HTTP request/response/client conventions so familiar semantics can be reused where they fit the project charter.
+6. Keep PR #16 draft/unmerged until the user explicitly authorizes merge. The current server Response/body redesign is a stable reference point for client-side symmetry, but further API review is still allowed.
+7. Keep this handoff current immediately after each major architectural conclusion, experiment, or test so another chat can resume without reconstructing state.
