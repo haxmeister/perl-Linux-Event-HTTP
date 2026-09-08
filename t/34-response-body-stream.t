@@ -3,7 +3,7 @@ use strict;
 use warnings;
 
 use Test::More;
-use Scalar::Util qw(refaddr);
+use Scalar::Util ();
 
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
@@ -32,7 +32,8 @@ use Linux::Event::HTTP::Server::Connection;
                 },
             );
             $self->data->{same_stream}
-                = refaddr($first) == refaddr($res->stream_body) ? 1 : 0;
+                = Scalar::Util::refaddr($first)
+                == Scalar::Util::refaddr($res->stream_body) ? 1 : 0;
             push @{$self->data->{write_status}},
                 $res->stream_body->write("one\n");
             $res->stream_body->complete("two\n");
@@ -142,6 +143,7 @@ like(
     use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
+        $self->data->{connection} = $self;
         $res->stream_body(
             on_cancel => sub ($body) {
                 ++$self->data->{cancelled};
@@ -178,22 +180,26 @@ $guard = Linux::Event::Kernel::Timer->new(
 );
 $cancel_state->{guard} = $guard;
 
-my $close_timer;
+my $cancel_timer;
 $client = Linux::Event::IO::Sock::Stream->connect(
     loop => $loop,
     host => '127.0.0.1',
     port => $listener->port,
     on_ready => sub ($stream) {
         $stream->write("GET /cancel HTTP/1.1\r\nHost: example.test\r\n\r\n");
-        $close_timer = Linux::Event::Kernel::Timer->new(
+        $cancel_timer = Linux::Event::Kernel::Timer->new(
             loop  => $loop,
             after => 0.05,
             on_timer => sub ($timer) {
-                $stream->close;
+                my $connection = $cancel_state->{connection};
+                $connection->close if $connection && !$connection->is_closed;
             },
         );
     },
     on_data => sub ($stream, $bytes) { },
+    on_eof => sub ($stream) {
+        $stream->close;
+    },
     on_error => sub ($stream, $error) {
         die "stream body cancellation client failed: $error\n";
     },
@@ -202,7 +208,7 @@ $client = Linux::Event::IO::Sock::Stream->connect(
 $loop->run;
 
 is($cancel_state->{cancelled}, 1,
-    'peer disconnect cancels an unfinished response stream body exactly once');
+    'closing the HTTP connection cancels an unfinished stream body exactly once');
 ok($cancel_state->{body}->is_cancelled,
     'cancelled stream body exposes terminal cancellation state');
 
