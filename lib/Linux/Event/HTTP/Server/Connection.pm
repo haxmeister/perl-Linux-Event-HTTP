@@ -38,19 +38,17 @@ sub _take_http_handler ($class, $name, $option) {
 sub new ($class, %option) {
     croak 'new(): Connection owns on_data; use on_request for HTTP requests'
         if exists $option{on_data};
-    croak 'new(): Connection owns on_drain; use Response->stream_body(on_drain => ...)'
-        if exists $option{on_drain};
-    croak 'new(): Connection owns on_close; use Response->stream_body(on_cancel => ...) for streaming-body cancellation'
-        if exists $option{on_close};
     croak 'new(): Connection cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
-    croak 'new(): on_request_final was removed; use on_request and Response->complete'
+    croak 'new(): on_request_final was removed; use on_request and Response->body or stream_body'
         if exists $option{on_request_final};
 
     my $loop = delete $option{loop};
     my $on_request = _take_http_handler($class, 'on_request', \%option);
     my $on_body = _take_http_handler($class, 'on_body', \%option);
     my $on_request_end = _take_http_handler($class, 'on_request_end', \%option);
+    my $user_on_drain = _take_http_handler($class, 'on_drain', \%option);
+    my $user_on_close = _take_http_handler($class, 'on_close', \%option);
 
     croak 'new(): HTTP Connection requires on_request callback or method'
         if !$on_request;
@@ -62,6 +60,8 @@ sub new ($class, %option) {
     $self->{_http_on_request} = $on_request;
     $self->{_http_on_body} = $on_body;
     $self->{_http_on_request_end} = $on_request_end;
+    $self->{_http_user_on_drain} = $user_on_drain;
+    $self->{_http_user_on_close} = $user_on_close;
     $self->{_http_input} = '';
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
@@ -87,15 +87,24 @@ sub on_data ($self, $bytes) {
 }
 
 sub _http_transport_drain ($self) {
-    my $response = $self->{_http_active_response} or return;
-    my $body = $response->_stream_body_object or return;
-    $body->_drain;
+    if (my $response = $self->{_http_active_response}) {
+        if (my $body = $response->_stream_body_object) {
+            $body->_drain;
+        }
+    }
+    if (my $callback = $self->{_http_user_on_drain}) {
+        $callback->($self);
+    }
     return;
 }
 
 sub _http_transport_close ($self) {
-    my $response = $self->{_http_active_response} or return;
-    $response->_cancel_stream_body;
+    if (my $response = $self->{_http_active_response}) {
+        $response->_cancel_stream_body;
+    }
+    my $callback = delete $self->{_http_user_on_close};
+    delete $self->{_http_user_on_drain};
+    $callback->($self) if $callback;
     return;
 }
 
@@ -783,8 +792,10 @@ normal high-watermark contract, and the body C<on_drain> callback is driven by
 the connection's native drain transition. C<on_cancel> runs if the connection
 closes before the streaming body completes.
 
-C<on_data>, transport C<on_drain>, and transport C<on_close> are reserved by
-this HTTP connection implementation.
+C<on_data> is reserved by this HTTP connection implementation. Connection-level
+C<on_drain> and C<on_close> callbacks or subclass methods remain supported;
+HTTP composes its body-stream bookkeeping with those lifecycle callbacks rather
+than replacing them.
 
 =head1 REQUEST BODY STREAMING
 
