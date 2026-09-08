@@ -5,26 +5,25 @@ Updated: 2026-09-07 (America/Chicago)
 ## Start here next session
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
-- Working branch: `feature/response-body-stream`
-- Draft PR: #16
-- Base branch: `main`
-- Main baseline for PR #16: `aff0249bb151371b1297d5efda50d8bfd4d711e7`
-- Validated feature head before handoff-only commits: `85d8ed654c38b394827782237d32b55da9389a62`
-- CI run `34181760630` on that head: success
-- DO NOT merge PR #16 without explicit user authorization.
+- Canonical working branch: `main`
+- PR #16 (`Finalize Response body and streaming API`) has been merged by fast-forward into `main`.
+- PR #16 feature head merged into main: `4de28b996bc873a0ee739f67910025f74dc1a8dd`
+- Last code-bearing fully validated head before handoff-only commits: `85d8ed654c38b394827782237d32b55da9389a62`
+- CI run `34181760630` on that head: success across Perl 5.36, latest Perl, latest threaded Perl, end-to-end benchmark smoke, and distribution integrity.
+- There is no release planned yet. Continue architecture/design work.
 
-The Response body API design has now been accepted and the no-compat migration has been completed on the feature branch.
+The server-side Response body redesign is now on `main` and should be treated as the current baseline.
 
-## Final public Response body model
+## Current Response/body API
 
-The conceptual split is:
+Conceptual split:
 
 ```text
 Response     = HTTP response message
 Body::Stream = streaming body producer
 ```
 
-Ordinary complete scalar response:
+Ordinary scalar response:
 
 ```perl
 on_request => sub ($conn, $req, $res) {
@@ -42,11 +41,11 @@ on_request => sub ($conn, $req, $res) {
 
     my $body = $res->stream_body(
         on_drain => sub ($body) {
-            # Resume a paused upstream producer.
+            # Resume upstream production.
         },
         on_cancel => sub ($body) {
             # Stop upstream work because this HTTP connection
-            # abandoned the unfinished streaming body.
+            # abandoned the unfinished body.
         },
     );
 
@@ -55,9 +54,7 @@ on_request => sub ($conn, $req, $res) {
 };
 ```
 
-Public Response-level `write` and `complete` have been removed. Do not restore them as compatibility aliases. This distribution is unreleased and we do not want compatibility cruft.
-
-Current intended Response surface includes:
+Public Response surface includes:
 
 ```text
 status
@@ -75,7 +72,7 @@ is_complete
 is_upgrading
 ```
 
-Current Body::Stream surface:
+Body::Stream surface:
 
 ```text
 write
@@ -84,294 +81,132 @@ is_complete
 is_cancelled
 ```
 
-## Scalar body commit semantics
+Do not restore Response-level `write`, `complete`, `end`, or `is_ended` compatibility aliases. The distribution is unreleased and we deliberately removed those ambiguous/transitional APIs.
 
-The semantic question from the earlier prototype is settled as follows.
+## Response commit semantics
 
-`$res->body($bytes)` declares a complete scalar response body.
+`$res->body($bytes)` declares a complete scalar body.
 
-When `body(...)` is called while an HTTP callback is executing, it does NOT serialize immediately in the middle of that callback. The Response remains configurable until the enclosing HTTP callback returns. Therefore this is intentionally valid:
+When called inside an HTTP callback, `body(...)` does not serialize immediately in the middle of the callback. Response metadata remains mutable until the callback returns. This is intentionally valid:
 
 ```perl
 $res->body("hello\n");
 $res->header('X-After-Body', 'yes');
 ```
 
-After the callback returns, the connection commits the complete response if the transaction is ready.
+At callback return, the connection commits the complete response when transaction state permits.
 
-When `body(...)` is called later from an asynchronous event callback while a Response is waiting and no HTTP callback dispatch is active, it commits the waiting complete response immediately.
+When `body(...)` is called later from an asynchronous event callback while a Response is waiting and no HTTP callback dispatch is active, it commits the waiting response immediately.
 
-This distinction is intentional and is covered by integration tests.
-
-## Streaming commit semantics
-
-`stream_body()` itself does NOT commit response headers and does NOT start output.
-
-It lazily creates one stable Body::Stream object. Repeated argumentless calls return the same object.
-
-Response metadata may still be changed after selecting the stream:
-
-```perl
-my $body = $res->stream_body;
-$res->header('X-Late-But-Before-Output', 'yes');
-```
-
-The first Body::Stream `write(...)` or `complete(...)` is the streaming response commit point. That first actual body output starts the Response and freezes status/reason/headers.
-
-This behavior is now explicitly tested.
+`stream_body()` lazily creates one stable Body::Stream object. Selecting the stream does not itself start output or freeze metadata. The first Body::Stream `write(...)` or `complete(...)` is the streaming commit point.
 
 Scalar `body(...)` and streaming `stream_body(...)` are mutually exclusive.
 
-## Output and backpressure rule
+## Backpressure and transport ownership
 
-DO NOT add another HTTP response-body output queue.
+Do not add another HTTP response-body output queue.
 
-Body::Stream is a protocol-facing producer over Linux::Event's existing ordered-byte output machinery. Linux::Event remains the owner of:
-
-- queued transport bytes
-- segmented output
-- high/low watermarks
-- `pending_bytes`
-- write readiness
-- `on_drain`
-- `max_pending_bytes`
-- TLS transport progress
+Body::Stream is a protocol-facing producer over Linux::Event's existing ordered-byte output machinery. Linux::Event remains the owner of queued transport bytes, segmented output, watermarks, `pending_bytes`, write readiness, drain signaling, pending-byte limits, and TLS transport progression.
 
 `Body::Stream->write(...)` preserves Linux::Event flow control:
 
 ```text
-true  = bytes accepted and producer may continue
-false = bytes accepted, but producer should stop until on_drain
+true  = bytes accepted; producer may continue
+false = bytes accepted; producer should stop until on_drain
 ```
 
-HTTP framing is applied before those bytes enter the existing transport machinery. There is no second body queue.
+HTTP framing is applied before bytes enter that transport machinery.
 
-`on_cancel` means the HTTP connection abandons/closes an unfinished streaming body.
-
-## Connection lifecycle callback composition
-
-HTTP needs transport drain/close notifications for Body::Stream bookkeeping, but custom Connection subclasses are a supported extension point.
-
-The internal and application lifecycle work are composed:
+HTTP lifecycle bookkeeping composes with custom Connection lifecycle callbacks:
 
 ```text
 transport drain
     -> HTTP Body::Stream drain handling
-    -> custom Connection on_drain, if any
+    -> custom Connection on_drain
 
 transport close
     -> HTTP Body::Stream cancellation
-    -> custom Connection on_close, if any
+    -> custom Connection on_close
 ```
 
-Commit `a52d8a03292d5edf9ff38dbc207612d2b86186ec` added explicit integration coverage for close callback composition.
+## Tests and documentation
 
-CI run `34180170242` on `a52d8a0...` was fully green before the final API migration.
-
-## Finalization commits and CI history
-
-The repository-wide no-compat API migration was committed as:
-
-```text
-dab163d50080b017f20268888f85fca4a3bbb154
-Finalize Response body and streaming API
-```
-
-That commit:
-
-- removed public Response `write` and `complete`;
-- retained `write`/`complete` only on Body::Stream;
-- locked scalar callback-return commit semantics;
-- locked stream selection as non-committing;
-- locked first stream write/complete as the streaming commit point;
-- converted existing tests to the new API;
-- converted Linux::Event HTTP benchmark adapters to the new API;
-- updated README, Response/Server POD, architecture docs, benchmarking docs, and Changes;
-- bumped the transaction-ladder benchmark contract from 5 to 6 because the public scalar completion point changed from an in-callback `complete()` call to callback-return commit after `body()` assignment.
-
-Its first CI run was:
-
-```text
-34181577506
-```
-
-That run failed for one stale API-presence assertion in `t/00-load.t`:
-
-```text
-Failed test 'Response exposes complete'
-```
-
-Importantly, every substantive test file in that run passed, including the new scalar/streaming integration tests. The failure was only the old load test still expecting the transitional method.
-
-The stale assertion was fixed in:
-
-```text
-85d8ed654c38b394827782237d32b55da9389a62
-Update Response API load assertions
-```
-
-`t/00-load.t` now asserts that Response exposes `body` and `stream_body`, does not expose `write` or `complete`, and still exposes `is_complete` while omitting ambiguous `end` / `is_ended` aliases.
-
-CI run `34181760630` on `85d8ed65...` completed successfully:
-
-- Perl 5.36: success
-- latest Perl: success
-- latest threaded Perl: success
-- end-to-end benchmark smoke: success
-- distribution integrity/disttest: success
-- cross-server diagnostic comparison: intentionally skipped in normal CI
-
-This is the current validated API state.
-
-## Tests that now define the body API
-
-Important focused tests:
+Important body API tests:
 
 ```text
 t/21-response-body-stream-unit.t
 t/34-response-body-stream.t
 ```
 
-Coverage includes:
+Coverage includes scalar body behavior, scalar/stream exclusion, stable stream identity, backpressure propagation, drain callbacks, completion, cancellation, asynchronous scalar completion, callback-return commit semantics, stream selection without commit, first-write commit, metadata locking, HTTP/1.1 chunk framing, persistent/pipelined ordering, and lifecycle callback composition.
 
-- scalar body get/set and replacement before output
-- body/stream mutual exclusion
-- Response does not expose streaming `write` or `complete`
-- stable stream object identity
-- stream option validation
-- stream write delegation without a second queue
-- Linux::Event flow-control false propagation
-- one-shot drain notification after blocked output
-- stream completion
-- post-completion rejection
-- cancellation and idempotent cancellation
-- post-cancellation rejection
-- scalar body metadata changes after body assignment but before callback return
-- asynchronous later scalar body completion
-- `stream_body()` does not start output
-- metadata remains mutable after stream selection
-- first stream write starts output
-- metadata locks after first stream write
-- HTTP/1.1 chunk framing
-- persistent/pipelined ordering
-- custom Connection lifecycle callback composition
+README, Response POD, Server POD, `docs/ARCHITECTURE.md`, `docs/BENCHMARKING.md`, Changes, tests, and Linux::Event benchmark adapters were migrated to this body/stream model.
 
-## Documentation and benchmark status
+The transaction benchmark still has a historical stage identifier named `complete`; that is not a public Response method. Its callback uses `Response->body(...)`. Benchmark contract version is 6.
 
-README, Response POD, Server POD, `docs/ARCHITECTURE.md`, `docs/BENCHMARKING.md`, Changes, tests, and Linux::Event benchmark adapters were migrated to the body/stream model in `dab163d5...`.
+## Linux::Event paused-read / terminal-readiness finding
 
-Do not reintroduce Response-level `write`/`complete` examples.
+While testing body cancellation, we noticed a generic Linux::Event behavior:
 
-The transaction benchmark still has a stage identifier named `complete`. That is a historical benchmark stage name, not a public Response method. Its callback now uses `Response->body(...)`. The benchmark contract version is 6.
+- HTTP pauses application reads while a completed request waits for a later asynchronous response so a pipelined request cannot overtake the active response.
+- Linux::Event still receives terminal readiness (`EPOLLERR`, `EPOLLHUP`, `EPOLLRDHUP`).
+- `_ByteStream::_on_read_terminal_ready` only enters the read path when `read_paused` is false, so input-side EOF/half-close observation may be delayed while application reads are paused.
 
-## Linux::Event paused-read / terminal-readiness investigation
+Current conclusion:
 
-A separate generic Linux::Event behavior was discovered while testing body cancellation.
+1. This is not established as a Linux::Event correctness bug.
+2. `pause_read()` deliberately pauses application input consumption/delivery.
+3. Forcing `_read_ready` while paused could consume or expose unread application payload and violate pause semantics.
+4. TCP FIN / `EPOLLRDHUP` means the peer has finished sending to us; it does not mean the peer has stopped reading our response.
+5. Therefore peer read-side EOF is not valid evidence by itself that an outgoing HTTP Body::Stream should be cancelled.
+6. TLS already separates transport progress from paused application input, so any future generic terminal-observation capability must preserve that distinction.
 
-HTTP pauses application reads while a completed request waits for a later asynchronous response. This prevents a pipelined request from overtaking the active response.
+Decision: do not change Linux::Event core merely to make HTTP observe peer FIN sooner, and do not add an HTTP workaround, polling layer, duplicate buffering, or second response queue.
 
-Linux::Event still receives terminal readiness such as:
-
-```text
-EPOLLERR
-EPOLLHUP
-EPOLLRDHUP
-```
-
-but `_ByteStream::_on_read_terminal_ready` currently only enters the read path when `read_paused` is false. Immediate input-side EOF/half-close observation can therefore be delayed while application reads are paused.
-
-Important semantic conclusion from the investigation:
-
-- This is NOT currently established as a Linux::Event correctness bug.
-- `pause_read()` deliberately pauses application input consumption/delivery.
-- Forcing `_read_ready` while paused could consume or expose unread application payload before the pause is lifted, violating pause semantics.
-- TCP FIN / `EPOLLRDHUP` means the peer has finished SENDING to us. It does NOT mean the peer has stopped READING the response we are sending.
-- Therefore peer read-side EOF is not valid evidence by itself that an outgoing HTTP `Body::Stream` should be cancelled.
-- TLS already has separate transport-progress behavior while application reads are paused, so any future generic terminal-observation mechanism must preserve that distinction.
-
-Current decision: DO NOT change Linux::Event core merely to make HTTP observe peer FIN sooner. DO NOT add an HTTP workaround, polling, duplicate buffering, or another response queue.
-
-If a future protocol or concrete test demonstrates a correctness need for observing transport/peer terminal state independently from paused application payload delivery, investigate that as a reusable Linux::Event capability. Such a design must explicitly handle unread buffered data, half-close semantics, normal full close, and TLS transport state.
+This question is intentionally parked. Reopen it only if a concrete protocol requirement, failing test, or real-world behavior demonstrates a need to observe peer/transport terminal state independently of application read pause. A future generic design would need explicit semantics for unread buffered data, half-close, full close, and TLS.
 
 For the current HTTP API, `on_cancel` remains deterministic when the HTTP connection itself closes or abandons an unfinished streaming body.
 
-This issue is intentionally parked, not solved. It should be reopened only with a concrete semantic requirement or failing real-world case, rather than because `EPOLLRDHUP` happens to be observable underneath a paused stream.
+## Project charter
 
-## Charter and architecture rules
+Linux::Event is the Linux-native communications engine. Reusable low-level performance work belongs in Linux::Event core when it benefits multiple protocol layers.
 
-Linux::Event is the Linux-native communications engine. Reusable low-level performance work belongs in Linux::Event core so multiple protocol layers can benefit.
-
-Linux::Event::HTTP is the HTTP protocol layer. Priorities remain:
+Linux::Event::HTTP is the HTTP protocol layer. Priorities are:
 
 1. correctness
 2. ease of correct use
 3. coherent/simple API
 4. maintainability
 5. composability
-6. performance without HTTP-specific native complexity unless justified
+6. performance without unnecessary HTTP-specific native complexity
 
-Do not add:
+Do not add PSGI, PAGI, routing/framework responsibilities, middleware, sessions, or templates to this distribution.
 
-- PSGI
-- PAGI
-- routing/framework responsibilities
-- middleware
-- sessions
-- templates
+Prefer established CPAN/community libraries for standards/utilities where appropriate. Do not add HTTP-specific XS merely to win benchmarks.
 
-There is no planned PSGI layer in this distribution.
-
-Prefer established CPAN/community libraries for standards/utilities where appropriate.
-
-Do not add HTTP-specific XS merely to win benchmarks.
-
-## Native HTTP implementation
-
-Keep one private native extension:
+Keep the single private native HTTP extension unless a measured reason requires otherwise:
 
 ```text
 xshttp1/HTTP1.xs
     -> Linux::Event::HTTP::_HTTP1.so
 ```
 
-It owns:
+It owns pico request parsing/lazy Request accessors, chunked request decoding, response-head serialization, and the narrow default scalar final-response builder.
 
-- pico request parser / lazy Request accessors
-- chunked request decoding
-- response-head serialization
-- narrow default scalar final-response builder
-
-Do not split it back into multiple HTTP native extensions without a new measured reason.
-
-Eligible ordinary `Response->body(...)` responses transparently use the private scalar fast path. Applications do not select a separate performance API.
-
-## Upgrade boundary
-
-HTTP Upgrade remains:
-
-1. validate HTTP/1.1 Upgrade
-2. queue valid 101
-3. clear HTTP transaction
-4. use Linux::Event `transition_to()` on the same live transport object
-
-WebSocket belongs in a separate `Linux::Event::WebSocket` distribution.
-
-## Branch policy
-
-PR #16 remains a draft and MUST NOT be merged without explicit user authorization.
-
-Do not keep merged or abandoned branches merely as history. Delete them after merge/abandon unless they contain unique work with a concrete reason to preserve it.
-
-Do not accidentally add optional benchmark competitors as dependencies.
-
-Do not reopen closed native-performance experiments without a new measured hypothesis.
+HTTP Upgrade remains a boundary operation: validate Upgrade, queue 101, clear the HTTP transaction, then use Linux::Event `transition_to()` on the same live transport. WebSocket belongs in a separate distribution.
 
 ## Immediate next steps
 
-1. Do not spend the next session trying to force a reconciliation of paused application reads and peer terminal readiness. The semantic requirement is not yet established, and a naive fix risks making Linux::Event less correct.
-2. Keep the finding above documented as an open core design question. Reopen it only if a concrete protocol requirement, failing test, or real-world behavior demonstrates that terminal observation must be independent from `pause_read()`.
-3. Move the main HTTP design work forward to CLIENT ARCHITECTURE. Start by evaluating the public object model and responsibilities for an HTTP client in the same spirit as the server work: protocol layer only, easy/correct API, reusable Linux::Event transport machinery, no framework concerns, and no premature native complexity.
-4. During client architecture work, explicitly examine connection lifecycle, request/response ownership, persistent connections, streaming request bodies, streaming response bodies, backpressure, cancellation, redirects, timeouts, TLS, and how HTTP/1.1 connection reuse should compose with Linux::Event without inventing a second transport queue.
-5. Before implementing substantial client code, compare the proposed API against prominent CPAN HTTP request/response/client conventions so familiar semantics can be reused where they fit the project charter.
-6. Keep PR #16 draft/unmerged until the user explicitly authorizes merge. The current server Response/body redesign is a stable reference point for client-side symmetry, but further API review is still allowed.
-7. Keep this handoff current immediately after each major architectural conclusion, experiment, or test so another chat can resume without reconstructing state.
+1. Move on to HTTP CLIENT ARCHITECTURE rather than trying to force a solution to the parked paused-read/terminal-readiness question.
+2. Evaluate the public client object model and responsibilities before implementing substantial code.
+3. Compare the proposed client API with prominent CPAN HTTP request/response/client conventions and reuse familiar semantics where they fit the project charter.
+4. Explicitly design connection lifecycle, request/response ownership, persistent connections, connection reuse, streaming request bodies, streaming response bodies, backpressure, cancellation, redirects, timeouts, TLS, and HTTP/1.1 ordering.
+5. Keep transport queues/backpressure owned by Linux::Event; do not invent a second HTTP transport queue.
+6. Preserve symmetry with the now-stable server Response/body concepts where it genuinely improves the API, but do not force false symmetry between client and server roles.
+7. Keep this handoff current immediately after major architectural conclusions, experiments, or tests.
+
+## Branch policy
+
+`main` is the canonical branch for the current work. Do not keep merged or abandoned feature branches merely as history. Delete them after merge/abandon unless they contain unique work with a concrete reason to preserve them.
+
+The old `feature/response-body-stream` branch contains no work that is not now on `main` and is safe to delete.
