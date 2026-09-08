@@ -19,14 +19,15 @@ use Linux::Event::HTTP::Server::Connection;
         $res->header('Content-Type', 'text/plain');
 
         if ($req->target eq '/stream') {
-            push @{$self->data->{write_status}}, $res->write("one\n");
-            push @{$self->data->{write_status}}, $res->write('');
-            push @{$self->data->{write_status}}, $res->write("two\n");
-            $res->complete("three\n");
+            my $body = $res->stream_body;
+            push @{$self->data->{write_status}}, $body->write("one\n");
+            push @{$self->data->{write_status}}, $body->write('');
+            push @{$self->data->{write_status}}, $body->write("two\n");
+            $body->complete("three\n");
             return;
         }
 
-        $res->complete("done\n");
+        $res->body("done\n");
         return;
     }
 }
@@ -90,15 +91,15 @@ is_deeply(
     [ '/stream', '/done' ],
     'pipelined request after chunked response dispatches in order',
 );
-ok($state->{write_status}[0], 'first chunked write exposes Stream backpressure status');
-ok($state->{write_status}[1], 'empty chunked write is accepted without completing response');
-ok($state->{write_status}[2], 'later chunked write exposes Stream backpressure status');
+ok($state->{write_status}[0], 'first stream body write exposes Stream backpressure status');
+ok($state->{write_status}[1], 'empty stream body write is accepted without completing response');
+ok($state->{write_status}[2], 'later stream body write exposes Stream backpressure status');
 
 my $wire = $state->{wire};
 like(
     $wire,
     qr/\AHTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nTransfer-Encoding: chunked\r\n\r\n4\r\none\n\r\n4\r\ntwo\n\r\n6\r\nthree\n\r\n0\r\n\r\nHTTP\/1\.1 200 OK\r\n/s,
-    'HTTP/1.1 write without Content-Length uses chunked transfer coding',
+    'HTTP/1.1 stream body without Content-Length uses chunked transfer coding',
 );
 unlike(
     $wire,
@@ -117,8 +118,9 @@ like(
 
     sub on_request ($self, $req, $res) {
         $res->header('Content-Type', 'text/plain');
-        $self->data->{write_status} = $res->write('old ');
-        $res->complete("school\n");
+        my $body = $res->stream_body;
+        $self->data->{write_status} = $body->write('old ');
+        $body->complete("school\n");
         return;
     }
 }
@@ -174,7 +176,7 @@ $client = Linux::Event::IO::Sock::Stream->connect(
 
 $loop->run;
 
-ok($legacy->{write_status}, 'HTTP/1.0 streaming write exposes backpressure status');
+ok($legacy->{write_status}, 'HTTP/1.0 stream body write exposes backpressure status');
 ok($legacy->{eof}, 'HTTP/1.0 unknown-length streaming closes to delimit the body');
 unlike($legacy->{wire}, qr/Transfer-Encoding:/i,
     'HTTP/1.0 streaming never emits Transfer-Encoding');

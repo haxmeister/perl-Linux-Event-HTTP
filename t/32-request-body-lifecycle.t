@@ -18,7 +18,7 @@ use Linux::Event::HTTP::Server::Connection;
         my $target = $request->target;
         push @{$self->data->{requests}}, $target;
         $self->data->{bodies}{$target} = '';
-        $response->complete($target eq '/early' ? "early\n" : "next\n");
+        $response->body($target eq '/early' ? "early\n" : "next\n");
     }
 
     sub on_body ($self, $request, $response, $bytes) {

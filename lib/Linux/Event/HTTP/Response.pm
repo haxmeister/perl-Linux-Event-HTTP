@@ -231,16 +231,6 @@ sub _cancel_stream_body ($self) {
     return;
 }
 
-# Transitional API retained while the body/stream_body design is evaluated.
-sub write ($self, $bytes) {
-    die 'write(): response has an Upgrade handoff pending'
-        if $self->{upgrade_pending};
-    die 'write(): response is already complete' if $self->{ended};
-    my $connection = $self->{connection}
-        or die 'write(): response is not bound to an active HTTP connection';
-    return $connection->_write_response($self, $bytes, 0);
-}
-
 sub _try_native_default_final ($self, $connection, $body) {
     return 0 if ref($self) ne __PACKAGE__;
     return 0 if $self->{status} != 200 || defined($self->{reason});
@@ -275,19 +265,6 @@ sub _try_native_default_final ($self, $connection, $body) {
 
     $connection->resume_read if $connection->is_read_paused;
     return 1;
-}
-
-sub complete ($self, $bytes = '') {
-    die 'complete(): response has an Upgrade handoff pending'
-        if $self->{upgrade_pending};
-    die 'complete(): response is already complete' if $self->{ended};
-    my $connection = $self->{connection}
-        or die 'complete(): response is not bound to an active HTTP connection';
-
-    return $self if $self->_try_native_default_final($connection, $bytes);
-
-    $connection->_write_response($self, $bytes, 1);
-    return $self;
 }
 
 sub upgrade ($self, $target_class) {
@@ -350,13 +327,13 @@ Linux::Event::HTTP::Response - HTTP response message
 
 Streaming bodies are selected explicitly:
 
-    $res->stream_body(
+    my $body = $res->stream_body(
         on_drain  => sub ($body) { ... },
         on_cancel => sub ($body) { ... },
     );
 
-    $res->stream_body->write($bytes);
-    $res->stream_body->complete;
+    $body->write($bytes);
+    $body->complete;
 
 =head1 DESCRIPTION
 
@@ -379,22 +356,30 @@ Configure or inspect response metadata before output starts.
     $res->body("hello\n");
     my $bytes = $res->body;
 
-Selects a complete scalar byte body. Once the enclosing HTTP callback returns,
-the connection can serialize the response. If C<body> is called later from an
-asynchronous callback, the response is serialized immediately. A scalar body
-and a streaming body are mutually exclusive.
+Selects a complete scalar byte body. Inside an HTTP callback, selecting the body
+does not serialize the response in the middle of the callback. Status, reason,
+and headers remain configurable until the enclosing callback returns. The
+connection then commits the complete response if the transaction is ready.
+
+If C<body> is called later from an asynchronous callback while the response is
+waiting, the complete response is committed immediately. A scalar body and a
+streaming body are mutually exclusive.
 
 =head2 stream_body
 
-    $res->stream_body(
+    my $body = $res->stream_body(
         on_drain  => sub ($body) { ... },
         on_cancel => sub ($body) { ... },
     );
 
 Creates the response's streaming body on first call and returns it. Later
-argumentless calls return the same object. C<on_drain> runs after downstream
-Linux::Event output pressure clears. C<on_cancel> runs if the HTTP consumer
-disappears before the body is completed.
+argumentless calls return the same object. Creating the stream does not start
+output and does not freeze Response metadata. The first C<write> or C<complete>
+on the body stream commits the response head; metadata cannot change after that
+point.
+
+C<on_drain> runs after downstream Linux::Event output pressure clears.
+C<on_cancel> runs if the HTTP consumer disappears before the body is completed.
 
 =head2 upgrade
 
@@ -403,12 +388,5 @@ Schedules a validated HTTP/1.1 protocol handoff.
 =head2 connection, request, is_started, is_complete, is_upgrading
 
 Expose the owning transaction and response lifecycle state.
-
-=head1 TRANSITIONAL METHODS
-
-C<write> and C<complete> remain temporarily while the C<body>/C<stream_body>
-API is evaluated on this feature branch. New application code should use
-C<body> for scalar responses or the object returned by C<stream_body> for
-streaming output.
 
 =cut

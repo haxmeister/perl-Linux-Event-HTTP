@@ -8,11 +8,12 @@ not a web framework or a framework-adapter distribution.
 The design has three layers:
 
 - **Transport** - Linux::Event owns sockets, TLS, readiness, buffering,
-  backpressure, deadlines, write queuing, and event dispatch.
+  backpressure, deadlines, ordered write queuing, and event dispatch.
 - **Protocol** - Linux::Event::HTTP owns HTTP parsing, serialization, message
   framing, persistence, limits, transfer coding, and Upgrade.
 - **Application-facing transaction objects** - Request exposes the incoming HTTP
-  request and Response controls the outgoing HTTP response.
+  request; Response describes the outgoing HTTP message; Body::Stream represents
+  a streaming response-body producer.
 
 Reusable transport or byte-stream performance work belongs in Linux::Event.
 HTTP-specific native code should remain limited to HTTP wire work where a native
@@ -31,6 +32,7 @@ Linux::Event::HTTP::Server
 Linux::Event::HTTP::Server::Connection
 Linux::Event::HTTP::Request
 Linux::Event::HTTP::Response
+Linux::Event::HTTP::Body::Stream
 ```
 
 The connection class is deliberately server-specific. Client and server
@@ -57,23 +59,93 @@ The ordinary callback is:
 
 ```perl
 on_request => sub ($conn, $req, $res) {
-    $res->complete("hello\n");
+    $res->body("hello\n");
 }
 ```
 
-The three objects have different lifetimes:
+The three transaction objects have different lifetimes:
 
 - `$conn` is the persistent TCP/TLS HTTP connection.
 - `$req` is one incoming request on that connection.
-- `$res` is the outgoing response paired with that request.
+- `$res` is the outgoing Response paired with that request.
 
-`Response->complete` completes the HTTP response, not the connection. On a
-persistent HTTP/1.1 connection the same socket normally remains open and can
-carry later requests.
+A complete HTTP response does not imply transport shutdown. On a persistent
+HTTP/1.1 connection the same socket normally remains open for later requests.
 
 A persistent connection advances only when both halves of the current
 transaction are complete: the full request input boundary has been consumed and
 the Response is complete.
+
+## Response body model
+
+The public split is intentional:
+
+```text
+Response     = HTTP response message
+Body::Stream = streaming producer
+```
+
+A complete scalar body is selected with:
+
+```perl
+$res->status(200);
+$res->header('Content-Type', 'text/plain');
+$res->body("hello\n");
+```
+
+`body(...)` is a complete-body declaration, not an immediate transport write.
+While an HTTP callback is running, the Response remains mutable until that
+callback returns. This makes configuration order intuitive:
+
+```perl
+$res->body("hello\n");
+$res->header('X-After-Body', 'yes');
+```
+
+When `body(...)` is called later from an asynchronous event callback while a
+Response is waiting, it commits the complete response immediately.
+
+Streaming is explicit:
+
+```perl
+my $body = $res->stream_body(
+    on_drain  => sub ($body) { ... },
+    on_cancel => sub ($body) { ... },
+);
+
+$body->write("one\n");
+$body->write("two\n");
+$body->complete;
+```
+
+`stream_body()` lazily creates one stable body object owned by the Response.
+Creating it does not commit headers. The first body `write()` or `complete()` is
+the streaming commit point and freezes Response metadata.
+
+Scalar and streaming bodies are mutually exclusive.
+
+The Response deliberately has no public `write`, `complete`, or `end` method.
+`write` belongs to the streaming body producer; `end` remains a transport
+concept. Public completion introspection remains `Response->is_complete`.
+
+## Response streaming and backpressure
+
+Body::Stream does not maintain a second output queue. Its writes are HTTP-framed
+and then fed into the existing Linux::Event ordered-byte output machinery.
+Linux::Event continues to own queued bytes, segmented output, high/low
+watermarks, `pending_bytes`, write readiness, `on_drain`, `max_pending_bytes`,
+and TLS transport progress.
+
+`Body::Stream->write()` preserves Linux::Event flow control:
+
+```text
+true  = accepted and producer may continue
+false = accepted, but producer should pause until on_drain
+```
+
+`on_cancel` means the HTTP connection abandoned an unfinished streaming body.
+Connection-level drain and close callbacks are composed with HTTP's body-stream
+bookkeeping rather than replaced.
 
 ## Request body streaming
 
@@ -102,38 +174,18 @@ For HTTP/1.1 requests with a body and `Expect: 100-continue`, the connection
 emits `100 Continue` after validating the request head. Unsupported expectations
 are rejected before application dispatch.
 
-## Response output
+## HTTP/1 response framing
 
-Response status and headers may be configured before output starts:
+The protocol layer chooses framing after the Response body mode is known.
 
-```perl
-$res->status(200);
-$res->header('Content-Type', 'text/plain');
-$res->complete("hello\n");
-```
+- Scalar bodies normally produce Content-Length.
+- HTTP/1.1 streaming without Content-Length uses chunked transfer coding.
+- A declared Content-Length is enforced across streaming writes.
+- HTTP/1.0 unknown-length streaming is close-delimited and therefore requires
+  connection close after queued output drains.
+- HEAD and body-forbidden status handling are enforced by the protocol layer.
 
-`complete($bytes)` supplies optional final body bytes and marks that Response
-complete. It does not itself mean close the socket.
-
-Streaming uses `write` followed by `complete`:
-
-```perl
-$res->write("one\n");
-$res->write("two\n");
-$res->complete;
-```
-
-The first output commits the response head and freezes status/header metadata.
-For HTTP/1.1, streaming without Content-Length uses chunked transfer coding. If
-Content-Length was declared, the emitted byte count is enforced. HTTP/1.0
-unknown-length streaming is close-delimited, so that particular response
-requires connection close after queued output drains.
-
-HEAD and body-forbidden status handling are enforced by the protocol layer.
-
-The public completion introspection method is `is_complete`. The distribution
-deliberately has no Response `end` or `is_ended` alias; `end` remains a transport
-concept on Linux::Event streams rather than an HTTP Response concept.
+The first actual body-stream output commits streaming metadata.
 
 ## HTTP/1 native boundary
 
@@ -154,8 +206,8 @@ picohttpparser is vendored at a recorded upstream revision and compiled once.
 Request metadata remains in native state and Perl strings are materialized only
 when application code asks for them.
 
-The scalar-response builder is a private optimization behind ordinary
-`Response->complete(...)`. Applications do not select a special performance
+The scalar-response builder is a private optimization behind eligible ordinary
+`Response->body(...)` calls. Applications do not select a special performance
 callback or alternate transaction API.
 
 ## Request semantics
@@ -198,14 +250,21 @@ socket policy, or named callback methods.
 Constructor callbacks supplied to Server override same-named methods on the
 configured connection class for that accepted instance.
 
+HTTP may temporarily pause application reads while a completed request waits for
+a later asynchronous Response so a pipelined request cannot overtake it. Peer
+terminal-readiness handling while such reads are paused is a generic
+Linux::Event core concern; HTTP must not add polling or a second buffer to solve
+it.
+
 ## TLS
 
-HTTPS uses the same Server, Server::Connection, Request, and Response classes.
-TLS remains Linux::Event transport policy on the configured Connection subclass.
-HTTP parsing receives decrypted bytes after the TLS handshake, while response
-output travels through the same Linux::Event TLS transport.
+HTTPS uses the same Server, Server::Connection, Request, Response, and
+Body::Stream classes. TLS remains Linux::Event transport policy on the configured
+Connection subclass.
 
-There is no separate HTTPS class hierarchy.
+HTTP parsing receives decrypted bytes after the TLS handshake, while response
+output travels through the same Linux::Event TLS transport. There is no separate
+HTTPS class hierarchy.
 
 ## Upgrade
 
@@ -231,6 +290,9 @@ Upgrade transaction and handoff.
 
 ## Performance policy
 
+Correctness, ease of correct use, coherent API design, maintainability, and
+composability take priority over HTTP-specific benchmark tricks.
+
 Benchmark discoveries may justify private optimizations, but they do not justify
 alternate public APIs merely to expose a fast path. The ordinary API should take
 an optimization transparently when eligible.
@@ -238,6 +300,10 @@ an optimization transparently when eligible.
 Before adding HTTP-specific native transport machinery, first ask whether the
 expensive primitive is reusable socket, buffer, or write machinery that belongs
 in Linux::Event core.
+
+Do not add a second HTTP output queue. Do not split the consolidated `_HTTP1`
+extension without a measured reason. Do not add HTTP-specific XS merely to win
+a benchmark.
 
 Parser microbenchmarks and end-to-end transaction benchmarks answer different
 questions. See `docs/BENCHMARKING.md` for the measurement contract.
@@ -250,13 +316,15 @@ The current server foundation includes:
 2. Strict HTTP/1 request framing validation and persistence policy.
 3. Streaming Content-Length and chunked request bodies.
 4. Expect: 100-continue handling.
-5. Response serialization, fixed-length output, and chunked streaming.
+5. Scalar Response bodies and explicit streaming Body::Stream output.
 6. Ordered persistent/pipelined request processing.
-7. Deferred Response completion.
-8. TLS transport integration.
-9. Atomic HTTP/1.1 Upgrade handoff.
-10. One consolidated private `_HTTP1` native extension.
-11. One canonical server callback API using Response `write` and `complete`.
+7. Deferred asynchronous scalar Response bodies.
+8. Linux::Event backpressure propagation for streaming response bodies.
+9. TLS transport integration.
+10. Atomic HTTP/1.1 Upgrade handoff.
+11. One consolidated private `_HTTP1` native extension.
+12. One canonical server API using `Response->body(...)` or
+    `Response->stream_body(...)`.
 
 Future protocol work includes the native HTTP client and HTTP/2. WebSocket
 remains a separate protocol distribution.

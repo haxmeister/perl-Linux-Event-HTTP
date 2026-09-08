@@ -46,7 +46,7 @@ sub new ($class, %option) {
         if exists $option{on_data};
     croak 'new(): HTTP Server cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
-    croak 'new(): on_request_final was removed; use on_request and Response->complete'
+    croak 'new(): on_request_final was removed; use on_request and Response->body or stream_body'
         if exists $option{on_request_final};
 
     my $connection_class = _load_connection_class(
@@ -137,7 +137,7 @@ Linux::Event::HTTP::Server - HTTP server endpoint
         port => 8080,
         on_request => sub ($conn, $req, $res) {
             $res->header('Content-Type', 'text/plain');
-            $res->complete("hello\n");
+            $res->body("hello\n");
         },
     );
 
@@ -161,8 +161,10 @@ The callback receives:
 
 =back
 
-Completing a Response does not normally close the connection. HTTP keep-alive
-may reuse the same connection for later requests.
+A Response describes one HTTP response message. C<body> selects a complete
+scalar body; C<stream_body> returns a streaming body producer. Completing an
+HTTP response does not normally close the connection. HTTP keep-alive may reuse
+the same connection for later requests.
 
 =head1 REQUEST BODIES
 
@@ -183,7 +185,7 @@ has arrived:
         },
 
         on_request_end => sub ($conn, $req, $res) {
-            $res->complete("received\n");
+            $res->body("received\n");
         },
     );
 
@@ -200,7 +202,7 @@ methods belong on a class:
     use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $req, $res) {
-        $res->complete("hello\n");
+        $res->body("hello\n");
     }
 
     package main;
@@ -227,7 +229,7 @@ Connection subclass:
         alpn      => ['http/1.1'];
 
     sub on_request ($self, $req, $res) {
-        $res->complete("secure\n");
+        $res->body("secure\n");
     }
 
 =head1 METHODS
@@ -264,6 +266,7 @@ connections keep their independent lifecycles.
 =head1 SEE ALSO
 
 L<Linux::Event::HTTP::Server::Connection>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::TLS>.
+L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Body::Stream>,
+L<Linux::Event::TLS>.
 
 =cut

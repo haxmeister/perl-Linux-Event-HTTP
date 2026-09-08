@@ -22,7 +22,7 @@ my $payload = 'x' x $response_bytes;
     }
 
     sub on_request ($self, $request, $response) {
-        $response->complete($self->data->{payload});
+        $response->body($self->data->{payload});
         return;
     }
 }
@@ -40,7 +40,7 @@ my $payload = 'x' x $response_bytes;
     }
 
     sub on_request_end ($self, $request, $response) {
-        $response->complete($self->data->{payload});
+        $response->body($self->data->{payload});
         return;
     }
 }

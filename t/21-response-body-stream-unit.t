@@ -33,6 +33,8 @@ my $connection = T::BodyConnection->new;
 my $request = bless {}, 'T::Request';
 my $response = Linux::Event::HTTP::Response->_new_bound($connection, $request);
 
+ok(!$response->can('write'), 'Response does not expose streaming write');
+ok(!$response->can('complete'), 'Response does not expose body completion');
 ok(!defined $response->body, 'response starts without a scalar body');
 $response->body("hello\n");
 is($response->body, "hello\n", 'body setter stores complete scalar body bytes');

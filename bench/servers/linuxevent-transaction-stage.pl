@@ -29,7 +29,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
     my $MAX_REQUEST_HEAD = 65_536;
     my $NOOP = sub ($connection, $request, $response) { return };
     my $COMPLETE = sub ($connection, $request, $response) {
-        $response->complete($connection->data->{payload});
+        $response->body($connection->data->{payload});
         return;
     };
 

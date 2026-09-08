@@ -64,7 +64,7 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
         $state->{server_tls_protocol} = $self->tls_protocol;
         $state->{server_tls_cipher} = $self->tls_cipher;
         $res->header('Content-Type', 'text/plain');
-        $res->complete("secure\n");
+        $res->body("secure\n");
     }
 }
 
@@ -174,7 +174,7 @@ like(
     );
 
     sub on_request ($self, $req, $res) {
-        $res->complete("unreachable\n");
+        $res->body("unreachable\n");
     }
 }
 

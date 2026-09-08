@@ -34,7 +34,7 @@ use Linux::Event::HTTP::Server::Connection;
     sub on_request_end ($self, $request, $response) {
         my $target = $request->target;
         push @{$self->data->{events}}, "end:$target";
-        $response->complete("$target\n");
+        $response->body("$target\n");
     }
 }
 
@@ -139,7 +139,7 @@ like($state->{response}, qr{/fixed\n.*?/chunk\n.*?/done\n\z}s,
     }
 
     sub on_request_end ($self, $request, $response) {
-        $response->complete("ok\n");
+        $response->body("ok\n");
     }
 }
 

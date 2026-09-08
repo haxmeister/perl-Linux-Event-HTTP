@@ -30,10 +30,11 @@ use Linux::Event::HTTP::Server::Connection;
 
         if ($request->target eq '/one') {
             $response->header('Content-Length', 4);
-            push @{$self->data->{write_status}}, $response->write('on');
-            $response->complete("e\n");
+            my $body = $response->stream_body;
+            push @{$self->data->{write_status}}, $body->write('on');
+            $body->complete("e\n");
         } else {
-            $response->complete("two\n");
+            $response->body("two\n");
         }
     }
 
@@ -127,7 +128,7 @@ is_deeply(
     [ 1, 1 ],
     'bodyless request state is complete during on_request_end',
 );
-ok($state->{write_status}[0], 'Response write exposes Stream backpressure status');
+ok($state->{write_status}[0], 'stream body write exposes Stream backpressure status');
 ok(
     $state->{responses}[0]->is_complete && $state->{responses}[1]->is_complete,
     'each Response is complete when its transaction completes',
@@ -144,12 +145,12 @@ is(scalar @status, 2, 'two HTTP responses were serialized on one connection');
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 4\r\n\r\none\n/s,
-    'fixed-length Response write/complete emits first body without buffering it whole',
+    'fixed-length streaming body emits first body without buffering it whole',
 );
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntwo\n\z/s,
-    'Response complete adds Content-Length and drains close response',
+    'scalar body adds Content-Length and drains close response',
 );
 
 {
@@ -170,7 +171,7 @@ like(
                 my $connection = $response->connection;
                 $connection->data->{paused_before_response}
                     = $connection->is_read_paused ? 1 : 0;
-                $response->complete("later\n");
+                $response->body("later\n");
             },
         );
         return;
@@ -238,7 +239,7 @@ ok(
 like(
     $deferred->{response},
     qr/Content-Length: 6\r\nConnection: close\r\n\r\nlater\n\z/s,
-    'Response can complete its request from a later event',
+    'Response body can be supplied from a later event',
 );
 
 my $removed_ok = eval {

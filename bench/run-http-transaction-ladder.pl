@@ -73,22 +73,22 @@ my %case = (
         description => 'Response marking plus write-before-clear transaction commit and read-resume check',
     },
     complete => {
-        label => '3j + guarded public Response complete',
+        label => '3j + guarded public Response body',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'complete',
-        description => 'Two production-style guarded request callbacks with public Response->complete through the private native default-final path',
+        description => 'Two production-style guarded request callbacks with public Response->body through the private native default-final path',
     },
     checked => {
         label => '3k + production request checks',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'checked',
-        description => 'Guarded public Response complete plus production parser eval/error boundary, request-head size guard, and Expect validation',
+        description => 'Guarded public Response body plus production parser eval/error boundary, request-head size guard, and Expect validation',
     },
     bodyless => {
         label => '3l semantic bodyless driver',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'bodyless',
-        description => 'Benchmark-only bodyless common path retaining production driver guards, parser/error checks, guarded callbacks, post-callback lifecycle checks, and public Response complete while omitting generic body-mode branches',
+        description => 'Benchmark-only bodyless common path retaining production driver guards, parser/error checks, guarded callbacks, post-callback lifecycle checks, and public Response body while omitting generic body-mode branches',
     },
     http => {
         label => '4 Full HTTP transaction',
@@ -199,7 +199,7 @@ if (defined $json_path) {
 
     my $report = {
         benchmark => 'linux-event-http-transaction-ladder',
-        benchmark_contract_version => 5,
+        benchmark_contract_version => 6,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",

@@ -15,8 +15,17 @@ Revision history for Linux-Event-HTTP
     - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
     - Bind HTTP Server::Connection directly to Linux::Event::IO::Sock::Stream.
     - Pair every dispatched server Request with a connection-created Response object.
-    - Use Response->complete for HTTP response completion and Response->write for streaming
-      body output, keeping response completion distinct from transport shutdown.
+    - Define Response as the HTTP response message: use Response->body for a complete
+      scalar body and Response->stream_body for an explicit streaming Body::Stream producer.
+    - Keep Body::Stream writes on Linux::Event's existing ordered-byte output machinery,
+      preserving cooperative backpressure and avoiding a second HTTP output queue.
+    - Make stream_body lazy and stable; selecting it does not commit response metadata,
+      while the first body-stream write or completion starts output and freezes metadata.
+    - Defer scalar body commit until the enclosing HTTP callback returns so metadata may
+      still be configured after body assignment; commit later asynchronous body assignment
+      immediately when a Response is waiting.
+    - Remove transitional public Response->write and Response->complete methods rather
+      than carrying compatibility aliases in this unreleased distribution.
     - Expose Response->is_complete and deliberately omit ambiguous end/is_ended aliases.
     - Lock response status and headers once output begins.
     - Stream Content-Length request bodies through cached on_body callbacks.
@@ -29,6 +38,8 @@ Revision history for Linux-Event-HTTP
       application data propagation, and configurable Server::Connection subclasses.
     - Preserve constructor-callback override semantics through Server acceptance without
       allocating per-connection wrapper closures or adding per-request Server dispatch.
+    - Compose HTTP Body::Stream drain/cancellation bookkeeping with custom Connection
+      on_drain and on_close lifecycle callbacks rather than replacing subclass behavior.
     - Integrate HTTPS through Linux::Event declarative TLS policy on the configured
       Server::Connection subclass, including server-handshake validation and HTTP/1.1 ALPN.
     - Verify TLS readiness precedes HTTP dispatch and expose negotiated ALPN, protocol,
@@ -43,12 +54,13 @@ Revision history for Linux-Event-HTTP
     - Add a reproducible cross-server comparison harness for Linux::Event, Feersum,
       Mojolicious, Node.js, Go, aiohttp, and optional libh2o reference runs.
     - Keep on_request -> Response as the single server request API while transparently
-      optimizing eligible scalar Response->complete calls with a narrow native builder.
+      optimizing eligible scalar Response->body calls with a narrow native builder.
     - Consolidate request parsing, chunked decoding, response serialization, and the
       default-final builder into one private Linux::Event::HTTP::_HTTP1 extension.
     - Remove the benchmark-oriented on_request_final public shortcut while retaining its
-      useful optimization lesson inside the ordinary Response->complete implementation.
-    - Keep a focused response-finalization benchmark for supported callback shapes.
+      useful optimization lesson inside the ordinary Response->body path.
+    - Keep a focused response-finalization benchmark for supported callback shapes and
+      update the transaction-ladder contract for the callback-return body commit point.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Simplify the README around the normal Server callback API, moving Connection
       subclassing, TLS, Upgrade, and implementation details into clearly advanced sections.

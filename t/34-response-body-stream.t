@@ -26,17 +26,27 @@ use Linux::Event::HTTP::Server::Connection;
 
         if ($req->target eq '/stream') {
             $res->header('Content-Type', 'text/plain');
-            my $first = $res->stream_body(
+            my $body = $res->stream_body(
                 on_cancel => sub ($body) {
                     ++$self->data->{unexpected_cancel};
                 },
             );
             $self->data->{same_stream}
-                = Scalar::Util::refaddr($first)
+                = Scalar::Util::refaddr($body)
                 == Scalar::Util::refaddr($res->stream_body) ? 1 : 0;
-            push @{$self->data->{write_status}},
-                $res->stream_body->write("one\n");
-            $res->stream_body->complete("two\n");
+            $self->data->{started_after_stream_body}
+                = $res->is_started ? 1 : 0;
+            $res->header('X-After-Stream-Body', 'yes');
+            push @{$self->data->{write_status}}, $body->write("one\n");
+            $self->data->{started_after_stream_write}
+                = $res->is_started ? 1 : 0;
+            my $late_metadata = eval {
+                $res->header('X-Too-Late', 'no');
+                1;
+            };
+            $self->data->{metadata_locked_after_stream_write}
+                = $late_metadata ? 0 : 1;
+            $body->complete("two\n");
             return;
         }
 
@@ -62,11 +72,14 @@ use Linux::Event::HTTP::Server::Connection;
 
 my $loop = Linux::Event::Loop->new;
 my $state = {
-    targets           => [],
-    write_status      => [],
-    wire              => '',
-    same_stream       => 0,
-    unexpected_cancel => 0,
+    targets                            => [],
+    write_status                       => [],
+    wire                               => '',
+    same_stream                        => 0,
+    unexpected_cancel                  => 0,
+    started_after_stream_body          => 1,
+    started_after_stream_write         => 0,
+    metadata_locked_after_stream_write => 0,
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
@@ -118,6 +131,12 @@ is_deeply(
     'body and stream responses preserve pipelined request order',
 );
 ok($state->{same_stream}, 'stream_body returns one stable stream object');
+ok(!$state->{started_after_stream_body},
+    'selecting stream_body does not start response output');
+ok($state->{started_after_stream_write},
+    'first stream write starts response output');
+ok($state->{metadata_locked_after_stream_write},
+    'response metadata locks after first stream write');
 ok($state->{write_status}[0], 'stream_body write exposes Linux::Event flow-control return');
 is($state->{unexpected_cancel}, 0, 'normally completed stream is not cancelled');
 
@@ -129,8 +148,8 @@ like(
 );
 like(
     $wire,
-    qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nTransfer-Encoding: chunked\r\n\r\n4\r\none\n\r\n4\r\ntwo\n\r\n0\r\n\r\n/s,
-    'stream_body uses HTTP chunk framing while body object owns write/complete',
+    qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nX-After-Stream-Body: yes\r\nTransfer-Encoding: chunked\r\n\r\n4\r\none\n\r\n4\r\ntwo\n\r\n0\r\n\r\n/s,
+    'stream_body stays configurable until first write then uses HTTP chunk framing',
 );
 like(
     $wire,
@@ -193,7 +212,7 @@ $client = Linux::Event::IO::Sock::Stream->connect(
     on_ready => sub ($stream) {
         $stream->write("GET /cancel HTTP/1.1\r\nHost: example.test\r\n\r\n");
         $cancel_timer = Linux::Event::Kernel::Timer->new(
-            loop  => $loop,
+            loop => $loop,
             after => 0.05,
             on_timer => sub ($timer) {
                 my $connection = $cancel_state->{connection};

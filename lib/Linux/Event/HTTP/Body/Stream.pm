@@ -87,7 +87,8 @@ Linux::Event::HTTP::Body::Stream - writable producer for a streaming HTTP body
 =head1 DESCRIPTION
 
 Applications normally obtain this object from C<< $res->stream_body(...) >>.
-They do not construct it directly.
+They do not construct it directly. Creating the object does not commit the
+Response; the first C<write> or C<complete> starts response output.
 
 C<write> supplies more body bytes and preserves Linux::Event's cooperative
 backpressure return value. False means the bytes were accepted but the producer
