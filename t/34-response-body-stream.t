@@ -154,12 +154,17 @@ like(
         );
         $self->data->{body} = $res->stream_body;
     }
+
+    sub on_close ($self) {
+        ++$self->data->{user_close};
+    }
 }
 
 $loop = Linux::Event::Loop->new;
 my $cancel_state = {
-    loop      => $loop,
-    cancelled => 0,
+    loop       => $loop,
+    cancelled  => 0,
+    user_close => 0,
 };
 
 $listener = Linux::Event::IO::Sock::Listener->new(
@@ -211,5 +216,7 @@ is($cancel_state->{cancelled}, 1,
     'closing the HTTP connection cancels an unfinished stream body exactly once');
 ok($cancel_state->{body}->is_cancelled,
     'cancelled stream body exposes terminal cancellation state');
+is($cancel_state->{user_close}, 1,
+    'custom Connection on_close composes with stream-body cancellation');
 
 done_testing;
