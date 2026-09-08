@@ -38,6 +38,10 @@ sub _take_http_handler ($class, $name, $option) {
 sub new ($class, %option) {
     croak 'new(): Connection owns on_data; use on_request for HTTP requests'
         if exists $option{on_data};
+    croak 'new(): Connection owns on_drain; use Response->stream_body(on_drain => ...)'
+        if exists $option{on_drain};
+    croak 'new(): Connection owns on_close; use Response->stream_body(on_cancel => ...) for streaming-body cancellation'
+        if exists $option{on_close};
     croak 'new(): Connection cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
     croak 'new(): on_request_final was removed; use on_request and Response->complete'
@@ -50,6 +54,9 @@ sub new ($class, %option) {
 
     croak 'new(): HTTP Connection requires on_request callback or method'
         if !$on_request;
+
+    $option{on_drain} = \&_http_transport_drain;
+    $option{on_close} = \&_http_transport_close;
 
     my $self = $class->SUPER::new(%option);
     $self->{_http_on_request} = $on_request;
@@ -76,6 +83,19 @@ sub on_data ($self, $bytes) {
     return if $self->{_http_closing} || $self->is_closed;
     $self->{_http_input} .= $bytes;
     $self->_drive_http1;
+    return;
+}
+
+sub _http_transport_drain ($self) {
+    my $response = $self->{_http_active_response} or return;
+    my $body = $response->_stream_body_object or return;
+    $body->_drain;
+    return;
+}
+
+sub _http_transport_close ($self) {
+    my $response = $self->{_http_active_response} or return;
+    $response->_cancel_stream_body;
     return;
 }
 
@@ -131,9 +151,40 @@ sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
         };
     }
 
-    return 1 if $ok;
-    $self->_fail_active_transaction(500, $request, $response);
-    return 0;
+    if (!$ok) {
+        $self->_fail_active_transaction(500, $request, $response);
+        return 0;
+    }
+
+    my $ready = eval {
+        $self->_response_body_ready($response);
+        1;
+    };
+    if (!$ready) {
+        $self->_fail_active_transaction(500, $request, $response);
+        return 0;
+    }
+
+    return 1;
+}
+
+sub _response_body_ready ($self, $response) {
+    return if !$response || !$response->_has_scalar_body;
+    return if $response->is_complete;
+    return if $self->{_http_dispatching};
+
+    croak 'body(): connection is closing or closed'
+        if $self->{_http_closing} || $self->is_closed;
+
+    my $active = $self->{_http_active_response};
+    croak 'body(): this Response is not the active HTTP transaction'
+        if !$active || refaddr($active) != refaddr($response);
+
+    my $body = $response->_scalar_body;
+    return if $response->_try_native_default_final($self, $body);
+
+    $self->_write_response($response, $body, 1, 'body');
+    return;
 }
 
 sub _clear_transaction ($self) {
@@ -147,6 +198,7 @@ sub _clear_transaction ($self) {
 sub _abort_started_response ($self, $response) {
     return if $self->{_http_closing} || $self->is_closed;
 
+    $response->_cancel_stream_body if $response;
     $response->_mark_complete if $response && !$response->is_complete;
     $self->_clear_transaction;
     $self->{_http_input} = '';
@@ -465,12 +517,12 @@ sub _chunked_transfer_encoding ($operation, $version, $values) {
     return 1;
 }
 
-sub _response_start ($self, $response, $bytes, $final) {
+sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
     my $request = $self->{_http_active_request};
     my $version = $request->http_version;
     my $method = $request->method;
     my $status = $response->status;
-    my $operation = $final ? 'complete' : 'write';
+    $operation //= $final ? 'complete' : 'write';
 
     croak "$operation(): informational responses require a future interim-response API"
         if $status >= 100 && $status < 200;
@@ -486,9 +538,9 @@ sub _response_start ($self, $response, $bytes, $final) {
     croak "$operation(): response cannot contain both Transfer-Encoding and Content-Length"
         if @transfer_encoding && @content_length;
 
-    croak 'write(): HEAD responses must be completed with complete()'
+    croak "$operation(): HEAD responses cannot use a streaming body"
         if !$final && $head_request;
-    croak 'write(): this response status cannot use body streaming'
+    croak "$operation(): this response status cannot use body streaming"
         if !$final && $body_forbidden;
 
     my $chunked = _chunked_transfer_encoding(
@@ -516,13 +568,13 @@ sub _response_start ($self, $response, $bytes, $final) {
     }
 
     if ($final && !$head_request && !$body_forbidden && defined $expected) {
-        croak 'complete(): Content-Length does not match scalar body length'
+        croak "$operation(): Content-Length does not match scalar body length"
             if _compare_count(length($bytes), $expected) != 0;
     }
 
     if (!$final && defined $expected
         && _compare_count(length($bytes), $expected) > 0) {
-        croak 'write(): response body exceeds Content-Length';
+        croak "$operation(): response body exceeds Content-Length";
     }
 
     my @connection = $response->header_values('Connection');
@@ -553,8 +605,8 @@ sub _response_start ($self, $response, $bytes, $final) {
     );
 }
 
-sub _write_response ($self, $response, $body, $final) {
-    my $operation = $final ? 'complete' : 'write';
+sub _write_response ($self, $response, $body, $final, $operation = undef) {
+    $operation //= $final ? 'complete' : 'write';
 
     croak "$operation(): connection is closing or closed"
         if $self->{_http_closing} || $self->is_closed;
@@ -568,7 +620,7 @@ sub _write_response ($self, $response, $body, $final) {
 
     if (!$state) {
         my ($created, $head) = $self->_response_start(
-            $response, $bytes, $final,
+            $response, $bytes, $final, $operation,
         );
         $state = $self->{_http_response_state} = $created;
 
@@ -596,7 +648,7 @@ sub _write_response ($self, $response, $body, $final) {
     }
     if ($final && defined($state->{expected})
         && _compare_count($new_sent, $state->{expected}) != 0) {
-        croak 'complete(): response body length does not match Content-Length';
+        croak "$operation(): response body length does not match Content-Length";
     }
 
     $state->{sent} = $new_sent;
@@ -670,6 +722,7 @@ sub _protocol_error ($self, $status, $version = '1.1') {
 
     my $head = $response->_serialize_head($version);
     if (my $active = $self->{_http_active_response}) {
+        $active->_cancel_stream_body;
         $active->_mark_complete if !$active->is_complete;
     }
     $self->_clear_transaction;
@@ -696,132 +749,55 @@ __END__
 
 Linux::Event::HTTP::Server::Connection - HTTP/1 connection protocol state
 
-=head1 SYNOPSIS
-
-    package UploadHTTP;
-    use parent 'Linux::Event::HTTP::Server::Connection';
-
-    sub on_request ($self, $req, $res) {
-        $self->data->{body} = '';
-        $res->header('Content-Type', 'text/plain');
-    }
-
-    sub on_body ($self, $req, $res, $bytes) {
-        $self->data->{body} .= $bytes;
-    }
-
-    sub on_request_end ($self, $req, $res) {
-        $res->complete("received " . length($self->data->{body}) . " bytes\n");
-    }
-
-    package main;
-    use Linux::Event::Loop;
-    use Linux::Event::IO::Sock::Listener;
-
-    my $loop = Linux::Event::Loop->new;
-    my $listener = Linux::Event::IO::Sock::Listener->new(
-        loop         => $loop,
-        stream_class => 'UploadHTTP',
-        host         => '127.0.0.1',
-        port         => 8080,
-    );
-
-    $loop->run;
-
 =head1 DESCRIPTION
 
-C<Linux::Event::HTTP::Server::Connection> is a
-L<Linux::Event::IO::Sock::Stream> subclass. Linux::Event continues to own the
-socket, TLS transport, readiness, ordered-byte reads and writes, buffering, and
-backpressure. Connection owns HTTP/1 request boundaries, request-body framing,
-request sequencing, response serialization, and persistence policy.
+C<Linux::Event::HTTP::Server::Connection> owns HTTP/1 request boundaries,
+request sequencing, response serialization, persistence policy, and the mapping
+between a streaming response body and Linux::Event transport backpressure.
+Linux::Event continues to own the socket, TLS transport, readiness, and native
+ordered-byte output queue.
 
-Applications normally use L<Linux::Event::HTTP::Server> and receive this
-Connection as the first callback argument. Subclass Connection when reusable
-transport, TLS, tuning, or callback policy belongs on the connection class.
+Applications normally use L<Linux::Event::HTTP::Server>. Every request is
+paired with one L<Linux::Event::HTTP::Response> supplied to the HTTP callbacks.
 
-Every dispatched Request is paired with one L<Linux::Event::HTTP::Response>
-created by Connection, and the same Request and Response objects are passed to
-the callbacks for that transaction.
+=head1 RESPONSE BODIES
+
+A complete scalar body is configured on the Response:
+
+    $res->header('Content-Type', 'text/plain');
+    $res->body("hello\n");
+
+A streaming body is obtained from the Response and owns streaming operations:
+
+    $res->stream_body(
+        on_drain  => sub ($body) { ... },
+        on_cancel => sub ($body) { ... },
+    );
+
+    $res->stream_body->write($bytes);
+    $res->stream_body->complete;
+
+The streaming body does not maintain a second output queue. C<write> feeds the
+existing Linux::Event ordered-byte destination. Its false return preserves the
+normal high-watermark contract, and the body C<on_drain> callback is driven by
+the connection's native drain transition. C<on_cancel> runs if the connection
+closes before the streaming body completes.
+
+C<on_data>, transport C<on_drain>, and transport C<on_close> are reserved by
+this HTTP connection implementation.
 
 =head1 REQUEST BODY STREAMING
 
-Request bodies are streaming-first. C<Content-Length> bodies are delivered as
-bytes become available. C<Transfer-Encoding: chunked> is decoded before
-application delivery. If C<on_body> is absent, body bytes are drained and
-discarded rather than accumulated.
-
-C<on_request_end> runs when the complete request input boundary has been
-consumed, including requests with no body.
-
-=head1 CALLBACKS
-
-=head2 on_request
-
-    sub on_request ($self, $req, $res) {
-        ...
-    }
-
-Runs once after the validated request head is available. A body-bearing request
-may continue delivering C<on_body> calls after this callback.
-
-=head2 on_body
-
-    sub on_body ($self, $req, $res, $bytes) {
-        ...
-    }
-
-Receives decoded request-body byte strings.
-
-=head2 on_request_end
-
-    sub on_request_end ($self, $req, $res) {
-        $res->complete("ok\n");
-    }
-
-Runs once when the complete request input boundary has been reached. If the
-Response is already complete, the transaction can advance to the next
-persistent request. If the Response is still active, reads pause so a later
-request cannot overtake it.
-
-=head1 RESPONSE FLOW
-
-C<complete> completes an HTTP Response; it does not mean close the underlying
-socket. A persistent connection normally remains open for later requests.
-
-    $res->status(200);
-    $res->header('Content-Type', 'text/plain');
-    $res->complete("hello\n");
-
-Streaming uses C<write> followed by C<complete>:
-
-    $res->write("hello ");
-    $res->write("world\n");
-    $res->complete;
-
-When HTTP/1.1 streaming begins without Content-Length, Connection uses chunked
-transfer coding. HTTP/1.0 unknown-length streaming is close-delimited and
-therefore requires the HTTP connection to close after the response completes.
-
-The first output commits the response head, after which status and headers are
-immutable. A persistent connection advances to the next request only after both
-the request input and response are complete.
-
-=head1 EXPECT: 100-CONTINUE
-
-For an HTTP/1.1 request with a body and C<Expect: 100-continue>, Connection
-emits C<100 Continue> after validating the request head. Unsupported
-expectations are answered with 417 and the connection is closed.
-
-=head1 LIMITS
-
-The current request-head limit is 65,536 bytes and the parser header-count limit
-is 100 fields. Request bodies are streamed and do not inherit the request-head
-memory limit.
+C<on_request> runs after the validated request head is available. C<on_body>
+receives decoded request-body bytes. C<on_request_end> runs when the complete
+request input boundary has been consumed. If no response body has been selected
+by then, input pauses so a later asynchronous callback may finish configuring
+the Response without allowing the next request to overtake it.
 
 =head1 SEE ALSO
 
 L<Linux::Event::HTTP::Server>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::IO::Sock::Stream>.
+L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Body::Stream>,
+L<Linux::Event::IO::Sock::Stream>.
 
 =cut

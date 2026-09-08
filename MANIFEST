@@ -21,6 +21,7 @@ docs/ARCHITECTURE.md
 docs/BENCHMARKING.md
 docs/PICOHTTPPARSER-EXPERIMENT.md
 lib/Linux/Event/HTTP.pm
+lib/Linux/Event/HTTP/Body/Stream.pm
 lib/Linux/Event/HTTP/Request.pm
 lib/Linux/Event/HTTP/Response.pm
 lib/Linux/Event/HTTP/Server.pm
@@ -35,10 +36,12 @@ t/12-http1-framing.t
 t/13-chunked-decoder.t
 t/14-native-response-fastpath.t
 t/20-response.t
+t/21-response-body-stream-unit.t
 t/30-connection.t
 t/31-request-body.t
 t/32-request-body-lifecycle.t
 t/33-response-chunked.t
+t/34-response-body-stream.t
 t/40-server.t
 t/41-tls-server.t
 t/42-upgrade.t

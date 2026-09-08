@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use Scalar::Util qw(refaddr weaken);
+use utf8 ();
 
 use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::_Upgrade ();
@@ -32,6 +33,9 @@ sub _new ($class, %args) {
         started         => 0,
         ended           => 0,
         upgrade_pending => 0,
+        body_kind       => undef,
+        body            => undef,
+        stream_body     => undef,
     }, $class;
 
     if (defined $headers) {
@@ -58,6 +62,9 @@ sub _new_bound ($class, $connection, $request) {
         started         => 0,
         ended           => 0,
         upgrade_pending => 0,
+        body_kind       => undef,
+        body            => undef,
+        stream_body     => undef,
     }, $class;
     weaken($self->{connection});
     return $self;
@@ -137,6 +144,94 @@ sub header_values ($self, $name) {
         @{$self->{headers}};
 }
 
+sub _body_bytes ($operation, $body) {
+    die "$operation(): body must be a scalar byte string" if ref($body);
+
+    my $bytes = defined($body) ? "$body" : '';
+    if (utf8::is_utf8($bytes)) {
+        die "$operation(): body contains wide characters; encode it to bytes first"
+            if !utf8::downgrade($bytes, 1);
+    }
+    return $bytes;
+}
+
+sub body ($self, @args) {
+    return $self->{body} if !@args;
+
+    die 'body accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
+    die 'body(): response already has a streaming body'
+        if ($self->{body_kind} // '') eq 'stream';
+
+    $self->{body_kind} = 'scalar';
+    $self->{body} = _body_bytes('body', $args[0]);
+
+    if (my $connection = $self->{connection}) {
+        $connection->_response_body_ready($self);
+    }
+
+    return $self;
+}
+
+sub stream_body ($self, @args) {
+    if ($self->{stream_body}) {
+        die 'stream_body options may only be supplied when the stream is created'
+            if @args;
+        return $self->{stream_body};
+    }
+
+    $self->_assert_mutable;
+    die 'stream_body(): response already has a scalar body'
+        if ($self->{body_kind} // '') eq 'scalar';
+    die 'stream_body options must be key/value pairs' if @args % 2;
+
+    require Linux::Event::HTTP::Body::Stream;
+    my $body = Linux::Event::HTTP::Body::Stream->_new($self, @args);
+    $self->{body_kind} = 'stream';
+    $self->{stream_body} = $body;
+    return $body;
+}
+
+sub _has_scalar_body ($self) {
+    return ($self->{body_kind} // '') eq 'scalar';
+}
+
+sub _scalar_body ($self) {
+    return $self->{body};
+}
+
+sub _stream_write ($self, $bytes) {
+    die 'stream body write rejected: response has an Upgrade handoff pending'
+        if $self->{upgrade_pending};
+    die 'stream body write rejected: response is already complete'
+        if $self->{ended};
+    my $connection = $self->{connection}
+        or die 'stream body write rejected: response is not bound to an active HTTP connection';
+    return $connection->_write_response($self, $bytes, 0, 'stream_body->write');
+}
+
+sub _stream_complete ($self, $bytes = '') {
+    die 'stream body complete rejected: response has an Upgrade handoff pending'
+        if $self->{upgrade_pending};
+    die 'stream body complete rejected: response is already complete'
+        if $self->{ended};
+    my $connection = $self->{connection}
+        or die 'stream body complete rejected: response is not bound to an active HTTP connection';
+    $connection->_write_response($self, $bytes, 1, 'stream_body->complete');
+    return $self;
+}
+
+sub _stream_body_object ($self) {
+    return $self->{stream_body};
+}
+
+sub _cancel_stream_body ($self) {
+    my $body = $self->{stream_body} or return;
+    $body->_cancel;
+    return;
+}
+
+# Transitional API retained while the body/stream_body design is evaluated.
 sub write ($self, $bytes) {
     die 'write(): response has an Upgrade handoff pending'
         if $self->{upgrade_pending};
@@ -243,143 +338,77 @@ __END__
 
 =head1 NAME
 
-Linux::Event::HTTP::Response - response half of an HTTP transaction
+Linux::Event::HTTP::Response - HTTP response message
 
 =head1 SYNOPSIS
 
-    sub on_request ($self, $req, $res) {
+    sub on_request ($conn, $req, $res) {
         $res->status(200);
         $res->header('Content-Type', 'text/plain');
-        $res->complete("hello\n");
+        $res->body("hello\n");
     }
+
+Streaming bodies are selected explicitly:
+
+    $res->stream_body(
+        on_drain  => sub ($body) { ... },
+        on_cancel => sub ($body) { ... },
+    );
+
+    $res->stream_body->write($bytes);
+    $res->stream_body->complete;
 
 =head1 DESCRIPTION
 
 Every successfully dispatched HTTP request receives one Response object created
-and bound by L<Linux::Event::HTTP::Server::Connection>. Applications do not
-construct Response objects and do not pass them back to Connection.
+and bound by L<Linux::Event::HTTP::Server::Connection>. The Response describes
+one HTTP response message, not the underlying socket or a writable handle.
 
-A Response represents one HTTP response, not the underlying TCP or TLS
-connection. C<complete> completes this HTTP response. It does not mean "close
-the socket"; on a persistent HTTP connection the same socket normally remains
-open for later requests.
-
-Status and headers may be configured until output begins. C<write> streams body
-bytes. C<complete> may supply final body bytes and marks the response half of
-the transaction complete.
+C<body> supplies a complete scalar body. C<stream_body> selects a body whose
+bytes are produced over time. The streaming body object owns C<write> and
+C<complete>; the Response owns status, headers, and body selection.
 
 =head1 METHODS
 
-=head2 status
+=head2 status, reason, header, add_header, header_values
 
-    my $status = $res->status;
-    $res->status(404);
+Configure or inspect response metadata before output starts.
 
-Gets or sets the three-digit status code. It defaults to 200.
+=head2 body
 
-=head2 reason
+    $res->body("hello\n");
+    my $bytes = $res->body;
 
-    my $reason = $res->reason;
-    $res->reason('Not Here');
+Selects a complete scalar byte body. Once the enclosing HTTP callback returns,
+the connection can serialize the response. If C<body> is called later from an
+asynchronous callback, the response is serialized immediately. A scalar body
+and a streaming body are mutually exclusive.
 
-Gets or sets the optional reason phrase. Passing undef restores the serializer's
-default phrase for the status code.
+=head2 stream_body
 
-=head2 header
+    $res->stream_body(
+        on_drain  => sub ($body) { ... },
+        on_cancel => sub ($body) { ... },
+    );
 
-    $res->header('Content-Type', 'text/plain');
-    my $type = $res->header('Content-Type');
-
-With a value, replaces all existing fields of the same ASCII
-case-insensitive name with one field. Without a value, returns the first
-matching value or undef.
-
-=head2 add_header
-
-    $res->add_header('Set-Cookie', 'a=1');
-    $res->add_header('Set-Cookie', 'b=2');
-
-Appends another field without removing existing fields of the same name.
-
-=head2 header_values
-
-    my @cookies = $res->header_values('Set-Cookie');
-
-Returns all matching values in output order.
-
-=head2 write
-
-    my $accepted = $res->write("hello ");
-    $res->write("world\n");
-    $res->complete;
-
-Begins or continues a streaming response body. The return value mirrors
-Linux::Event Stream write backpressure: false means the bytes were accepted but
-the configured high watermark has been reached.
-
-For HTTP/1.1, if Content-Length was not set before the first C<write>, the
-Connection automatically uses chunked transfer coding. C<complete> emits the
-terminating chunk. If Content-Length was set explicitly, the total body length
-must match it exactly.
-
-HTTP/1.0 cannot use chunked transfer coding. Unknown-length streaming is
-close-delimited, so completing that response also requires the HTTP connection
-to close after queued output has drained.
-
-=head2 complete
-
-    $res->complete("hello\n");
-
-Completes this HTTP response. Optional bytes are the final response-body bytes.
-When C<complete> is the first body operation, Content-Length is added
-automatically from the supplied byte-string length.
-
-    $res->write($chunk);
-    $res->write($chunk);
-    $res->complete;
-
-After streaming has started, C<complete> follows the framing mode selected by
-the first C<write>. Completing a response normally does not close a persistent
-HTTP connection. The connection closes only when HTTP framing or persistence
-rules require it.
+Creates the response's streaming body on first call and returns it. Later
+argumentless calls return the same object. C<on_drain> runs after downstream
+Linux::Event output pressure clears. C<on_cancel> runs if the HTTP consumer
+disappears before the body is completed.
 
 =head2 upgrade
 
-    $res->header('Upgrade', 'websocket');
-    $res->header('Sec-WebSocket-Accept', $accept);
-    $res->upgrade('MyWebSocketConnection');
+Schedules a validated HTTP/1.1 protocol handoff.
 
-Completes an HTTP/1.1 protocol switch and hands the same live stream-socket
-object to another L<Linux::Event::IO::Sock::Stream> subclass. The request and
-response must satisfy HTTP Upgrade rules before the handoff is scheduled.
+=head2 connection, request, is_started, is_complete, is_upgrading
 
-=head2 connection
+Expose the owning transaction and response lifecycle state.
 
-Returns the owning L<Linux::Event::HTTP::Server::Connection> while it remains
-alive.
+=head1 TRANSITIONAL METHODS
 
-=head2 request
-
-Returns the L<Linux::Event::HTTP::Request> paired with this response.
-
-=head2 is_started
-
-True after the response head has been committed.
-
-=head2 is_complete
-
-True after C<complete> completes the response half of the HTTP transaction, or
-after an Upgrade switching response is committed immediately before handoff.
-
-=head2 is_upgrading
-
-True after C<upgrade> has validated and scheduled a protocol handoff but before
-the 101 response has been committed and the live stream has transitioned.
-
-=head1 INTERNAL SERIALIZATION
-
-The private C<_serialize_head> method serializes the HTTP/1 status line and
-field section. It is used by the connection protocol layer and is not the
-application response-writing API.
+C<write> and C<complete> remain temporarily while the C<body>/C<stream_body>
+API is evaluated on this feature branch. New application code should use
+C<body> for scalar responses or the object returned by C<stream_body> for
+streaming output.
 
 =cut
