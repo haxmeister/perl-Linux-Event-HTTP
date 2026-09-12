@@ -36,6 +36,10 @@ Revision history for Linux-Event-HTTP
     - Fall back to close-delimited streaming for unknown-length HTTP/1.0 responses.
     - Add HTTP::Server as a thin Listener convenience with retained constructor callbacks,
       application data propagation, and configurable Server::Connection subclasses.
+    - Adopt Linux::Event Listener stream recipes for accepted HTTP Connections and remove
+      the private acceptance adapter so Listener constructs connection_class directly.
+    - Expose Server tuning and TLS deployment policy directly, use stream_tuning class
+      defaults, and distinguish accepted-Connection on_error from on_listener_error.
     - Preserve constructor-callback override semantics through Server acceptance without
       allocating per-connection wrapper closures or adding per-request Server dispatch.
     - Compose HTTP Body::Stream drain/cancellation bookkeeping with custom Connection

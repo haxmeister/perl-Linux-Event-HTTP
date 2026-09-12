@@ -50,7 +50,6 @@ WriteMakefile(
             package => [qw(
                 Linux::Event::HTTP::_HTTP1
                 Linux::Event::HTTP::_HTTP1::Chunked
-                Linux::Event::HTTP::_ServerConnection
                 Linux::Event::HTTP::_Upgrade
             )],
         },

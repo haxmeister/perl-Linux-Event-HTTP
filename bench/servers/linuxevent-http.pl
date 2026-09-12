@@ -17,7 +17,7 @@ my $payload = 'x' x $response_bytes;
     package Linux::Event::HTTP::Bench::NaturalCompareConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
-    sub stream_options ($class) {
+    sub stream_tuning ($class) {
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
     }
 
@@ -31,7 +31,7 @@ my $payload = 'x' x $response_bytes;
     package Linux::Event::HTTP::Bench::RequestEndCompareConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
-    sub stream_options ($class) {
+    sub stream_tuning ($class) {
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
     }
 

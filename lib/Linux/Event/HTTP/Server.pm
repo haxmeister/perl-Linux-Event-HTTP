@@ -7,11 +7,8 @@ use Carp qw(croak);
 
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::HTTP::Server::Connection;
-use Linux::Event::HTTP::_ServerConnection ();
 
 our $VERSION = '0.001';
-
-my $ADAPTER = 'Linux::Event::HTTP::_ServerConnection';
 
 sub _load_connection_class ($class) {
     croak 'new(): connection_class must be a package name'
@@ -25,10 +22,6 @@ sub _load_connection_class ($class) {
 
     croak 'new(): connection_class must inherit Linux::Event::HTTP::Server::Connection'
         if !$class->isa('Linux::Event::HTTP::Server::Connection');
-    croak 'new(): connection_class cannot name the private Server adapter'
-        if $class eq $ADAPTER;
-
-    $class->_validate_accepted_configuration;
     return $class;
 }
 
@@ -42,6 +35,8 @@ sub _take_callback ($name, $option) {
 sub new ($class, %option) {
     croak 'new(): stream_class is internal; use connection_class'
         if exists $option{stream_class};
+    croak 'new(): stream is internal; use connection_class, tuning, tls, and callbacks'
+        if exists $option{stream};
     croak 'new(): HTTP Server owns on_data; use on_request/on_body callbacks'
         if exists $option{on_data};
     croak 'new(): HTTP Server cannot use message framing callbacks'
@@ -60,21 +55,46 @@ sub new ($class, %option) {
         $callbacks{$name} = $callback if $callback;
     }
 
+    my %stream_callback;
+    for my $name (qw(
+        on_ready on_transport_ready on_drain on_eof on_error on_close
+    )) {
+        my $callback = _take_callback($name, \%option);
+        $stream_callback{$name} = $callback if $callback;
+    }
+
+    my $listener_error = _take_callback('on_listener_error', \%option);
+
+    my $tuning = exists($option{tuning}) ? delete($option{tuning}) : {};
+    croak 'new(): tuning must be a hash reference'
+        if ref($tuning) ne 'HASH';
+
+    my $tls_enabled = exists $option{tls};
+    my $tls = delete $option{tls};
+    croak 'new(): tls must be a hash reference'
+        if $tls_enabled && ref($tls) ne 'HASH';
+
     croak 'new(): HTTP Server requires on_request callback or connection_class method'
         if !$callbacks{on_request} && !$connection_class->can('on_request');
 
     my $data = delete $option{data};
-    my $state = {
-        _http_server_state => 1,
-        connection_class   => $connection_class,
-        callbacks          => \%callbacks,
-        data               => $data,
-    };
+    my $state = bless {
+        callbacks => \%callbacks,
+        data      => $data,
+    }, 'Linux::Event::HTTP::Server::_ConnectionState';
+
+    my %stream = (
+        class  => $connection_class,
+        data   => $state,
+        tuning => $tuning,
+        %stream_callback,
+    );
+    $stream{tls} = $tls if $tls_enabled;
 
     my $listener = Linux::Event::IO::Sock::Listener->new(
         %option,
-        stream_class => $ADAPTER,
-        data         => $state,
+        stream => \%stream,
+        (defined($listener_error) ? (on_error => $listener_error) : ()),
     );
 
     return bless {
@@ -195,11 +215,15 @@ whole-body scalar.
 =head1 CONNECTION SUBCLASSES
 
 Most applications do not need to subclass the HTTP connection. Use
-C<connection_class> when reusable TLS, stream tuning, socket policy, or callback
-methods belong on a class:
+C<connection_class> when reusable transport defaults, stream tuning, socket
+policy, or callback methods belong on a class:
 
     package MyHTTP;
     use parent 'Linux::Event::HTTP::Server::Connection';
+
+    sub stream_tuning ($class) {
+        return read_budget_bytes => 262_144;
+    }
 
     sub on_request ($self, $req, $res) {
         $res->body("hello\n");
@@ -216,21 +240,51 @@ methods belong on a class:
 C<connection_class> defaults to
 L<Linux::Event::HTTP::Server::Connection>.
 
+=head1 TUNING AND CONNECTION CALLBACKS
+
+Supply deployment-specific Stream tuning directly to the Server. These values
+override C<stream_tuning()> defaults on the configured Connection class:
+
+    my $server = Linux::Event::HTTP::Server->new(
+        loop => $loop,
+        port => 8080,
+        tuning => {
+            read_size         => 131_072,
+            read_budget_bytes => 524_288,
+            idle_timeout      => 60,
+        },
+        on_request => sub ($conn, $req, $res) {
+            $res->body("hello\n");
+        },
+    );
+
+Accepted-connection lifecycle callbacks are C<on_ready>,
+C<on_transport_ready>, C<on_drain>, C<on_eof>, C<on_error>, and C<on_close>.
+C<on_listener_error> is the distinct callback for listening and acceptance
+failures. The advanced C<on_accept($listener, $conn)> callback receives the
+underlying Listener and each newly accepted HTTP Connection.
+
 =head1 TLS
 
-HTTPS uses the same Server API. TLS remains Linux::Event transport policy on a
-Connection subclass:
+HTTPS uses the same Server API. Activate Linux::Event TLS transport policy with
+the Server C<tls> option:
 
-    package SecureHTTP;
-    use parent 'Linux::Event::HTTP::Server::Connection';
-    use Linux::Event::TLS
-        cert_file => '/etc/myapp/server-cert.pem',
-        key_file  => '/etc/myapp/server-key.pem',
-        alpn      => ['http/1.1'];
+    my $server = Linux::Event::HTTP::Server->new(
+        loop => $loop,
+        port => 8443,
+        tls => {
+            cert_file => '/etc/myapp/server-cert.pem',
+            key_file  => '/etc/myapp/server-key.pem',
+            alpn      => ['http/1.1'],
+        },
+        on_request => sub ($conn, $req, $res) {
+            $res->body("secure\n");
+        },
+    );
 
-    sub on_request ($self, $req, $res) {
-        $res->body("secure\n");
-    }
+A Connection subclass may define C<tls_defaults()> for reusable ALPN and
+timeout defaults. The Server C<tls> option is still required to activate TLS,
+so the same Connection class may be used for plain HTTP and HTTPS listeners.
 
 =head1 METHODS
 

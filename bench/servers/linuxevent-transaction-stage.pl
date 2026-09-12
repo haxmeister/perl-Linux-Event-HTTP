@@ -33,7 +33,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
         return;
     };
 
-    sub stream_options ($class) {
+    sub stream_tuning ($class) {
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
     }
 
@@ -341,13 +341,15 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 
 my $loop = Linux::Event::Loop->new;
 my $server = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'Linux::Event::HTTP::Bench::TransactionStageConnection',
-    host         => '127.0.0.1',
-    port         => 0 + $port,
-    data         => {
-        wire    => $wire,
-        payload => $payload,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0 + $port,
+    stream => {
+        class => 'Linux::Event::HTTP::Bench::TransactionStageConnection',
+        data  => {
+            wire    => $wire,
+            payload => $payload,
+        },
     },
 );
 

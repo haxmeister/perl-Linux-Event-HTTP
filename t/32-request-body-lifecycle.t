@@ -39,11 +39,13 @@ my $state = {
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::EarlyResponseHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $state,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::EarlyResponseHTTP',
+        data  => $state,
+    },
 );
 
 my $guard = Linux::Event::Kernel::Timer->new(
@@ -117,11 +119,13 @@ my $bad = {
 };
 
 $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::MalformedChunkHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $bad,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::MalformedChunkHTTP',
+        data  => $bad,
+    },
 );
 
 $guard = Linux::Event::Kernel::Timer->new(

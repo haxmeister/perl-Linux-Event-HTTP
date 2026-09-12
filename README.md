@@ -158,12 +158,16 @@ The first actual stream output is the commit point for a streaming Response.
 
 Most programs can use constructor callbacks only. A custom
 `Linux::Event::HTTP::Server::Connection` subclass is the advanced extension
-point for reusable transport policy, TLS, stream tuning, socket policy, or named
+point for reusable transport defaults, stream tuning, socket policy, or named
 callbacks:
 
 ```perl
 package MyHTTP;
 use parent 'Linux::Event::HTTP::Server::Connection';
+
+sub stream_tuning ($class) {
+    return read_budget_bytes => 262_144;
+}
 
 sub on_request ($self, $req, $res) {
     $res->body("hello\n");
@@ -182,25 +186,54 @@ Constructor callbacks supplied to `Server->new` override same-named subclass
 callbacks for accepted connections. HTTP's internal drain/close bookkeeping is
 composed with Connection lifecycle callbacks rather than replacing them.
 
+Deployment-specific tuning may be supplied directly to the Server and overrides
+the configured Connection class defaults:
+
+```perl
+my $server = Linux::Event::HTTP::Server->new(
+    loop => $loop,
+    port => 8080,
+    tuning => {
+        read_size         => 131_072,
+        read_budget_bytes => 524_288,
+        idle_timeout      => 60,
+    },
+    on_request => sub ($conn, $req, $res) {
+        $res->body("hello\n");
+    },
+);
+```
+
+Accepted-connection lifecycle callbacks are `on_ready`,
+`on_transport_ready`, `on_drain`, `on_eof`, `on_error`, and `on_close`.
+`on_listener_error` is the separate callback for listening and acceptance
+failures. The advanced `on_accept($listener, $conn)` callback receives the
+underlying Listener and each newly accepted HTTP Connection.
+
 ## TLS
 
 HTTPS uses the same HTTP classes. TLS remains Linux::Event transport policy:
 
 ```perl
-package SecureHTTP;
-use parent 'Linux::Event::HTTP::Server::Connection';
-use Linux::Event::TLS
-    cert_file => '/etc/myapp/server-cert.pem',
-    key_file  => '/etc/myapp/server-key.pem',
-    alpn      => ['http/1.1'];
-
-sub on_request ($self, $req, $res) {
-    $res->body("secure\n");
-}
+my $server = Linux::Event::HTTP::Server->new(
+    loop => $loop,
+    port => 8443,
+    tls => {
+        cert_file => '/etc/myapp/server-cert.pem',
+        key_file  => '/etc/myapp/server-key.pem',
+        alpn      => ['http/1.1'],
+    },
+    on_request => sub ($conn, $req, $res) {
+        $res->body("secure\n");
+    },
+);
 ```
 
 The TLS handshake completes before HTTP request dispatch. Negotiated ALPN,
 protocol, and cipher remain available through the Linux::Event connection.
+Connection subclasses may define `tls_defaults()` for reusable ALPN and timeout
+defaults. A `tls` Server option is still required to activate TLS; this allows
+the same Connection class to serve plain HTTP and HTTPS listeners.
 
 ## Upgrade
 

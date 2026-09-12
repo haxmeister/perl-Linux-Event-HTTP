@@ -50,11 +50,9 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
     package T::SecureHTTP;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
-    Linux::Event::TLS->import(
-        cert_file => $cert,
-        key_file  => $key,
-        alpn      => ['http/1.1'],
-    );
+    sub tls_defaults ($class) {
+        return alpn => ['http/1.1'];
+    }
 
     sub on_request ($self, $req, $res) {
         my $state = $self->data;
@@ -81,6 +79,10 @@ my $server = Linux::Event::HTTP::Server->new(
     port             => 0,
     data             => $state,
     connection_class => 'T::SecureHTTP',
+    tls => {
+        cert_file => $cert,
+        key_file  => $key,
+    },
     on_ready => sub ($conn) {
         $state->{server_ready}++;
         $state->{ready_class} = ref($conn);
@@ -168,10 +170,9 @@ like(
     package T::InvalidSecureHTTP;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
-    Linux::Event::TLS->import(
-        verify => 0,
-        alpn   => ['http/1.1'],
-    );
+    sub tls_defaults ($class) {
+        return alpn => ['http/1.1'];
+    }
 
     sub on_request ($self, $req, $res) {
         $res->body("unreachable\n");
@@ -184,6 +185,7 @@ my $ok = eval {
         host             => '127.0.0.1',
         port             => 0,
         connection_class => 'T::InvalidSecureHTTP',
+        tls              => {},
     );
     1;
 };

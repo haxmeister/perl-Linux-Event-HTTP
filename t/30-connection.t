@@ -60,11 +60,13 @@ my $state = {
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::HTTPConnection',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $state,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::HTTPConnection',
+        data  => $state,
+    },
 );
 
 my $client = Linux::Event::IO::Sock::Stream->connect(
@@ -184,11 +186,13 @@ my $deferred = {
 };
 
 $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::DeferredHTTPConnection',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $deferred,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::DeferredHTTPConnection',
+        data  => $deferred,
+    },
 );
 
 $client = Linux::Event::IO::Sock::Stream->connect(

@@ -14,7 +14,7 @@ use Linux::Event::HTTP::Server::Connection;
     package T::BodyHTTP;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
-    sub stream_options ($class) {
+    sub stream_tuning ($class) {
         return read_size => 8;
     }
 
@@ -46,11 +46,13 @@ my $state = {
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::BodyHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $state,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::BodyHTTP',
+        data  => $state,
+    },
 );
 
 my $guard = Linux::Event::Kernel::Timer->new(
@@ -152,11 +154,13 @@ my $expect = {
 };
 
 $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::ExpectHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $expect,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::ExpectHTTP',
+        data  => $expect,
+    },
 );
 
 $guard = Linux::Event::Kernel::Timer->new(
@@ -218,11 +222,13 @@ my $unsupported = {
 };
 
 $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::ExpectHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $unsupported,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::ExpectHTTP',
+        data  => $unsupported,
+    },
 );
 
 $guard = Linux::Event::Kernel::Timer->new(

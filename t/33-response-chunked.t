@@ -40,11 +40,13 @@ my $state = {
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::ChunkedResponseHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $state,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::ChunkedResponseHTTP',
+        data  => $state,
+    },
 );
 
 my $guard = Linux::Event::Kernel::Timer->new(
@@ -133,11 +135,13 @@ my $legacy = {
 };
 
 $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::HTTP10Streaming',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $legacy,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::HTTP10Streaming',
+        data  => $legacy,
+    },
 );
 
 $guard = Linux::Event::Kernel::Timer->new(

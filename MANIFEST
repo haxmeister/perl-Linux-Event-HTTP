@@ -27,7 +27,6 @@ lib/Linux/Event/HTTP/Response.pm
 lib/Linux/Event/HTTP/Server.pm
 lib/Linux/Event/HTTP/Server/Connection.pm
 lib/Linux/Event/HTTP/_HTTP1.pm
-lib/Linux/Event/HTTP/_ServerConnection.pm
 lib/Linux/Event/HTTP/_Upgrade.pm
 t/00-load.t
 t/10-pico-parser.t

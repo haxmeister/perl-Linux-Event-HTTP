@@ -3,6 +3,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Socket qw(AF_INET SOCK_STREAM inet_aton pack_sockaddr_in);
 
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
@@ -56,6 +57,14 @@ my $server = Linux::Event::HTTP::Server->new(
     host => '127.0.0.1',
     port => 0,
     data => $state,
+    tuning => {
+        read_budget_bytes => 123,
+    },
+    on_ready => sub ($conn) {
+        $state->{ready_class} = ref($conn);
+        $state->{read_budget_bytes}
+            = $conn->{xs_state}->stats->{read_budget_bytes};
+    },
     on_request => sub ($conn, $req, $res) {
         $state->{request_class} = ref($req);
         $state->{response_class} = ref($res);
@@ -97,8 +106,12 @@ ok($state->{same_data}, 'accepted Connection receives Server application data');
 is(
     $state->{connection_class},
     'Linux::Event::HTTP::Server::Connection',
-    'private acceptance adapter returns the configured Connection object',
+    'Listener constructs the configured Connection class directly',
 );
+is($state->{ready_class}, 'Linux::Event::HTTP::Server::Connection',
+    'accepted lifecycle callbacks receive the HTTP Connection directly');
+is($state->{read_budget_bytes}, 123,
+    'Server tuning is applied to accepted HTTP Connections');
 is(
     $state->{request_class},
     'Linux::Event::HTTP::Request',
@@ -232,5 +245,79 @@ $ok = eval {
 };
 ok(!$ok, 'Server rejects raw on_data callback');
 like($@, qr/owns on_data/, 'raw callback rejection explains HTTP ownership');
+
+$ok = eval {
+    Linux::Event::HTTP::Server->new(
+        loop => Linux::Event::Loop->new,
+        host => '127.0.0.1',
+        port => 0,
+        on_request => sub { },
+        on_listener_error => 'not a callback',
+    );
+    1;
+};
+ok(!$ok, 'Server validates the distinct Listener error callback');
+like($@, qr/on_listener_error must be a coderef/,
+    'Listener callback validation names on_listener_error');
+
+{
+    package T::RejectedServerConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+
+    sub configure_socket ($self, $fh, $role, $address) {
+        die "intentional accepted socket rejection\n";
+    }
+
+    sub on_request ($self, $req, $res) {
+        $res->body("unreachable\n");
+    }
+}
+
+$loop = Linux::Event::Loop->new;
+my $errors = {
+    connection => 0,
+    listener   => 0,
+};
+$server = Linux::Event::HTTP::Server->new(
+    loop             => $loop,
+    host             => '127.0.0.1',
+    port             => 0,
+    connection_class => 'T::RejectedServerConnection',
+    on_error => sub ($conn, $error) {
+        $errors->{connection}++;
+    },
+    on_listener_error => sub ($listener, $error) {
+        $errors->{listener}++;
+        $errors->{error} = $error;
+        $loop->stop;
+    },
+);
+
+my $error_guard = Linux::Event::Kernel::Timer->new(
+    loop  => $loop,
+    after => 2,
+    on_timer => sub ($timer) {
+        die "HTTP Server listener error test timed out\n";
+    },
+);
+
+socket(my $peer, AF_INET, SOCK_STREAM, 0) or die "socket: $!";
+connect(
+    $peer,
+    pack_sockaddr_in($server->port, inet_aton('127.0.0.1')),
+) or die "connect: $!";
+
+$loop->run;
+$error_guard->cancel;
+close $peer;
+$server->close;
+
+is($errors->{listener}, 1,
+    'accepted setup failure invokes on_listener_error');
+is($errors->{connection}, 0,
+    'accepted setup failure does not invoke Connection on_error');
+isa_ok($errors->{error}, 'Linux::Event::Error');
+like("$errors->{error}", qr/intentional accepted socket rejection/,
+    'Listener error retains accepted setup failure detail');
 
 done_testing;

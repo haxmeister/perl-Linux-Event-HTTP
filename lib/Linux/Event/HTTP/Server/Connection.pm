@@ -36,6 +36,17 @@ sub _take_http_handler ($class, $name, $option) {
 }
 
 sub new ($class, %option) {
+    my $server_state = $option{data};
+    if (ref($server_state)
+        eq 'Linux::Event::HTTP::Server::_ConnectionState') {
+        $option{data} = $server_state->{data};
+        my $callbacks = $server_state->{callbacks};
+        for my $name (qw(on_request on_body on_request_end)) {
+            $option{$name} = $callbacks->{$name}
+                if exists $callbacks->{$name};
+        }
+    }
+
     croak 'new(): Connection owns on_data; use on_request for HTTP requests'
         if exists $option{on_data};
     croak 'new(): Connection cannot use message framing callbacks'

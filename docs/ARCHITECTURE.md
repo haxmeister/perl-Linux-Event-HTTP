@@ -244,11 +244,17 @@ legal names such as `X_Foo` and `X-Foo` into one field.
 There is no wrapper object between Linux::Event byte I/O and the HTTP parser.
 
 Most applications do not need to subclass it. `connection_class` is the
-advanced extension point for reusable transport policy, TLS, stream tuning,
-socket policy, or named callback methods.
+advanced extension point for reusable transport defaults, stream tuning, socket
+policy, or named callback methods.
 
 Constructor callbacks supplied to Server override same-named methods on the
 configured connection class for that accepted instance.
+
+Server resolves its HTTP connection policy into one Linux::Event Listener
+`stream => {...}` recipe. The recipe names the actual `connection_class` and
+holds application data, tuning overrides, TLS policy, and accepted-connection
+lifecycle callbacks. Listener therefore constructs the HTTP Connection class
+directly; HTTP does not need an acceptance adapter or a per-connection wrapper.
 
 HTTP may temporarily pause application reads while a completed request waits for
 a later asynchronous Response so a pipelined request cannot overtake it. Peer
@@ -259,8 +265,10 @@ it.
 ## TLS
 
 HTTPS uses the same Server, Server::Connection, Request, Response, and
-Body::Stream classes. TLS remains Linux::Event transport policy on the configured
-Connection subclass.
+Body::Stream classes. Server `tls => {...}` activates Linux::Event transport
+policy for generated Connections. A Connection subclass may provide reusable
+`tls_defaults()`, but defaults do not activate TLS by themselves, so one class
+can serve both plain and TLS listeners.
 
 HTTP parsing receives decrypted bytes after the TLS handshake, while response
 output travels through the same Linux::Event TLS transport. There is no separate

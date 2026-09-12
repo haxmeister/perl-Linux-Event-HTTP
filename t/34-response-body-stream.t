@@ -83,11 +83,13 @@ my $state = {
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::BodyStreamHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $state,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::BodyStreamHTTP',
+        data  => $state,
+    },
 );
 
 my $guard = Linux::Event::Kernel::Timer->new(
@@ -187,11 +189,13 @@ my $cancel_state = {
 };
 
 $listener = Linux::Event::IO::Sock::Listener->new(
-    loop         => $loop,
-    stream_class => 'T::CancelBodyHTTP',
-    host         => '127.0.0.1',
-    port         => 0,
-    data         => $cancel_state,
+    loop => $loop,
+    host => '127.0.0.1',
+    port => 0,
+    stream => {
+        class => 'T::CancelBodyHTTP',
+        data  => $cancel_state,
+    },
 );
 $cancel_state->{listener} = $listener;
 

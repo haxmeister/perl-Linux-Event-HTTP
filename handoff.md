@@ -1,18 +1,53 @@
 # Linux::Event::HTTP handoff
 
-Updated: 2026-09-07 (America/Chicago)
+Updated: 2026-09-12 (America/Chicago)
 
 ## Start here next session
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical working branch: `main`
-- PR #16 (`Finalize Response body and streaming API`) has been merged by fast-forward into `main`.
-- PR #16 feature head merged into main: `4de28b996bc873a0ee739f67910025f74dc1a8dd`
-- Last code-bearing fully validated head before handoff-only commits: `85d8ed654c38b394827782237d32b55da9389a62`
-- CI run `34181760630` on that head: success across Perl 5.36, latest Perl, latest threaded Perl, end-to-end benchmark smoke, and distribution integrity.
+- Current `main` includes the Linux::Event Listener-recipe, runtime-tuning, and
+  runtime-TLS compatibility migration described below.
+- PR #16 (`Finalize Response body and streaming API`) was the preceding major
+  server API baseline.
+- Historical CI run `34181760630` on that baseline succeeded across Perl 5.36,
+  latest Perl, latest threaded Perl, end-to-end benchmark smoke, and
+  distribution integrity.
 - There is no release planned yet. Continue architecture/design work.
 
 The server-side Response body redesign is now on `main` and should be treated as the current baseline.
+
+## Linux::Event main compatibility
+
+HTTP has been migrated to the Listener, tuning, and accepted-TLS APIs now on
+Linux::Event `main`:
+
+- `HTTP::Server` resolves one `stream => {...}` Listener recipe.
+- Listener constructs the configured HTTP `connection_class` directly.
+- The private `Linux::Event::HTTP::_ServerConnection` acceptance adapter has
+  been removed.
+- `HTTP::Server->new(tuning => {...})` supplies deployment tuning that overrides
+  Connection `stream_tuning()` defaults.
+- `HTTP::Server->new(tls => {...})` activates accepted TLS. Connection
+  `tls_defaults()` may provide reusable ALPN and timeout defaults without
+  forcing every listener using that class to be TLS.
+- Accepted-Connection lifecycle callbacks are stored in the Stream recipe.
+  `on_error` retains its accepted-Connection meaning;
+  `on_listener_error` handles Listener and acceptance errors distinctly.
+- Direct Listener tests and benchmark adapters use the new Stream recipe, and
+  all `stream_options()` methods have been renamed to `stream_tuning()`.
+
+Validation against Linux::Event main commit `321d4c2`:
+
+- full suite: 17 files, 354 tests, all successful;
+- `bench/run-http-end-to-end.pl --smoke`: successful;
+- `bench/run-http-transaction-ladder.pl --smoke`: successful.
+
+The current Linux::Event source still reports version `0.112`, although these
+API changes are newer than the published 0.112 baseline. Therefore
+`Makefile.PL` still says `Linux::Event => 0.112`; update that prerequisite as
+soon as the next Linux::Event release version is assigned. Until then, test
+HTTP against Linux::Event `main`.
 
 ## Current Response/body API
 
@@ -197,13 +232,15 @@ HTTP Upgrade remains a boundary operation: validate Upgrade, queue 101, clear th
 
 ## Immediate next steps
 
-1. Move on to HTTP CLIENT ARCHITECTURE rather than trying to force a solution to the parked paused-read/terminal-readiness question.
-2. Evaluate the public client object model and responsibilities before implementing substantial code.
-3. Compare the proposed client API with prominent CPAN HTTP request/response/client conventions and reuse familiar semantics where they fit the project charter.
-4. Explicitly design connection lifecycle, request/response ownership, persistent connections, connection reuse, streaming request bodies, streaming response bodies, backpressure, cancellation, redirects, timeouts, TLS, and HTTP/1.1 ordering.
-5. Keep transport queues/backpressure owned by Linux::Event; do not invent a second HTTP transport queue.
-6. Preserve symmetry with the now-stable server Response/body concepts where it genuinely improves the API, but do not force false symmetry between client and server roles.
-7. Keep this handoff current immediately after major architectural conclusions, experiments, or tests.
+1. When Linux::Event assigns/releases the version after 0.112, update the
+   `Makefile.PL` minimum prerequisite to that version.
+2. Move on to HTTP CLIENT ARCHITECTURE rather than trying to force a solution to the parked paused-read/terminal-readiness question.
+3. Evaluate the public client object model and responsibilities before implementing substantial code.
+4. Compare the proposed client API with prominent CPAN HTTP request/response/client conventions and reuse familiar semantics where they fit the project charter.
+5. Explicitly design connection lifecycle, request/response ownership, persistent connections, connection reuse, streaming request bodies, streaming response bodies, backpressure, cancellation, redirects, timeouts, TLS, and HTTP/1.1 ordering.
+6. Keep transport queues/backpressure owned by Linux::Event; do not invent a second HTTP transport queue.
+7. Preserve symmetry with the now-stable server Response/body concepts where it genuinely improves the API, but do not force false symmetry between client and server roles.
+8. Keep this handoff current immediately after major architectural conclusions, experiments, or tests.
 
 ## Branch policy
 
