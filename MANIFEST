@@ -34,6 +34,7 @@ t/11-native-request.t
 t/12-http1-framing.t
 t/13-chunked-decoder.t
 t/14-native-response-fastpath.t
+t/19-request-message.t
 t/20-response.t
 t/21-response-body-stream-unit.t
 t/30-connection.t
