@@ -40,10 +40,6 @@ BEGIN {
     $NATIVE_HEADER         = \&{__PACKAGE__ . '::header'};
     $NATIVE_HEADER_VALUES  = \&{__PACKAGE__ . '::header_values'};
     $NATIVE_DESTROY        = \&{__PACKAGE__ . '::DESTROY'};
-
-    delete ${__PACKAGE__ . '::'}{http_version};
-    delete ${__PACKAGE__ . '::'}{body_mode};
-    delete ${__PACKAGE__ . '::'}{keep_alive};
 }
 
 no warnings 'redefine';
