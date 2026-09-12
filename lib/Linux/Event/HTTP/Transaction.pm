@@ -3,50 +3,63 @@ use v5.36;
 use strict;
 use warnings;
 
-use Scalar::Util qw(blessed);
+use Scalar::Util qw(blessed weaken);
 
 our $VERSION = '0.001';
 
 my %TERMINAL = map { $_ => 1 } qw(complete cancelled error);
 
 sub _new ($class, %args) {
-    my $request = delete $args{request};
-    my $cancel  = delete $args{cancel};
+    my $request    = delete $args{request};
+    my $controller = delete $args{controller};
 
     die 'Transaction requires a Linux::Event::HTTP::Request'
         if !blessed($request)
         || !$request->isa('Linux::Event::HTTP::Request');
-    die 'Transaction cancel handler must be a coderef'
-        if defined($cancel) && ref($cancel) ne 'CODE';
+    die 'Transaction controller must be an object'
+        if defined($controller) && !blessed($controller);
     die 'unknown Transaction option: ' . join(', ', sort keys %args)
         if %args;
 
-    return bless {
-        request  => $request,
-        response => undef,
-        state    => 'pending',
-        error    => undef,
-        cancel   => $cancel,
+    my $self = bless {
+        request    => $request,
+        response   => undef,
+        state      => 'pending',
+        error      => undef,
+        controller => $controller,
     }, $class;
+    weaken($self->{controller}) if defined $self->{controller};
+    return $self;
 }
 
-sub request     ($self) { $self->{request} }
-sub response    ($self) { $self->{response} }
-sub state       ($self) { $self->{state} }
-sub error       ($self) { $self->{error} }
-sub is_complete ($self) { $self->{state} eq 'complete' }
-sub is_cancelled($self) { $self->{state} eq 'cancelled' }
-sub is_terminal ($self) { !!$TERMINAL{$self->{state}} }
+sub request      ($self) { $self->{request} }
+sub response     ($self) { $self->{response} }
+sub state        ($self) { $self->{state} }
+sub error        ($self) { $self->{error} }
+sub is_complete  ($self) { $self->{state} eq 'complete' }
+sub is_cancelled ($self) { $self->{state} eq 'cancelled' }
+sub is_terminal  ($self) { !!$TERMINAL{$self->{state}} }
 
 sub cancel ($self) {
     return $self if $self->is_terminal;
 
-    if (my $cancel = $self->{cancel}) {
-        $cancel->($self);
+    if (my $controller = $self->{controller}) {
+        $controller->_cancel_http_transaction($self);
     }
 
     return $self if $self->is_terminal;
     return $self->_mark_cancelled;
+}
+
+sub _set_controller ($self, $controller) {
+    die 'cannot change controller of a terminal Transaction'
+        if $self->is_terminal;
+    die 'Transaction controller must be an object'
+        if defined($controller) && !blessed($controller);
+
+    $self->{controller} = $controller;
+    weaken($self->{controller}) if defined $self->{controller};
+    return $self;
 }
 
 sub _activate ($self) {
@@ -74,7 +87,7 @@ sub _mark_complete ($self) {
         if !$self->{response};
 
     $self->{state} = 'complete';
-    delete $self->{cancel};
+    delete $self->{controller};
     return $self;
 }
 
@@ -83,7 +96,7 @@ sub _mark_cancelled ($self) {
     die 'cannot cancel a terminal Transaction' if $self->is_terminal;
 
     $self->{state} = 'cancelled';
-    delete $self->{cancel};
+    delete $self->{controller};
     return $self;
 }
 
@@ -93,7 +106,7 @@ sub _fail ($self, $error) {
 
     $self->{error} = $error;
     $self->{state} = 'error';
-    delete $self->{cancel};
+    delete $self->{controller};
     return $self;
 }
 
@@ -146,8 +159,8 @@ parser or transport internals here.
 =head2 cancel
 
 Requests cancellation of this exchange. Cancellation is idempotent from the
-application's perspective. The owning Client/Connection is responsible for the
-protocol action needed to abandon the exchange safely.
+application's perspective. The current Client or Connection controller is
+responsible for the protocol action needed to abandon the exchange safely.
 
 =head2 is_complete
 
