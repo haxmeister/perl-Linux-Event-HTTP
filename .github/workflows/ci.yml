@@ -42,6 +42,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libssl-dev
 
+      - name: Install Linux::Event release dependency
+        run: |
+          cpanm --notest 'Linux::Event@0.113' || \
+            cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v.113.tar.gz
+
       - name: Install Perl dependencies
         run: cpanm --notest --installdeps .
 
@@ -88,6 +93,8 @@ jobs:
 
       - name: Install HTTP benchmark competitors
         run: |
+          cpanm --notest 'Linux::Event@0.113' || \
+            cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v.113.tar.gz
           cpanm --notest --installdeps .
           cpanm --notest Mojolicious Feersum
           python3 -m venv .venv
