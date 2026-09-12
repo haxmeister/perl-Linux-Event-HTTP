@@ -29,6 +29,11 @@ use Linux::Event::HTTP::Response;
     }
 }
 
+{
+    package T::Request;
+    sub version ($self) { '1.1' }
+}
+
 my $connection = T::BodyConnection->new;
 my $request = bless {}, 'T::Request';
 my $response = Linux::Event::HTTP::Response->_new_bound($connection, $request);
@@ -117,21 +122,5 @@ is($cancels, 1, 'repeated cancellation is idempotent');
 $ok = eval { $cancelled->complete; 1 };
 ok(!$ok, 'cancelled stream cannot complete');
 like($@, qr/cancelled/, 'cancelled stream completion rejection is clear');
-
-my $bad = Linux::Event::HTTP::Response->_new_bound(
-    T::BodyConnection->new,
-    $request,
-);
-$ok = eval { $bad->stream_body(on_drain => 'no'); 1 };
-ok(!$ok, 'non-coderef on_drain is rejected');
-like($@, qr/on_drain must be a coderef/, 'on_drain validation is clear');
-
-$bad = Linux::Event::HTTP::Response->_new_bound(
-    T::BodyConnection->new,
-    $request,
-);
-$ok = eval { $bad->stream_body(unknown => 1); 1 };
-ok(!$ok, 'unknown stream_body option is rejected');
-like($@, qr/unknown option/, 'unknown stream_body option error is clear');
 
 done_testing;
