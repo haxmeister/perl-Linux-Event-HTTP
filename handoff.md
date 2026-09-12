@@ -47,7 +47,9 @@ The current Linux::Event source still reports version `0.112`, although these
 API changes are newer than the published 0.112 baseline. Therefore
 `Makefile.PL` still says `Linux::Event => 0.112`; update that prerequisite as
 soon as the next Linux::Event release version is assigned. Until then, test
-HTTP against Linux::Event `main`.
+HTTP against Linux::Event `main`. CI temporarily installs exact core commit
+`321d4c2` before resolving HTTP dependencies so CPAN 0.112 cannot mask this
+compatibility boundary.
 
 ## Current Response/body API
 

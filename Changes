@@ -40,6 +40,8 @@ Revision history for Linux-Event-HTTP
       the private acceptance adapter so Listener constructs connection_class directly.
     - Expose Server tuning and TLS deployment policy directly, use stream_tuning class
       defaults, and distinguish accepted-Connection on_error from on_listener_error.
+    - Test against the exact post-0.112 Linux::Event compatibility baseline in CI until
+      those core APIs receive their next released version.
     - Preserve constructor-callback override semantics through Server acceptance without
       allocating per-connection wrapper closures or adding per-request Server dispatch.
     - Compose HTTP Body::Stream drain/cancellation bookkeeping with custom Connection
