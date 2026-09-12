@@ -13,20 +13,25 @@ our $VERSION = '0.001';
 
 my $EMPTY_HEADERS = [];
 
-sub _new ($class, %args) {
+sub new ($class, %args) {
     my $status  = delete($args{status}) // 200;
     my $reason  = delete $args{reason};
+    my $version = delete($args{version}) // '1.1';
     my $headers = delete $args{headers};
+    my $has_body = exists $args{body};
+    my $body = delete $args{body};
 
     die 'unknown response option: ' . join(', ', sort keys %args)
         if %args;
 
     _validate_status($status);
     _validate_reason($reason) if defined $reason;
+    _validate_version($version);
 
     my $self = bless {
         status          => 0 + $status,
         reason          => $reason,
+        version         => "$version",
         headers         => [],
         connection      => undef,
         request         => undef,
@@ -49,13 +54,19 @@ sub _new ($class, %args) {
         }
     }
 
+    $self->body($body) if $has_body;
     return $self;
+}
+
+sub _new ($class, %args) {
+    return $class->new(%args);
 }
 
 sub _new_bound ($class, $connection, $request) {
     my $self = bless {
         status          => 200,
         reason          => undef,
+        version         => $request->version,
         headers         => $EMPTY_HEADERS,
         connection      => $connection,
         request         => $request,
@@ -105,6 +116,16 @@ sub reason ($self, @args) {
     return $self;
 }
 
+sub version ($self, @args) {
+    return $self->{version} if !@args;
+
+    die 'version accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
+    _validate_version($args[0]);
+    $self->{version} = "$args[0]";
+    return $self;
+}
+
 sub header ($self, $name, @args) {
     _validate_name($name);
 
@@ -136,12 +157,46 @@ sub add_header ($self, $name, $value) {
     return $self;
 }
 
+sub remove_header ($self, $name) {
+    $self->_assert_mutable;
+    _validate_name($name);
+    my $wanted = lc $name;
+    my @kept = grep { lc($_->[0]) ne $wanted } @{$self->{headers}};
+    $self->{headers} = \@kept;
+    return $self;
+}
+
 sub header_values ($self, $name) {
     _validate_name($name);
     my $wanted = lc $name;
     return map { $_->[1] }
         grep { lc($_->[0]) eq $wanted }
         @{$self->{headers}};
+}
+
+sub header_count ($self) {
+    return scalar @{$self->{headers}};
+}
+
+sub header_name ($self, $index) {
+    die 'header index out of range'
+        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
+    return $self->{headers}[$index][0];
+}
+
+sub header_value ($self, $index) {
+    die 'header index out of range'
+        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
+    return $self->{headers}[$index][1];
+}
+
+sub content_length ($self) {
+    my @values = $self->header_values('Content-Length');
+    return undef if !@values;
+    die 'response must not contain multiple Content-Length fields' if @values != 1;
+    die 'response Content-Length must be a decimal number'
+        if $values[0] !~ /\A[0-9]+\z/;
+    return 0 + $values[0];
 }
 
 sub _body_bytes ($operation, $body) {
@@ -293,6 +348,11 @@ sub _validate_reason ($reason) {
         if $reason =~ /[\x00-\x08\x0a-\x1f\x7f]/;
 }
 
+sub _validate_version ($version) {
+    die 'HTTP version is required' if !defined($version) || ref($version);
+    die 'invalid HTTP version' if "$version" !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
+}
+
 sub _validate_name ($name) {
     die 'response header field name is required'
         if !defined($name) || $name eq '';
@@ -319,74 +379,100 @@ Linux::Event::HTTP::Response - HTTP response message
 
 =head1 SYNOPSIS
 
+    my $response = Linux::Event::HTTP::Response->new(
+        status => 200,
+        headers => [
+            [ 'Content-Type', 'text/plain' ],
+        ],
+        body => "hello\n",
+    );
+
+Server callbacks receive the same Response class:
+
     sub on_request ($conn, $req, $res) {
         $res->status(200);
         $res->header('Content-Type', 'text/plain');
         $res->body("hello\n");
     }
 
-Streaming bodies are selected explicitly:
-
-    my $body = $res->stream_body(
-        on_drain  => sub ($body) { ... },
-        on_cancel => sub ($body) { ... },
-    );
-
-    $body->write($bytes);
-    $body->complete;
-
 =head1 DESCRIPTION
 
-Every successfully dispatched HTTP request receives one Response object created
-and bound by L<Linux::Event::HTTP::Server::Connection>. The Response describes
-one HTTP response message, not the underlying socket or a writable handle.
+C<Linux::Event::HTTP::Response> represents one HTTP response message. It is not
+a socket or connection object. The same message class is intended for both
+locally constructed outgoing responses and parsed incoming responses.
 
-C<body> supplies a complete scalar body. C<stream_body> selects a body whose
-bytes are produced over time. The streaming body object owns C<write> and
-C<complete>; the Response owns status, headers, and body selection.
+The current server implementation still binds its outgoing Response to server
+transaction machinery for scalar commit, streaming output, and Upgrade. Those
+lifecycle responsibilities are being separated from the message API as the
+shared Transaction layer is introduced.
 
 =head1 METHODS
 
-=head2 status, reason, header, add_header, header_values
+=head2 new
 
-Configure or inspect response metadata before output starts.
+Constructs a mutable response message. C<status> defaults to 200 and C<version>
+defaults to C<1.1>. C<headers> is an optional array reference of C<[name,
+value]> pairs. C<body> is an optional complete scalar byte body.
+
+=head2 status
+
+Gets or sets the response status code before the message is committed.
+
+=head2 reason
+
+Gets or sets the optional HTTP/1 reason phrase before commit.
+
+=head2 version
+
+Gets or sets the HTTP version before commit.
+
+=head2 header
+
+Gets the first matching field value. The setter form replaces all fields of the
+same ASCII case-insensitive name.
+
+=head2 add_header
+
+Adds another header field while preserving existing same-name fields.
+
+=head2 remove_header
+
+Removes all fields with the supplied ASCII case-insensitive name.
+
+=head2 header_values
+
+Returns all matching values in message order.
+
+=head2 header_count, header_name, header_value
+
+Provide exact indexed access to fields in message order while preserving the
+original field names.
+
+=head2 content_length
+
+Returns the declared Content-Length as an integer, or undef when absent.
 
 =head2 body
 
-    $res->body("hello\n");
-    my $bytes = $res->body;
+Gets or sets the complete scalar byte body. Incremental body transfer is a
+transaction/connection responsibility rather than a different kind of HTTP
+message.
 
-Selects a complete scalar byte body. Inside an HTTP callback, selecting the body
-does not serialize the response in the middle of the callback. Status, reason,
-and headers remain configurable until the enclosing callback returns. The
-connection then commits the complete response if the transaction is ready.
+=head2 is_complete
 
-If C<body> is called later from an asynchronous callback while the response is
-waiting, the complete response is committed immediately. A scalar body and a
-streaming body are mutually exclusive.
+Reports whether the protocol layer has completed this message. During the
+server-to-Transaction migration this still follows the existing server response
+lifecycle and becomes true after final output is committed.
 
 =head2 stream_body
 
-    my $body = $res->stream_body(
-        on_drain  => sub ($body) { ... },
-        on_cancel => sub ($body) { ... },
-    );
-
-Creates the response's streaming body on first call and returns it. Later
-argumentless calls return the same object. Creating the stream does not start
-output and does not freeze Response metadata. The first C<write> or C<complete>
-on the body stream commits the response head; metadata cannot change after that
-point.
-
-C<on_drain> runs after downstream Linux::Event output pressure clears.
-C<on_cancel> runs if the HTTP consumer disappears before the body is completed.
+The existing server streaming producer remains available while streaming
+ownership is moved to Transaction. It writes through Linux::Event's existing
+ordered-byte transport and does not create a second HTTP output queue.
 
 =head2 upgrade
 
-Schedules a validated HTTP/1.1 protocol handoff.
-
-=head2 connection, request, is_started, is_complete, is_upgrading
-
-Expose the owning transaction and response lifecycle state.
+The existing server Upgrade handoff remains available while lifecycle ownership
+moves to Transaction.
 
 =cut
