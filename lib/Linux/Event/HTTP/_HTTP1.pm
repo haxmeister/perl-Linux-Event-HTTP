@@ -10,11 +10,12 @@ XSLoader::load(__PACKAGE__);
 
 my $NATIVE_PARSE_REQUEST = \&parse_request;
 
-no warnings 'redefine';
-
-sub parse_request ($class, @args) {
-    require Linux::Event::HTTP::Request;
-    return $NATIVE_PARSE_REQUEST->($class, @args);
+{
+    no warnings 'redefine';
+    *parse_request = sub ($class, @args) {
+        require Linux::Event::HTTP::Request;
+        return $NATIVE_PARSE_REQUEST->($class, @args);
+    };
 }
 
 sub CLONE_SKIP { 1 }
