@@ -40,7 +40,7 @@ WriteMakefile(
         'Test::More' => 0,
     },
     PREREQ_PM => {
-        'Linux::Event' => '0.112',
+        'Linux::Event' => '0.113',
     },
     META_MERGE => {
         'meta-spec' => {
