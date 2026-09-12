@@ -8,18 +8,29 @@ use Linux::Event::HTTP::Request;
 use Linux::Event::HTTP::Response;
 use Linux::Event::HTTP::Transaction;
 
+{
+    package T::TransactionController;
+
+    sub new ($class) {
+        return bless { cancel_calls => 0, last_transaction => undef }, $class;
+    }
+
+    sub _cancel_http_transaction ($self, $transaction) {
+        ++$self->{cancel_calls};
+        $self->{last_transaction} = $transaction;
+        return;
+    }
+}
+
 my $request = Linux::Event::HTTP::Request->new(
     method => 'GET',
     target => '/',
 );
 
-my $cancel_calls = 0;
+my $controller = T::TransactionController->new;
 my $tx = Linux::Event::HTTP::Transaction->_new(
-    request => $request,
-    cancel  => sub ($transaction) {
-        ++$cancel_calls;
-        is($transaction, $tx, 'cancel handler receives its Transaction');
-    },
+    request    => $request,
+    controller => $controller,
 );
 
 is($tx->request, $request, 'Transaction retains its Request');
@@ -46,23 +57,26 @@ is($tx->state, 'complete', 'successful exchange becomes complete');
 ok($tx->is_complete, 'complete Transaction reports success');
 ok($tx->is_terminal, 'complete Transaction is terminal');
 $tx->cancel;
-is($cancel_calls, 0, 'cancel after completion is a no-op');
+is($controller->{cancel_calls}, 0, 'cancel after completion is a no-op');
 is($tx->state, 'complete', 'cancel does not alter completed Transaction');
 
+my $cancel_controller = T::TransactionController->new;
 my $cancel_tx = Linux::Event::HTTP::Transaction->_new(
     request => Linux::Event::HTTP::Request->new(
         method => 'POST',
         target => '/upload',
     ),
-    cancel => sub ($transaction) { ++$cancel_calls },
+    controller => $cancel_controller,
 );
 $cancel_tx->cancel;
-is($cancel_calls, 1, 'cancel invokes owner cancellation hook once');
+is($cancel_controller->{cancel_calls}, 1, 'cancel invokes controller once');
+is($cancel_controller->{last_transaction}, $cancel_tx,
+    'controller receives the Transaction being cancelled');
 is($cancel_tx->state, 'cancelled', 'cancelled Transaction has cancelled state');
 ok($cancel_tx->is_cancelled, 'cancelled Transaction reports cancellation');
 ok($cancel_tx->is_terminal, 'cancelled Transaction is terminal');
 $cancel_tx->cancel;
-is($cancel_calls, 1, 'repeated cancellation is idempotent');
+is($cancel_controller->{cancel_calls}, 1, 'repeated cancellation is idempotent');
 
 my $error_tx = Linux::Event::HTTP::Transaction->_new(request => $request);
 $error_tx->_fail('connection reset');
@@ -82,5 +96,12 @@ $ok = eval {
 };
 ok(!$ok, 'Transaction rejects non-Request object');
 like($@, qr/requires a Linux::Event::HTTP::Request/, 'invalid Request error is clear');
+
+$ok = eval {
+    Linux::Event::HTTP::Transaction->_new(request => $request, controller => {});
+    1;
+};
+ok(!$ok, 'Transaction controller must be an object');
+like($@, qr/controller must be an object/, 'invalid controller error is clear');
 
 done_testing;
