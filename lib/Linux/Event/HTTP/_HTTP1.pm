@@ -8,12 +8,13 @@ our $VERSION = '0.001';
 require XSLoader;
 XSLoader::load(__PACKAGE__);
 
-# Native parsing can create a Linux::Event::HTTP::Request without loading
-# Request.pm. Keep the protocol-neutral version() getter available in that
-# parser-only case; Request.pm replaces it with the full local/native wrapper
-# when the public message class is loaded.
-sub Linux::Event::HTTP::Request::version ($self) {
-    return $self->http_version;
+my $NATIVE_PARSE_REQUEST = \&parse_request;
+
+no warnings 'redefine';
+
+sub parse_request ($class, @args) {
+    require Linux::Event::HTTP::Request;
+    return $NATIVE_PARSE_REQUEST->($class, @args);
 }
 
 sub CLONE_SKIP { 1 }
