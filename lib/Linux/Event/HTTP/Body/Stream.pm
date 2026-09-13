@@ -7,7 +7,7 @@ use Scalar::Util qw(weaken);
 
 our $VERSION = '0.001';
 
-sub _new ($class, $transaction, $kind, %option) {
+sub _validated_options ($kind, %option) {
     die 'body stream kind must be request or response'
         if $kind ne 'request' && $kind ne 'response';
 
@@ -21,6 +21,17 @@ sub _new ($class, $transaction, $kind, %option) {
         if defined($on_cancel) && ref($on_cancel) ne 'CODE';
     die "$operation(): unknown option: " . join(', ', sort keys %option)
         if %option;
+
+    return ($on_drain, $on_cancel);
+}
+
+sub _validate_options ($class, $kind, %option) {
+    _validated_options($kind, %option);
+    return;
+}
+
+sub _new ($class, $transaction, $kind, %option) {
+    my ($on_drain, $on_cancel) = _validated_options($kind, %option);
 
     my $self = bless {
         transaction  => $transaction,
