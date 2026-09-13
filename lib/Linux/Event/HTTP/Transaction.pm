@@ -22,11 +22,12 @@ sub _new ($class, %args) {
         if %args;
 
     my $self = bless {
-        request    => $request,
-        response   => undef,
-        state      => 'pending',
-        error      => undef,
-        controller => $controller,
+        request       => $request,
+        response      => undef,
+        response_body => undef,
+        state         => 'pending',
+        error         => undef,
+        controller    => $controller,
     }, $class;
     weaken($self->{controller}) if defined $self->{controller};
     return $self;
@@ -39,6 +40,29 @@ sub error        ($self) { $self->{error} }
 sub is_complete  ($self) { $self->{state} eq 'complete' }
 sub is_cancelled ($self) { $self->{state} eq 'cancelled' }
 sub is_terminal  ($self) { !!$TERMINAL{$self->{state}} }
+
+sub response_body ($self, @args) {
+    die 'response_body(): Transaction is already terminal'
+        if $self->is_terminal;
+    my $response = $self->{response}
+        or die 'response_body(): Transaction has no Response yet';
+
+    if (my $body = $self->{response_body}) {
+        die 'response_body options may only be supplied when the producer is created'
+            if @args;
+        return $body;
+    }
+
+    die 'response_body options must be key/value pairs' if @args % 2;
+    $response->_begin_stream_body;
+
+    require Linux::Event::HTTP::Body::Stream;
+    my $body = Linux::Event::HTTP::Body::Stream->_new(
+        $self, 'response', @args,
+    );
+    $self->{response_body} = $body;
+    return $body;
+}
 
 sub cancel ($self) {
     return $self if $self->is_terminal;
@@ -81,6 +105,52 @@ sub _set_response ($self, $response) {
     return $response;
 }
 
+sub _write_body ($self, $kind, $bytes, $final, $operation) {
+    die "$operation(): Transaction is already terminal"
+        if $self->is_terminal;
+    die "$operation(): unsupported HTTP body producer '$kind'"
+        if $kind ne 'response';
+
+    my $response = $self->{response}
+        or die "$operation(): Transaction has no Response";
+    my $controller = $self->{controller}
+        or die "$operation(): Transaction has no active controller";
+
+    if ($final) {
+        $response->_mark_complete;
+    }
+
+    my ($accepted, $ok, $error);
+    {
+        local $@;
+        $ok = eval {
+            $accepted = $controller->_write_http_response_body(
+                $self, $bytes, $final, $operation,
+            );
+            1;
+        };
+        $error = $@;
+    }
+
+    if (!$ok) {
+        $response->_mark_incomplete if $final;
+        die $error;
+    }
+
+    return $accepted;
+}
+
+sub _response_body_object ($self) {
+    return $self->{response_body};
+}
+
+sub _cancel_body_producers ($self) {
+    if (my $body = $self->{response_body}) {
+        $body->_cancel;
+    }
+    return;
+}
+
 sub _mark_complete ($self) {
     die 'cannot complete a terminal Transaction' if $self->is_terminal;
     die 'cannot complete a Transaction before it has a Response'
@@ -95,6 +165,7 @@ sub _mark_cancelled ($self) {
     return $self if $self->{state} eq 'cancelled';
     die 'cannot cancel a terminal Transaction' if $self->is_terminal;
 
+    $self->_cancel_body_producers;
     $self->{state} = 'cancelled';
     delete $self->{controller};
     return $self;
@@ -104,6 +175,7 @@ sub _fail ($self, $error) {
     die 'cannot fail a terminal Transaction' if $self->is_terminal;
     die 'Transaction error must be defined' if !defined $error;
 
+    $self->_cancel_body_producers;
     $self->{error} = $error;
     $self->{state} = 'error';
     delete $self->{controller};
@@ -127,15 +199,16 @@ L<Linux::Event::HTTP::Request> and, once available, one
 L<Linux::Event::HTTP::Response>.
 
 Request and Response are HTTP message objects. Transaction owns the lifecycle
-that connects them. It does not own a socket, parser, connection pool, redirect
-chain, or transport output queue. Client and server connection implementations
-advance Transaction state as protocol work proceeds.
+that connects them, including writable body producers for outgoing messages. It
+does not own a socket, parser, connection pool, redirect chain, or transport
+output queue. Client and server connection implementations advance Transaction
+state and move produced bytes through their transport.
 
 Redirects are separate HTTP exchanges and therefore use separate Transaction
 objects.
 
-Applications normally receive Transactions from L<Linux::Event::HTTP::Client>;
-they do not construct them directly.
+Applications normally receive Transactions from a Client or an active server
+Connection; they do not construct them directly.
 
 =head1 METHODS
 
@@ -148,6 +221,23 @@ Transaction lifetime.
 
 Returns the Response after the response head has been received or created, or
 undef before a Response exists.
+
+=head2 response_body
+
+Returns the writable producer for an outgoing streaming Response body. On a
+server, the active transaction can be obtained from the connection:
+
+    my $body = $conn->transaction->response_body(
+        on_drain  => sub ($body) { ... },
+        on_cancel => sub ($body) { ... },
+    );
+
+    $body->write($bytes);
+    $body->complete;
+
+Creating the producer marks the Response body as incremental rather than a
+complete scalar body. The Request/Response message objects themselves do not
+own transport writers.
 
 =head2 state
 
