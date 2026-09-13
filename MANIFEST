@@ -32,6 +32,7 @@ lib/Linux/Event/HTTP/Response.pm
 lib/Linux/Event/HTTP/Transaction.pm
 lib/Linux/Event/HTTP/Server.pm
 lib/Linux/Event/HTTP/Server/Connection.pm
+lib/Linux/Event/HTTP/_ClientAuth.pm
 lib/Linux/Event/HTTP/_ClientConnect.pm
 lib/Linux/Event/HTTP/_ClientUpgrade.pm
 lib/Linux/Event/HTTP/_HTTP1.pm
@@ -73,6 +74,8 @@ t/72-server-connect.t
 t/73-client-forward-proxy.t
 t/74-client-default-proxy.t
 t/75-client-cookie-jar.t
+t/76-client-auth.t
+t/77-client-connect-auth.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
