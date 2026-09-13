@@ -6,22 +6,23 @@ Updated: 2026-09-12 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical release branch: `main`
-- Active branch: `feature/http-client-foundation`
-- Draft PR: #18, `Add HTTP client connection foundation`
-- Do not merge PR #18 without explicit user authorization.
-- PR #17 (`Refactor Request and Response as shared message objects`) was merged
-  to `main` as `33d326348c2358d8d0d23ddc22b2cc0843c7fa34`.
-- `main` handoff refresh after that merge is
-  `2956437b8dbb946c1722e6dcc3c9cf961653a417`.
+- PR #18, `Add HTTP client connection foundation`, was merged to `main` as
+  `13a20e9633ca75a5ac5c5bedb951e129f9d67c7c`.
+- Final PR #18 head `59dff03119f38b63c841914c1d56354818681144`
+  passed CI #320 / run `34729690624`: Perl 5.36, latest Perl, latest threaded
+  Perl, full suite, HTTPS client coverage, server smoke, and disttest.
 - Linux::Event minimum prerequisite is `0.113`.
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
+- Next active work: explicit bounded whole-response buffering layered on the
+  incremental client body path.
 
-The client foundation is implemented and validated. Do not redesign Request,
-Response, or Transaction to make client destination/pool work easier.
+The Request/Response/Transaction architecture and native client foundation are
+now mainline. Do not move URL, pool, transport, or role-specific lifecycle into
+Request or Response for convenience.
 
-## Settled message/exchange model
+## Settled object model
 
-Request and Response are endpoint-neutral HTTP messages:
+Request and Response are endpoint-neutral HTTP message types:
 
 ```text
 client sends Request  -----> server receives Request
@@ -30,37 +31,29 @@ client gets Response  <----- server sends Response
 Transaction = exactly one Request + one Response + exchange lifecycle
 ```
 
-Do not add Client::Request/Response or Server::Request/Response role classes.
+Request stores a request-target, not a full URL. Client owns URL parsing,
+scheme/authority, destination selection, Host synthesis, redirects, and pool
+policy.
 
-Request contains a request-target, not a full URL. Full URL parsing, scheme,
-authority, destination selection, Host synthesis, redirects, and pooling belong
-to Client.
-
-Response remains transport-independent. Do not restore Connection/request
+Response is transport-independent. Do not restore Connection/request
 back-references, output state, Upgrade, stream_body, write, complete, end, or
 is_ended on Response.
 
-No HTTP::Request / HTTP::Response conversion adapters are planned now.
+Transaction is the cancellable exchange. It does not own the socket or pool.
 
 ## Server baseline
 
-The server callback remains:
+Ordinary callback:
 
 ```perl
 on_request => sub ($conn, $req, $res) {
-    ...
+    $res->body("hello\n");
 }
 ```
 
 The active exchange is `$conn->transaction`.
 
-Complete scalar Response body:
-
-```perl
-$res->body($bytes);
-```
-
-Incremental outgoing Response body:
+Incremental outgoing body:
 
 ```perl
 my $body = $conn->transaction->response_body(
@@ -71,7 +64,7 @@ $body->write($bytes);
 $body->complete;
 ```
 
-Deferred scalar response from another event:
+Deferred scalar response:
 
 ```perl
 my $tx = $conn->transaction;
@@ -79,84 +72,61 @@ $tx->response->body("later\n");
 $tx->send_response;
 ```
 
-Server Upgrade is Transaction lifecycle:
+Upgrade is Transaction lifecycle:
 
 ```perl
 $res->header('Upgrade', 'my-protocol');
 $conn->transaction->upgrade('MyProtocolConnection');
 ```
 
-Linux::Event remains the only transport output queue.
+Linux::Event remains the only transport-output queue.
 
-## Client::Connection foundation
+## Client::Connection baseline
 
-New public module:
-
-```text
-Linux::Event::HTTP::Client::Connection
-```
-
-It subclasses `Linux::Event::IO::Sock::Stream` and owns one HTTP/1 client socket.
-It executes one Transaction at a time; HTTP/1 pipelining is deliberately not
-enabled.
-
-Low-level use:
+`Linux::Event::HTTP::Client::Connection` subclasses
+`Linux::Event::IO::Sock::Stream` and executes one HTTP/1 Transaction at a time.
+HTTP/1 client pipelining is deliberately disabled.
 
 ```perl
-my $conn = Linux::Event::HTTP::Client::Connection->connect(
-    loop => $loop,
-    host => '127.0.0.1',
-    port => 8080,
-);
-
 my $tx = $conn->request($request,
-    on_response => sub ($tx, $res) { ... },
-    on_body => sub ($tx, $res, $bytes) { ... },
-    on_complete => sub ($tx) { ... },
-    on_error => sub ($tx, $error) { ... },
+    on_response      => sub ($tx, $res) { ... },
+    on_body          => sub ($tx, $res, $bytes) { ... },
+    on_complete      => sub ($tx) { ... },
+    on_error         => sub ($tx, $error) { ... },
     on_informational => sub ($tx, $res) { ... },
 );
 ```
 
-Current Request support:
+Request support:
 
 - HTTP/1.0 and HTTP/1.1;
 - complete scalar Request body;
-- automatic Content-Length if body is supplied without one;
-- explicit Content-Length must match scalar body;
-- HTTP/1.1 requires exactly one Host;
-- outgoing Transfer-Encoding/streaming Request body is deliberately deferred;
-- CONNECT is deliberately deferred.
+- automatic/matched Content-Length;
+- HTTP/1.1 Host enforcement;
+- no outgoing Transfer-Encoding/streaming Request body yet;
+- CONNECT deferred.
 
-Current Response support:
+Response support:
 
-- strict HTTP/1 response-head parsing;
-- informational 1xx callbacks except 101 handoff;
+- strict Perl HTTP/1 response-head parser;
+- 1xx informational callbacks except client 101 handoff;
 - HEAD/204/304 bodyless semantics;
 - exact Content-Length framing;
-- chunked transfer decoding using existing native `_HTTP1::Chunked`;
-- close-delimited responses completed at EOF;
+- chunked decoding through existing native `_HTTP1::Chunked`;
+- close-delimited completion at EOF;
 - TE+CL ambiguity rejection;
-- only plain chunked Transfer-Encoding in this first stage;
-- no implicit whole-body Response buffer.
+- incremental decoded body delivery;
+- absent `on_body` drains/discards instead of buffering.
 
-If `on_body` is absent, body bytes are drained/discarded.
+Cancellation closes the HTTP/1 connection because unfinished response bytes make
+safe reuse impossible.
 
-Cancellation closes the HTTP/1 connection. Do not attempt to reuse a socket with
-an unfinished response still on its ordered byte stream.
+Do not add response-head XS merely for symmetry. Benchmark before changing the
+current Perl parser boundary.
 
-The response-head parser is intentionally Perl first. Do not add client response
-parser XS merely for symmetry. Benchmark before changing that boundary.
+## High-level Client baseline
 
-## High-level Client
-
-New public module:
-
-```text
-Linux::Event::HTTP::Client
-```
-
-Ordinary API:
+`Linux::Event::HTTP::Client` is the normal outbound API:
 
 ```perl
 my $client = Linux::Event::HTTP::Client->new(loop => $loop);
@@ -164,93 +134,73 @@ my $client = Linux::Event::HTTP::Client->new(loop => $loop);
 my $tx = $client->get(
     'https://example.com/path?x=1',
     on_response => sub ($tx, $res) { ... },
-    on_body => sub ($tx, $res, $bytes) { ... },
+    on_body     => sub ($tx, $res, $bytes) { ... },
     on_complete => sub ($tx) { ... },
-    on_error => sub ($tx, $error) { ... },
+    on_error    => sub ($tx, $error) { ... },
 );
 ```
 
-Generic and convenience methods:
+Methods are `request`, `get`, `head`, `post`, `put`, and `delete`; all return
+Transaction.
 
-```text
-request
-get
-head
-post
-put
-delete
-```
+Client uses the established `URI` distribution. URL policy is absolute http/https
+only, fragments are not sent, path+query becomes Request target, Host is
+synthesized if absent, explicit Host is preserved, and URL userinfo is rejected.
 
-Client methods return Transaction. `$tx->request` is the canonical outgoing
-Request and `$tx->response` becomes available when the final response head
-arrives.
-
-Client uses the established `URI` CPAN distribution. `URI => 0` is now a runtime
-prerequisite.
-
-URL policy:
-
-- absolute http/https only;
-- fragment is not sent;
-- path+query becomes Request target, default `/`;
-- Host is synthesized if absent;
-- non-default port is included in synthesized Host;
-- explicit caller Host is preserved;
-- userinfo is rejected rather than becoming hidden authentication policy.
-
-Initial reuse policy is intentionally bounded/simple:
+Initial pool policy:
 
 - one active Transaction per Client::Connection;
 - no HTTP/1 pipelining;
 - at most one idle connection retained per origin;
-- a concurrent same-origin request creates another connection rather than
-  queueing behind a busy one;
-- when extras later become idle, one is retained and extras close.
+- concurrent same-origin work may create extra connections;
+- one idle connection is retained and extras close when they later become idle.
 
-HTTPS uses the same Client::Connection class with a runtime
-`Linux::Event::TLS->client` transport. URL host is TLS server_name and Client
-offers only `http/1.1` ALPN. Client constructor accepts TLS verify/CA and
-handshake/shutdown timeout options.
+HTTPS uses the same Client::Connection class with runtime Linux::Event TLS,
+URL host as server_name, and `http/1.1` as the only offered ALPN protocol.
+`connection_class` is the advanced subclassing hook.
 
-`connection_class` is the advanced Client hook, symmetric with Server, for a
-Client::Connection subclass with reusable stream/socket policy.
+## Next work: bounded buffered Response convenience
 
-## Validation
+This must remain explicit and built on the incremental body machinery. The
+planned API is:
 
-Low-level client foundation checkpoint:
-
-- PR CI #307 / run `34729218261` passed Perl 5.36, latest Perl, latest threaded
-  Perl, full suite, end-to-end server smoke, and disttest.
-
-Raw response framing/cancellation checkpoint:
-
-- PR CI #309 / run `34729277508` passed the same matrix after adding tests for
-  100 Continue, true close-delimited completion, TE+CL rejection, and explicit
-  cancellation.
-
-High-level Client + HTTPS checkpoint:
-
-- PR CI #315 / run `34729522825` passed Perl 5.36, latest Perl, latest threaded
-  Perl, the full suite including Client HTTPS, end-to-end server smoke, and
-  disttest.
-
-Important client tests:
-
-```text
-t/60-client-connection.t
-t/61-client-response-framing.t
-t/62-client.t
-t/63-client-tls.t
+```perl
+$client->get(
+    $url,
+    buffer_body => 1_048_576,
+    on_response => sub ($tx, $res) { ... },
+    on_complete => sub ($tx) {
+        my $bytes = $tx->response->body;
+        ...;
+    },
+    on_error => sub ($tx, $error) { ... },
+);
 ```
 
-Coverage includes scalar Request bodies, fixed/chunked/close-delimited Response
-bodies, informational responses, invalid framing, cancellation, no implicit
-body buffering, URL/Host policy, concurrent same-origin connections, idle reuse,
-common verbs, and HTTPS.
+Design rules:
+
+1. `buffer_body => $max_bytes` is opt-in; there is no implicit unbounded body
+   buffering.
+2. The limit applies to decoded application body bytes, not HTTP chunk framing.
+3. `on_response` still runs when the final response head is validated.
+4. Successful `on_complete` sees the complete scalar through `Response->body`.
+5. Known Content-Length above the limit fails before body accumulation.
+6. Unknown/chunked/close-delimited bodies fail as soon as decoded bytes exceed
+   the limit.
+7. Limit failure is a Transaction error and closes the HTTP/1 connection safely.
+8. Keep buffered mode distinct from user `on_body`; applications needing custom
+   simultaneous streaming/buffering can do so themselves in `on_body`.
+9. Received Response metadata remains committed/read-only. Attaching the final
+   buffered scalar body is private protocol/convenience state, not a public
+   metadata mutation.
+
+After bounded buffering, sensible next layers remain streaming outgoing Request
+bodies, redirect chains of distinct Transactions, richer pool limits only if
+workloads need them, and proxy/auth/cookie/CONNECT conveniences later.
 
 ## Native boundary
 
-Keep the single private extension unless measurement proves otherwise:
+Keep one private native extension unless measurement proves otherwise:
 
 ```text
 xshttp1/HTTP1.xs
@@ -259,43 +209,37 @@ xshttp1/HTTP1.xs
 
 It owns pico server request parsing/lazy Request accessors, chunked decoding
 (shared by server/client), server response-head serialization, and the narrow
-server default scalar-response builder.
+server scalar-response fast path.
 
-The new client response-head parser is Perl. Measure before moving any of it to
-XS/C.
+## Validation checkpoints
 
-## Parked Linux::Event terminal-read question
+- PR #17 message/Transaction refactor: final CI #304 passed.
+- PR #18 low-level client foundation: CI #307 passed.
+- PR #18 raw framing/cancellation coverage: CI #309 passed.
+- PR #18 high-level Client + HTTPS: CI #315 passed.
+- PR #18 final branch head: CI #320 passed.
 
-Do not reopen the earlier paused-read/EPOLLRDHUP question absent a concrete
-protocol requirement or demonstrated failure. Do not add HTTP polling, duplicate
-buffering, or a second output queue as a workaround.
+Important client tests currently include:
 
-## Next client work
+```text
+t/60-client-connection.t
+t/61-client-response-framing.t
+t/62-client.t
+t/63-client-tls.t
+```
 
-Keep PR #18 focused on the now-working client foundation. Do not mix redirects,
-proxy/auth/cookies, or a large pooling redesign into this PR.
+## Parked core question
 
-After PR #18 is reviewed/merged, sensible next layers are:
+Do not reopen the earlier Linux::Event paused-read / EPOLLRDHUP question absent
+a concrete protocol requirement or demonstrated failure. Do not add polling,
+duplicate buffering, or a second output queue.
 
-1. bounded whole-body convenience built on incremental `on_body` delivery;
-2. streaming outgoing Request bodies with Linux::Event backpressure;
-3. redirects as chains of distinct Transactions;
-4. richer connection-pool limits/policy if real workloads need them;
-5. proxy/auth/cookie conveniences later;
-6. CONNECT/client 101 protocol handoff when a concrete consumer needs it;
-7. benchmark client response-head parsing before considering native optimization.
+## Branch cleanup
 
-Do not make Future/Promise/async-await abstractions central. Primary API remains
-OO + callbacks + Transaction lifecycle.
+The user dislikes stale branches. PR #18 is merged. The GitHub connector
+available in this chat exposes branch creation/update but not branch deletion,
+and GitHub did not auto-delete `feature/http-client-foundation`; delete that ref
+through GitHub's normal branch-delete control when available. The older merged
+`feature/message-objects` ref may also still need the same manual deletion.
 
-## Branch state
-
-Active work is `feature/http-client-foundation` / draft PR #18.
-
-The merged `feature/message-objects` branch may still exist remotely because the
-available GitHub connector exposes branch creation/update but no branch deletion.
-Do not intentionally preserve it; delete it through GitHub's normal branch-delete
-control when available.
-
-The user dislikes stale branches. After authorized merge of PR #18, delete
-`feature/http-client-foundation` as well if no unique work remains.
+New work must branch from merged `main`, not reuse either merged feature branch.
