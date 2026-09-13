@@ -19,15 +19,15 @@ ok(Linux::Event::HTTP::Request->can('version'),
 ok(Linux::Event::HTTP::Response->can('new'),
     'Response exposes public message construction');
 ok(Linux::Event::HTTP::Response->can('body'),
-    'Response exposes body');
-ok(Linux::Event::HTTP::Response->can('stream_body'),
-    'Response exposes current server stream_body producer');
+    'Response exposes complete scalar body');
+ok(!Linux::Event::HTTP::Response->can('stream_body'),
+    'Response does not own streaming body production');
 ok(!Linux::Event::HTTP::Response->can('write'),
     'Response does not expose streaming write');
 ok(!Linux::Event::HTTP::Response->can('complete'),
-    'Response does not expose body completion');
+    'Response does not expose body completion operation');
 ok(Linux::Event::HTTP::Response->can('is_complete'),
-    'Response exposes is_complete');
+    'Response exposes message completion state');
 ok(!Linux::Event::HTTP::Response->can('end'),
     'Response does not retain ambiguous end alias');
 ok(!Linux::Event::HTTP::Response->can('is_ended'),
@@ -36,7 +36,11 @@ ok(Linux::Event::HTTP::Transaction->can('request'),
     'Transaction exposes its Request');
 ok(Linux::Event::HTTP::Transaction->can('response'),
     'Transaction exposes its Response');
+ok(Linux::Event::HTTP::Transaction->can('response_body'),
+    'Transaction owns outgoing Response body production');
 ok(Linux::Event::HTTP::Transaction->can('cancel'),
     'Transaction exposes cancellation');
+ok(Linux::Event::HTTP::Server::Connection->can('transaction'),
+    'server Connection exposes its active Transaction');
 
 done_testing;
