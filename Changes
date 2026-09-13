@@ -96,8 +96,20 @@ Revision history for Linux-Event-HTTP
       considering response-parser XS; reuse the existing native _HTTP1::Chunked decoder.
     - Deliver client response bodies incrementally for Content-Length, chunked, and
       close-delimited framing; drain/discard when no on_body callback is installed.
-    - Support informational responses, reject ambiguous TE/CL response framing, and keep
-      101/CONNECT client handoff outside the first client foundation.
+    - Support informational responses, reject ambiguous TE/CL response framing, and
+      validate explicit HTTP/1.1 101 Upgrade handoff separately from ordinary 1xx flow.
+    - Add explicit client Upgrade handoff with upgrade_to and on_upgrade on both
+      Client::Connection and the high-level Client operation API.
+    - Require bodyless HTTP/1.1 Upgrade requests with Connection: Upgrade and at least one
+      offered Upgrade protocol; reject invalid requests before wire output.
+    - Validate 101 responses before handoff, including Connection: Upgrade, no message
+      framing fields, and selection of a protocol actually offered by the Request.
+    - Complete the HTTP Response and Transaction before Linux::Event transition_to()
+      hands the same live client stream object to the target protocol class.
+    - Preserve bytes already read after a 101 response head and deliver them to the
+      transitioned protocol class without another socket or transport queue.
+    - Regenerate Upgrade handshake fields across redirect hops and keep a successfully
+      upgraded stream permanently outside the HTTP idle-connection pool.
     - Keep one in-flight Transaction per HTTP/1 client connection and support sequential
       persistent reuse without enabling HTTP/1 pipelining.
     - Make client Transaction cancellation close the HTTP/1 connection rather than risk
@@ -145,7 +157,9 @@ Revision history for Linux-Event-HTTP
       cancellation, URL handling, connection reuse, concurrency, HTTPS, bounded
       whole-response buffering, producer backpressure, early upload cancellation,
       redirect chains, relative Location resolution, method/body transformation,
-      cross-origin credential stripping, redirect limits, and disabled redirect policy.
+      cross-origin credential stripping, redirect limits, disabled redirect policy,
+      client Upgrade validation, same-read protocol handoff, redirected Upgrade, and
+      HTTP-pool isolation after transition.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.

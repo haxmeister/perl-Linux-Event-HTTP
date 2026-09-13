@@ -299,19 +299,21 @@ The initial connection reuse policy is intentionally simple and bounded:
 - at most one idle connection retained per origin;
 - concurrent same-origin requests may use additional connections;
 - extra connections close when they later become idle;
-- each redirect hop independently selects a connection for its target origin.
+- each redirect hop independently selects a connection for its target origin;
+- a connection that leaves HTTP through Upgrade is never returned to the HTTP
+  idle pool.
 
 Client response framing supports Content-Length, HTTP/1.1 chunked transfer
-coding, bodyless HEAD/204/304 responses, informational responses, and
-close-delimited responses. Ambiguous Transfer-Encoding plus Content-Length is
-rejected.
+coding, bodyless HEAD/204/304 responses, informational responses,
+`101 Switching Protocols`, and close-delimited responses. Ambiguous
+Transfer-Encoding plus Content-Length is rejected.
 
 Cancelling a Client::Operation cancels the active Transaction. Cancelling an
 HTTP/1 client Transaction closes its connection rather than trying to reuse a
 socket that may still contain an unfinished response.
 
-Proxy policy, automatic authentication helpers, a cookie jar, CONNECT/client
-Upgrade, and richer pool policy remain later features.
+Proxy policy, automatic authentication helpers, a cookie jar, CONNECT, and
+richer pool policy remain later features.
 
 ## HTTPS
 
@@ -367,8 +369,38 @@ Linux::Event::HTTP validates and queues the 101 response, completes the HTTP
 Transaction, and uses Linux::Event `transition_to()` to hand the same stream
 object to the target protocol class.
 
-Client-side 101 handoff is not part of the current Client implementation.
-WebSocket framing belongs in a separate `Linux::Event::WebSocket` distribution.
+Client-side Upgrade mirrors the same transport handoff model. The request
+explicitly advertises the protocol and names the Linux::Event stream subclass
+that should own the connection after a validated `101`:
+
+```perl
+my $operation = $client->get(
+    $url,
+    headers => [
+        [ Connection => 'Upgrade' ],
+        [ Upgrade    => 'my-protocol' ],
+    ],
+    upgrade_to => 'MyProtocolConnection',
+    on_upgrade => sub ($op, $tx, $res, $connection) {
+        # $connection is the same live stream object, now MyProtocolConnection
+    },
+);
+```
+
+Client Upgrade requires HTTP/1.1 and a bodyless Request. The switching Response
+must contain `Connection: Upgrade`, select a protocol offered by the Request,
+and contain no Content-Length or Transfer-Encoding. The Response and
+Transaction complete before `on_upgrade`. Bytes already read after the 101 head
+are preserved for the target protocol during `transition_to()`.
+
+Redirects may precede the successful 101. Each redirect hop regenerates the
+Upgrade handshake fields rather than forwarding stale connection-specific
+headers. Once the connection transitions away from HTTP, it is never returned
+to the Client's HTTP idle pool.
+
+A bare unexpected 101 without `upgrade_to` is a protocol error. CONNECT tunnels
+remain separate work. WebSocket handshake/frame semantics belong in a separate
+`Linux::Event::WebSocket` distribution that can use this handoff capability.
 
 ## Advanced connection subclasses
 

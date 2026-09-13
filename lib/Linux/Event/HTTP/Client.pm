@@ -15,6 +15,7 @@ our $VERSION = '0.001';
 
 my %CALLBACK = map { $_ => 1 } qw(
     on_response on_body on_complete on_error on_informational on_redirect
+    on_upgrade
 );
 
 my %REDIRECT_STATUS = map { $_ => 1 } qw(301 302 303 307 308);
@@ -318,6 +319,15 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
         $destination->{origin} ne $next_destination->{origin},
     );
 
+    if (defined $spec->{upgrade_to}) {
+        push @$headers, [
+            Upgrade => $_->[1],
+        ] for grep {
+            defined($_->[0]) && !ref($_->[0]) && lc($_->[0]) eq 'upgrade'
+        } @{$spec->{headers}};
+        push @$headers, [ Connection => 'Upgrade' ];
+    }
+
     my %next = (
         url             => $next_url,
         method          => $method,
@@ -330,6 +340,7 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
         has_buffer_body => $spec->{has_buffer_body},
         buffer_body     => $spec->{buffer_body},
         max_redirects   => $spec->{max_redirects},
+        upgrade_to      => $spec->{upgrade_to},
         callback        => $spec->{callback},
     );
 
@@ -368,6 +379,7 @@ sub _start_operation_hop ($self, $operation, $spec) {
     my $connection = $self->_connection_for($destination);
     my $callback = $spec->{callback};
     my $redirect;
+    my $upgraded = 0;
 
     my %connection_callback;
     $connection_callback{on_response} = sub ($transaction, $response) {
@@ -407,7 +419,28 @@ sub _start_operation_hop ($self, $operation, $spec) {
     $connection_callback{buffer_body} = $spec->{buffer_body}
         if $spec->{has_buffer_body};
 
+    if (defined $spec->{upgrade_to}) {
+        $connection_callback{upgrade_to} = $spec->{upgrade_to};
+        $connection_callback{on_upgrade} = sub ($transaction, $response, $upgraded_connection) {
+            $upgraded = 1;
+            $operation->_mark_complete if !$operation->is_terminal;
+            $callback->{on_upgrade}->(
+                $operation,
+                $transaction,
+                $response,
+                $upgraded_connection,
+            ) if $callback->{on_upgrade};
+            return;
+        };
+    }
+
     $connection_callback{on_complete} = sub ($transaction) {
+        if ($upgraded) {
+            $callback->{on_complete}->($transaction)
+                if $callback->{on_complete};
+            return;
+        }
+
         $self->_release_connection(
             $destination->{origin}, $connection,
         );
@@ -498,6 +531,9 @@ sub request ($self, $method, $url, %option) {
     my $buffer_body = $has_buffer_body
         ? _validate_buffer_body(delete $option{buffer_body})
         : undef;
+    my $upgrade_to = exists($option{upgrade_to})
+        ? delete($option{upgrade_to})
+        : undef;
     my $max_redirects = _validate_max_redirects(
         exists($option{max_redirects})
             ? delete($option{max_redirects})
@@ -519,6 +555,12 @@ sub request ($self, $method, $url, %option) {
 
     croak 'request(): buffer_body cannot be combined with on_body'
         if $has_buffer_body && $callback{on_body};
+    croak 'request(): on_upgrade requires upgrade_to'
+        if $callback{on_upgrade} && !defined($upgrade_to);
+    croak 'request(): upgrade_to cannot be combined with buffer_body'
+        if defined($upgrade_to) && $has_buffer_body;
+    croak 'request(): upgrade_to cannot be combined with on_body'
+        if defined($upgrade_to) && $callback{on_body};
     croak 'request(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -539,6 +581,7 @@ sub request ($self, $method, $url, %option) {
         has_buffer_body => $has_buffer_body ? 1 : 0,
         buffer_body     => $buffer_body,
         max_redirects   => $max_redirects,
+        upgrade_to      => $upgrade_to,
         callback        => \%callback,
     };
 
@@ -685,7 +728,10 @@ request has no body.
 
 Redirect hops regenerate Host and HTTP message-framing fields. Cross-origin
 redirects also remove Authorization and Cookie. Proxy-Authorization and
-connection-specific fields are never propagated automatically.
+connection-specific fields are never propagated automatically. When an
+operation expects HTTP Upgrade, the next hop regenerates C<Connection: Upgrade>
+and re-advertises the same Upgrade protocol fields rather than forwarding the
+previous hop's connection-specific fields verbatim.
 
 =head2 request bodies
 
@@ -708,6 +754,26 @@ available from the returned operation:
 
 A supplied Content-Length is enforced exactly; otherwise HTTP/1.1 uses chunked
 transfer coding automatically. HTTP/1.0 streaming requires Content-Length.
+
+=head2 client Upgrade
+
+C<upgrade_to =E<gt> $class> requests a live HTTP/1.1 protocol handoff through
+the low-level Client::Connection. The outgoing Request must be bodyless and
+must advertise C<Connection: Upgrade> plus the offered C<Upgrade> protocol.
+
+On a validated C<101 Switching Protocols>, the HTTP Transaction completes and
+the same live stream object transitions to C<$class>. Any bytes already read
+after the 101 head are delivered to the target class. The optional callback:
+
+    on_upgrade => sub ($operation, $tx, $res, $connection) {
+        ...;
+    }
+
+runs after transition. The Client operation is already complete at that point.
+C<on_complete> subsequently runs for the completed HTTP Transaction. The
+transitioned connection is not returned to the HTTP idle pool. Redirect hops
+may precede the successful 101; Upgrade handshake fields are regenerated for
+each hop.
 
 =head2 buffer_body
 
@@ -752,6 +818,8 @@ open another connection rather than queueing or using HTTP/1 pipelining. When
 multiple connections later become idle, one is retained and extras are closed.
 
 Each redirect hop independently selects a connection for its target origin.
+A connection that successfully leaves HTTP through Upgrade is never returned
+to the HTTP idle pool.
 
 =head1 HTTPS
 
