@@ -22,15 +22,16 @@ sub _new ($class, %args) {
         if %args;
 
     my $self = bless {
-        request                  => $request,
-        response                 => undef,
-        response_body            => undef,
-        response_output_started  => 0,
-        response_output_complete => 0,
-        upgrade_pending          => 0,
-        state                    => 'pending',
-        error                    => undef,
-        controller               => $controller,
+        request                   => $request,
+        request_body              => undef,
+        response                  => undef,
+        response_body             => undef,
+        response_output_started   => 0,
+        response_output_complete  => 0,
+        upgrade_pending           => 0,
+        state                     => 'pending',
+        error                     => undef,
+        controller                => $controller,
     }, $class;
     weaken($self->{controller}) if defined $self->{controller};
     return $self;
@@ -45,6 +46,29 @@ sub is_cancelled        ($self) { $self->{state} eq 'cancelled' }
 sub is_terminal         ($self) { !!$TERMINAL{$self->{state}} }
 sub is_response_started ($self) { !!$self->{response_output_started} }
 sub is_upgrading        ($self) { !!$self->{upgrade_pending} }
+
+sub request_body ($self, @args) {
+    die 'request_body(): Transaction is already terminal'
+        if $self->is_terminal;
+    my $request = $self->{request};
+
+    if (my $body = $self->{request_body}) {
+        die 'request_body options may only be supplied when the producer is created'
+            if @args;
+        return $body;
+    }
+
+    die 'request_body(): Request is not configured for incremental body production'
+        if !$request->_has_incremental_body;
+    die 'request_body options must be key/value pairs' if @args % 2;
+
+    require Linux::Event::HTTP::Body::Stream;
+    my $body = Linux::Event::HTTP::Body::Stream->_new(
+        $self, 'request', @args,
+    );
+    $self->{request_body} = $body;
+    return $body;
+}
 
 sub response_body ($self, @args) {
     die 'response_body(): Transaction is already terminal'
@@ -151,35 +175,47 @@ sub _write_body ($self, $kind, $bytes, $final, $operation) {
     die "$operation(): Transaction is already terminal"
         if $self->is_terminal;
     die "$operation(): unsupported HTTP body producer '$kind'"
-        if $kind ne 'response';
+        if $kind ne 'request' && $kind ne 'response';
 
-    my $response = $self->{response}
-        or die "$operation(): Transaction has no Response";
+    my $message = $kind eq 'request'
+        ? $self->{request}
+        : ($self->{response}
+            or die "$operation(): Transaction has no Response");
     my $controller = $self->{controller}
         or die "$operation(): Transaction has no active controller";
 
     if ($final) {
-        $response->_mark_complete;
+        $message->_mark_complete;
     }
 
     my ($accepted, $ok, $error);
     {
         local $@;
         $ok = eval {
-            $accepted = $controller->_write_http_response_body(
-                $self, $bytes, $final, $operation,
-            );
+            if ($kind eq 'request') {
+                $accepted = $controller->_write_http_request_body(
+                    $self, $bytes, $final, $operation,
+                );
+            } else {
+                $accepted = $controller->_write_http_response_body(
+                    $self, $bytes, $final, $operation,
+                );
+            }
             1;
         };
         $error = $@;
     }
 
     if (!$ok) {
-        $response->_mark_incomplete if $final;
+        $message->_mark_incomplete if $final;
         die $error;
     }
 
     return $accepted;
+}
+
+sub _request_body_object ($self) {
+    return $self->{request_body};
 }
 
 sub _response_body_object ($self) {
@@ -214,6 +250,9 @@ sub _clear_upgrade_pending ($self) {
 }
 
 sub _cancel_body_producers ($self) {
+    if (my $body = $self->{request_body}) {
+        $body->_cancel;
+    }
     if (my $body = $self->{response_body}) {
         $body->_cancel;
     }
@@ -225,6 +264,9 @@ sub _mark_complete ($self) {
     die 'cannot complete a Transaction before it has a Response'
         if !$self->{response};
 
+    if (my $body = $self->{request_body}) {
+        $body->_cancel if !$body->is_complete;
+    }
     $self->{upgrade_pending} = 0;
     $self->{state} = 'complete';
     delete $self->{controller};
@@ -294,6 +336,25 @@ Transaction lifetime.
 
 Returns the Response after the response head has been received or created, or
 undef before a Response exists.
+
+=head2 request_body
+
+Returns the writable producer for an outgoing streaming Request body when the
+Client request selected incremental body production:
+
+    my $tx = $client->post(
+        $url,
+        stream_body => {
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
+        },
+    );
+
+    my $body = $tx->request_body;
+    $body->write($bytes);
+    $body->complete;
+
+The producer belongs to the Transaction rather than the Request message.
 
 =head2 response_body
 
