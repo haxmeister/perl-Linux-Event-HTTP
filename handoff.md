@@ -6,22 +6,20 @@ Updated: 2026-09-13 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Current main baseline: `8a39aa272d99a9303ac38eb7bb32f3fc371dc244`
-- That baseline is the merge of PR #29, client Uniform authentication integration.
-- Active branch: `feature/uniform-message-contract`
-- PR #30: `Conform native HTTP messages to Uniform 0.02 contract`
-- Do not merge PR #30 without explicit user authorization.
+- Current main baseline: `8070e6a182c11768904c6dd02330253a6b4ac1d6`
+- That baseline is the merge of PR #30, native Uniform::HTTP 0.02 message-contract conformance.
+- PR #29, client Uniform authentication integration, is also merged.
+- No active feature branch is required for the current baseline.
 - Linux::Event minimum: `0.113`
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
 
-## Uniform message contract work
+## Uniform message contract
 
-The current branch makes `Linux::Event::HTTP::Request` and
-`Linux::Event::HTTP::Response` conform by behavior to the Uniform::HTTP 0.02
-message contract without replacing the native/live classes and without adding
-inheritance.
+`Linux::Event::HTTP::Request` and `Linux::Event::HTTP::Response` now conform by
+behavior to the Uniform::HTTP 0.02 message contract without replacing the
+native/live classes and without adding inheritance.
 
-Public message behavior now includes:
+Public message behavior includes:
 
 - `header_values($name)` always returns an array reference, including an empty
   array reference when the field is absent;
@@ -47,14 +45,14 @@ Request/Response remain transport-independent. Connection, Transaction,
 streaming body producer, retry, pool, Upgrade, and CONNECT state stay outside
 message objects.
 
-## Authentication simplification
+## Uniform authentication
 
-PR #29 is already merged. The dependency is now:
+Authentication mechanics are supplied by the `Uniform-HTTP` distribution:
 
-- distribution/repository: `haxmeister/perl-Uniform-HTTP`
+- repository: `haxmeister/perl-Uniform-HTTP`
 - module: `Uniform::HTTP::Auth 0.02`
 
-`Linux::Event::HTTP::_ClientAuth` now passes the actual
+`Linux::Event::HTTP::_ClientAuth` passes the actual
 `Linux::Event::HTTP::Request` message to Uniform 0.02 instead of reconstructing
 method/request-target/entity-body arguments. Bodyless Requests still provide an
 explicit empty entity body where needed; streaming producers remain outside the
@@ -66,13 +64,17 @@ retry Transactions, and callback/Operation lifecycle.
 
 ## Validation
 
-Executable conformance head
-`c4530551081fce199cca57b02fd31a1243ef8086` passed CI #424 / run
-`34784790047` across the complete repository matrix.
+PR #30 exact final head
+`59d900f4ccaa5aa23ca3866d1b8a704587d7ce3c` passed CI #427 / run
+`34788358803` across Perl 5.36, latest, and latest threaded. Latest also passed
+end-to-end smoke and distribution integrity.
 
-Documentation-aligned head
-`38f72adc488f99802718968c6515f8ee6d398b9b` passed CI #426 / run
-`34788300925` across the complete repository matrix.
+Earlier checkpoints also passed:
+
+- executable conformance head `c4530551081fce199cca57b02fd31a1243ef8086`:
+  CI #424 / run `34784790047`;
+- documentation-aligned head `38f72adc488f99802718968c6515f8ee6d398b9b`:
+  CI #426 / run `34788300925`.
 
 Focused coverage includes:
 
@@ -82,11 +84,6 @@ Focused coverage includes:
 - mutability/lossless capability reporting;
 - Response 100..599 status validation;
 - `t/79-uniform-message-contract.t`, including an XS-parsed native Request.
-
-Client policy documentation now names Uniform 0.02 and documents direct native
-Request integration. Request/Response POD documents the public message contract.
-Broader release-note wording cleanup can be handled in the planned 0.001
-release-readiness audit rather than widening PR #30.
 
 ## Design constraints that remain fixed
 
@@ -100,14 +97,13 @@ release-readiness audit rather than widening PR #30.
 - Do not modify Linux::Event core from this Project unless explicitly requested.
 - Do not add CONNECT relay/proxy bridging to Transaction.
 
-## Next actions
+## Next action
 
-1. Update PR #30 body with the final scope and validation checkpoints.
-2. Confirm CI on this final handoff-only branch head.
-3. Mark PR #30 ready for review if green, but do not merge without explicit user
-   authorization.
-4. After merge, perform the planned 0.001 release-readiness audit rather than
-   automatically adding another protocol-policy subsystem.
+Perform the planned `0.001` release-readiness audit. In particular, reconcile
+remaining historical/release-note wording such as stale Uniform 0.01 references,
+review README/POD/docs against the actual public API, confirm MANIFEST and
+`disttest`, and verify that no unreleased experimental wording or stale branch
+references remain before setting the release version/date.
 
 ## Branch policy
 
