@@ -5,208 +5,274 @@ Updated: 2026-09-12 (America/Chicago)
 ## Start here next session
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
-- Canonical working branch: `main`
-- Current `main` includes the Linux::Event Listener-recipe, runtime-tuning, and
-  runtime-TLS compatibility migration described below.
-- PR #16 (`Finalize Response body and streaming API`) was the preceding major
-  server API baseline.
-- Historical CI run `34181760630` on that baseline succeeded across Perl 5.36,
-  latest Perl, latest threaded Perl, end-to-end benchmark smoke, and
-  distribution integrity.
-- There is no release planned yet. Continue architecture/design work.
+- Canonical release branch: `main`
+- Current architecture branch: `feature/message-objects`
+- Draft PR: #17, `Refactor Request and Response as shared message objects`
+- Do not merge PR #17 without explicit user authorization.
+- Linux::Event minimum prerequisite is `0.113`.
+- CI prefers CPAN `Linux::Event@0.113` and temporarily falls back to the immutable
+  GitHub `v.113` release tag if CPAN file propagation is incomplete.
+- No CPAN release of Linux::Event::HTTP has been made yet; distribution version
+  remains `0.001 UNRELEASED`.
 
-The server-side Response body redesign is now on `main` and should be treated as the current baseline.
+## Architectural decisions now treated as settled
 
-## Linux::Event main compatibility
+### Request and Response are HTTP messages
 
-HTTP has been migrated to the Listener, tuning, and accepted-TLS APIs now on
-Linux::Event `main`:
-
-- `HTTP::Server` resolves one `stream => {...}` Listener recipe.
-- Listener constructs the configured HTTP `connection_class` directly.
-- The private `Linux::Event::HTTP::_ServerConnection` acceptance adapter has
-  been removed.
-- `HTTP::Server->new(tuning => {...})` supplies deployment tuning that overrides
-  Connection `stream_tuning()` defaults.
-- `HTTP::Server->new(tls => {...})` activates accepted TLS. Connection
-  `tls_defaults()` may provide reusable ALPN and timeout defaults without
-  forcing every listener using that class to be TLS.
-- Accepted-Connection lifecycle callbacks are stored in the Stream recipe.
-  `on_error` retains its accepted-Connection meaning;
-  `on_listener_error` handles Listener and acceptance errors distinctly.
-- Direct Listener tests and benchmark adapters use the new Stream recipe, and
-  all `stream_options()` methods have been renamed to `stream_tuning()`.
-
-Validation against Linux::Event main commit `321d4c2`:
-
-- full suite: 17 files, 354 tests, all successful;
-- `bench/run-http-end-to-end.pl --smoke`: successful;
-- `bench/run-http-transaction-ladder.pl --smoke`: successful.
-
-The current Linux::Event source still reports version `0.112`, although these
-API changes are newer than the published 0.112 baseline. Therefore
-`Makefile.PL` still says `Linux::Event => 0.112`; update that prerequisite as
-soon as the next Linux::Event release version is assigned. Until then, test
-HTTP against Linux::Event `main`. CI temporarily installs exact core commit
-`321d4c2` before resolving HTTP dependencies so CPAN 0.112 cannot mask this
-compatibility boundary.
-
-## Current Response/body API
-
-Conceptual split:
+`Linux::Event::HTTP::Request` and `Linux::Event::HTTP::Response` describe HTTP
+messages, not client/server roles.
 
 ```text
-Response     = HTTP response message
-Body::Stream = streaming body producer
+client sends Request  -----> server receives Request
+client gets Response  <----- server sends Response
 ```
 
-Ordinary scalar response:
+Do not introduce `Client::Request`, `Client::Response`, `Server::Request`, or
+`Server::Response` merely to encode endpoint direction.
+
+Both message classes use familiar CPAN-style names where the semantics genuinely
+match, while retaining richer/protocol-correct concepts where needed. In
+particular:
+
+```text
+Request                         Response
+-------                         --------
+method                          status
+target                          reason
+version                         version
+header                          header
+add_header                      add_header
+remove_header                   remove_header
+header_values                   header_values
+header_count                    header_count
+header_name                     header_name
+header_value                    header_value
+content_length                  content_length
+body                            body
+is_complete                     is_complete
+```
+
+Use `target`, not `uri`, because the HTTP message contains a request-target.
+Client URL parsing/resolution is a Client concern.
+
+Do not add conversion to/from `HTTP::Request` / `HTTP::Response` now. That can be
+considered later if real interoperability needs justify it.
+
+### Native received Request remains lazy
+
+The message refactor must not turn every parsed server request into eager Perl
+hash/header objects.
+
+Native parsed Requests remain XS-backed and lazily materialize method, target,
+and header strings. Locally constructed Requests use the same public class with
+a mutable Perl representation.
+
+`lib/Linux/Event/HTTP/_HTTP1.pm` ensures the public Request class is loaded when
+native parsing returns a Request object without moving message API ownership
+back into XS.
+
+### Transaction is one HTTP exchange
+
+`Linux::Event::HTTP::Transaction` represents exactly one Request/Response
+exchange:
+
+```text
+Transaction
+    Request
+    Response
+    state
+    cancel
+    is_complete
+    error
+    outgoing body producer
+```
+
+One redirect is another HTTP exchange and therefore another Transaction.
+Transaction does not own a socket, parser, connection pool, or transport queue.
+Its current Client/Connection controller performs protocol execution.
+
+The server callback remains intentionally simple:
 
 ```perl
 on_request => sub ($conn, $req, $res) {
-    $res->status(200);
-    $res->header('Content-Type', 'text/plain');
-    $res->body("hello\n");
-};
+    ...
+}
 ```
 
-Streaming response:
+The active Transaction is available through:
 
 ```perl
-on_request => sub ($conn, $req, $res) {
-    $res->header('Content-Type', 'text/plain');
-
-    my $body = $res->stream_body(
-        on_drain => sub ($body) {
-            # Resume upstream production.
-        },
-        on_cancel => sub ($body) {
-            # Stop upstream work because this HTTP connection
-            # abandoned the unfinished body.
-        },
-    );
-
-    $body->write("one\n");
-    $body->complete("two\n");
-};
+my $tx = $conn->transaction;
 ```
 
-Public Response surface includes:
+Do not add a Transaction callback argument unless a concrete need later proves
+that accessor insufficient.
 
-```text
-status
-reason
-header
-add_header
-header_values
-body
-stream_body
-upgrade
-connection
-request
-is_started
-is_complete
-is_upgrading
-```
+### Body handling and HTTP framing are different concerns
 
-Body::Stream surface:
+Headers/framing answer how the protocol knows which bytes belong to a body.
+Application body handling answers whether bytes are buffered, incrementally
+produced/consumed, written to disk, parsed, discarded, forwarded, etc.
 
-```text
-write
-complete
-is_complete
-is_cancelled
-```
+Do not equate application streaming with `Transfer-Encoding: chunked`.
+A known Content-Length body may still be produced/consumed incrementally, and
+future HTTP versions use different wire framing.
 
-Do not restore Response-level `write`, `complete`, `end`, or `is_ended` compatibility aliases. The distribution is unreleased and we deliberately removed those ambiguous/transitional APIs.
+Linux::Event::HTTP is the protocol communication layer. It exposes status,
+headers, content length when known, body bytes, completion, errors, and lifecycle
+information. The application decides whether data belongs in RAM, a file, a
+parser, another protocol connection, or nowhere.
 
-## Response commit semantics
+Never make unbounded implicit body buffering the default.
 
-`$res->body($bytes)` declares a complete scalar body.
+## Current body API
 
-When called inside an HTTP callback, `body(...)` does not serialize immediately in the middle of the callback. Response metadata remains mutable until the callback returns. This is intentionally valid:
+A complete scalar body belongs to the message:
 
 ```perl
-$res->body("hello\n");
-$res->header('X-After-Body', 'yes');
+$res->body($bytes);
 ```
 
-At callback return, the connection commits the complete response when transaction state permits.
+That means the Response message body itself is complete. Message completion is
+separate from server transport-output completion.
 
-When `body(...)` is called later from an asynchronous event callback while a Response is waiting and no HTTP callback dispatch is active, it commits the waiting response immediately.
+An incremental outgoing body belongs to Transaction:
 
-`stream_body()` lazily creates one stable Body::Stream object. Selecting the stream does not itself start output or freeze metadata. The first Body::Stream `write(...)` or `complete(...)` is the streaming commit point.
+```perl
+my $body = $conn->transaction->response_body(
+    on_drain => sub ($body) {
+        # resume upstream production
+    },
+    on_cancel => sub ($body) {
+        # stop upstream work
+    },
+);
 
-Scalar `body(...)` and streaming `stream_body(...)` are mutually exclusive.
+$body->write($bytes);
+$body->complete;
+```
 
-## Backpressure and transport ownership
+`Response->stream_body` has been removed. Do not restore it as an alias.
+Response also deliberately has no public `write`, `complete`, `end`, or
+`is_ended` compatibility aliases.
 
-Do not add another HTTP response-body output queue.
+`Transaction->response_body` creates one stable `Body::Stream` producer. Merely
+creating it does not commit response output. The first producer `write` or
+`complete` commits the response head and freezes Response metadata.
 
-Body::Stream is a protocol-facing producer over Linux::Event's existing ordered-byte output machinery. Linux::Event remains the owner of queued transport bytes, segmented output, watermarks, `pending_bytes`, write readiness, drain signaling, pending-byte limits, and TLS transport progression.
+A complete scalar Response body and an incremental response producer are
+mutually exclusive.
 
-`Body::Stream->write(...)` preserves Linux::Event flow control:
+`Body::Stream->write` preserves Linux::Event flow control:
 
 ```text
 true  = bytes accepted; producer may continue
 false = bytes accepted; producer should stop until on_drain
 ```
 
-HTTP framing is applied before bytes enter that transport machinery.
+There is no second HTTP output queue. Linux::Event owns queued bytes,
+watermarks, drain signaling, pending-byte limits, TLS progression, and actual
+transport writes.
 
-HTTP lifecycle bookkeeping composes with custom Connection lifecycle callbacks:
+## Completion semantics
+
+These are deliberately distinct:
 
 ```text
-transport drain
-    -> HTTP Body::Stream drain handling
-    -> custom Connection on_drain
+Request->is_complete
+    complete incoming/outgoing Request message body boundary
 
-transport close
-    -> HTTP Body::Stream cancellation
-    -> custom Connection on_close
+Response->is_complete
+    complete Response message body boundary
+
+Transaction->is_complete
+    successful completion of the whole HTTP exchange
+
+private Response output state
+    server has finished writing this Response to its transport
 ```
 
-## Tests and documentation
+For a received server Request, `is_complete` becomes true at the actual body
+boundary. For an outgoing scalar Response, `body(...)` makes the message complete
+immediately even though output may not yet have committed. For an incremental
+Response producer, the message becomes complete when the producer completes.
 
-Important body API tests:
+## Server integration
+
+`Server::Connection` now creates one Transaction for each exchange and preserves
+the existing `$conn, $req, $res` public callbacks.
+
+The Transaction controller path handles:
+
+- response body producer writes;
+- producer drain signaling;
+- producer cancellation when the Transaction/connection is abandoned;
+- Transaction cancellation;
+- terminal success/error state.
+
+The native default scalar-response fast path remains enabled and now terminates
+the same Transaction lifecycle instead of bypassing it.
+
+Current server-specific lifecycle still present on Response includes Upgrade and
+some private/bound-connection machinery. Do not broaden cleanup of those pieces
+unless needed by the next client work. Upgrade ownership can move toward
+Transaction later as a focused change.
+
+## HTTP/1 private state
+
+Generic Request/Response API must not expose HTTP/1 framing policy as message
+identity. Server HTTP/1 execution uses private accessors/state such as request
+body mode and keep-alive decisions.
+
+Wire framing remains protocol-version-specific:
+
+- scalar HTTP/1 bodies normally use Content-Length;
+- unknown-length incremental HTTP/1.1 output uses chunked transfer coding;
+- unknown-length incremental HTTP/1.0 output is close-delimited;
+- declared Content-Length is enforced;
+- HEAD and body-forbidden response semantics are enforced.
+
+## CI / tests
+
+The message/Transaction refactor has been repeatedly validated on:
+
+- Perl 5.36;
+- latest Perl;
+- latest threaded Perl;
+- end-to-end benchmark smoke;
+- `make disttest` / distribution integrity.
+
+CI run `34727574293` (PR run 281) passed after moving writable response-body
+ownership from Response to Transaction.
+
+Important focused tests include:
 
 ```text
+t/19-request-message.t
+t/20-response.t
 t/21-response-body-stream-unit.t
+t/22-transaction.t
+t/23-server-transaction.t
+t/30-connection.t
+t/31-request-body.t
+t/32-request-body-lifecycle.t
+t/33-response-chunked.t
 t/34-response-body-stream.t
+t/42-upgrade.t
+t/50-final-response.t
 ```
 
-Coverage includes scalar body behavior, scalar/stream exclusion, stable stream identity, backpressure propagation, drain callbacks, completion, cancellation, asynchronous scalar completion, callback-return commit semantics, stream selection without commit, first-write commit, metadata locking, HTTP/1.1 chunk framing, persistent/pipelined ordering, and lifecycle callback composition.
-
-README, Response POD, Server POD, `docs/ARCHITECTURE.md`, `docs/BENCHMARKING.md`, Changes, tests, and Linux::Event benchmark adapters were migrated to this body/stream model.
-
-The transaction benchmark still has a historical stage identifier named `complete`; that is not a public Response method. Its callback uses `Response->body(...)`. Benchmark contract version is 6.
-
-## Linux::Event paused-read / terminal-readiness finding
-
-While testing body cancellation, we noticed a generic Linux::Event behavior:
-
-- HTTP pauses application reads while a completed request waits for a later asynchronous response so a pipelined request cannot overtake the active response.
-- Linux::Event still receives terminal readiness (`EPOLLERR`, `EPOLLHUP`, `EPOLLRDHUP`).
-- `_ByteStream::_on_read_terminal_ready` only enters the read path when `read_paused` is false, so input-side EOF/half-close observation may be delayed while application reads are paused.
-
-Current conclusion:
-
-1. This is not established as a Linux::Event correctness bug.
-2. `pause_read()` deliberately pauses application input consumption/delivery.
-3. Forcing `_read_ready` while paused could consume or expose unread application payload and violate pause semantics.
-4. TCP FIN / `EPOLLRDHUP` means the peer has finished sending to us; it does not mean the peer has stopped reading our response.
-5. Therefore peer read-side EOF is not valid evidence by itself that an outgoing HTTP Body::Stream should be cancelled.
-6. TLS already separates transport progress from paused application input, so any future generic terminal-observation capability must preserve that distinction.
-
-Decision: do not change Linux::Event core merely to make HTTP observe peer FIN sooner, and do not add an HTTP workaround, polling layer, duplicate buffering, or second response queue.
-
-This question is intentionally parked. Reopen it only if a concrete protocol requirement, failing test, or real-world behavior demonstrates a need to observe peer/transport terminal state independently of application read pause. A future generic design would need explicit semantics for unread buffered data, half-close, full close, and TLS.
-
-For the current HTTP API, `on_cancel` remains deterministic when the HTTP connection itself closes or abandons an unfinished streaming body.
+Coverage includes locally constructed messages, lazy native Requests, exact
+header semantics, message completion, Transaction pairing/lifecycle,
+cancellation, incremental body production, backpressure, chunked/close-delimited
+framing, pipelining, deferred scalar responses, TLS, Upgrade, and the native
+scalar fast path.
 
 ## Project charter
 
-Linux::Event is the Linux-native communications engine. Reusable low-level performance work belongs in Linux::Event core when it benefits multiple protocol layers.
+Linux::Event is the Linux-native communications engine. Reusable low-level
+performance work belongs in Linux::Event core when it benefits multiple protocol
+layers.
 
 Linux::Event::HTTP is the HTTP protocol layer. Priorities are:
 
@@ -217,35 +283,77 @@ Linux::Event::HTTP is the HTTP protocol layer. Priorities are:
 5. composability
 6. performance without unnecessary HTTP-specific native complexity
 
-Do not add PSGI, PAGI, routing/framework responsibilities, middleware, sessions, or templates to this distribution.
+Do not add PSGI, PAGI, routing/framework responsibilities, middleware, sessions,
+or templates to this distribution.
 
-Prefer established CPAN/community libraries for standards/utilities where appropriate. Do not add HTTP-specific XS merely to win benchmarks.
+Prefer established CPAN/community libraries for standards/utilities where
+appropriate. Do not add HTTP-specific XS merely to win benchmarks.
 
-Keep the single private native HTTP extension unless a measured reason requires otherwise:
+Keep the single private native HTTP extension unless a measured reason requires
+otherwise:
 
 ```text
 xshttp1/HTTP1.xs
     -> Linux::Event::HTTP::_HTTP1.so
 ```
 
-It owns pico request parsing/lazy Request accessors, chunked request decoding, response-head serialization, and the narrow default scalar final-response builder.
+It owns pico request parsing/lazy Request accessors, chunked request decoding,
+response-head serialization, and the narrow default scalar response builder.
 
-HTTP Upgrade remains a boundary operation: validate Upgrade, queue 101, clear the HTTP transaction, then use Linux::Event `transition_to()` on the same live transport. WebSocket belongs in a separate distribution.
+## Next major work
 
-## Immediate next steps
+Once PR #17 is reviewed/merged with user authorization, move to the native HTTP
+client rather than redesigning the server again.
 
-1. When Linux::Event assigns/releases the version after 0.112, update the
-   `Makefile.PL` minimum prerequisite to that version.
-2. Move on to HTTP CLIENT ARCHITECTURE rather than trying to force a solution to the parked paused-read/terminal-readiness question.
-3. Evaluate the public client object model and responsibilities before implementing substantial code.
-4. Compare the proposed client API with prominent CPAN HTTP request/response/client conventions and reuse familiar semantics where they fit the project charter.
-5. Explicitly design connection lifecycle, request/response ownership, persistent connections, connection reuse, streaming request bodies, streaming response bodies, backpressure, cancellation, redirects, timeouts, TLS, and HTTP/1.1 ordering.
-6. Keep transport queues/backpressure owned by Linux::Event; do not invent a second HTTP transport queue.
-7. Preserve symmetry with the now-stable server Response/body concepts where it genuinely improves the API, but do not force false symmetry between client and server roles.
-8. Keep this handoff current immediately after major architectural conclusions, experiments, or tests.
+Client design already agreed in principle:
+
+```text
+Client
+    configuration
+    connection pool / connection selection
+    redirects and destination policy later
+
+Client::Connection
+    HTTP/1 client wire execution
+    ordering
+    persistence/reuse mechanics
+
+Transaction
+    one Request/Response exchange
+
+Request / Response
+    shared HTTP message classes
+```
+
+Likely Client convenience surface:
+
+```text
+request
+get
+head
+post
+put
+delete
+```
+
+Client methods should return Transaction, not Request. A Request is the HTTP
+message; Transaction is the cancellable asynchronous exchange.
+
+Before broad client features, implement in layers:
+
+1. basic `Client::Connection` HTTP/1 request serialization/response parsing;
+2. one-connection Transaction lifecycle and incremental incoming body delivery;
+3. `Client` destination parsing, connection ownership, and reuse;
+4. convenience verbs;
+5. bounded buffered-body convenience on top of incremental delivery;
+6. redirects, richer pooling policy, proxy/auth/cookie conveniences only after
+   the basic protocol client is correct.
+
+Do not make a Future/Promise abstraction central. Linux::Event::HTTP uses its
+OO/callback Transaction model; awaitable adapters can remain separate concerns.
 
 ## Branch policy
 
-`main` is the canonical branch for the current work. Do not keep merged or abandoned feature branches merely as history. Delete them after merge/abandon unless they contain unique work with a concrete reason to preserve them.
-
-The old `feature/response-body-stream` branch contains no work that is not now on `main` and is safe to delete.
+The user dislikes stale branches. Keep `feature/message-objects` only while PR
+#17 contains active unmerged work. After authorized merge, delete the branch if
+it has no unique remaining work.
