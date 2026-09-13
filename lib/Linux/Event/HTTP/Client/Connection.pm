@@ -36,11 +36,22 @@ sub _reject_reserved_callbacks ($operation, $option) {
     return;
 }
 
-sub _init_http_client ($self) {
+sub _take_drain_handler ($class, $option) {
+    if (exists $option->{on_drain}) {
+        my $handler = delete $option->{on_drain};
+        croak 'on_drain must be a coderef' if ref($handler) ne 'CODE';
+        return $handler;
+    }
+    return $class->can('on_drain');
+}
+
+sub _init_http_client ($self, $user_on_drain = undef) {
     $self->{_http_client_input} = '';
     $self->{_http_client_active_transaction} = undef;
     $self->{_http_client_callbacks} = undef;
+    $self->{_http_client_request_state} = undef;
     $self->{_http_client_response_state} = undef;
+    $self->{_http_client_user_on_drain} = $user_on_drain;
     $self->{_http_client_driving} = 0;
     $self->{_http_client_reusable} = 1;
     return $self;
@@ -48,19 +59,35 @@ sub _init_http_client ($self) {
 
 sub new ($class, %option) {
     _reject_reserved_callbacks('new', \%option);
+    my $user_on_drain = _take_drain_handler($class, \%option);
+    $option{on_drain} = \&_http_client_transport_drain;
     my $self = $class->SUPER::new(%option);
-    return $self->_init_http_client;
+    return $self->_init_http_client($user_on_drain);
 }
 
 sub connect ($class, %option) {
     croak 'connect(): must be called as a class method' if ref $class;
     _reject_reserved_callbacks('connect', \%option);
+    my $user_on_drain = _take_drain_handler($class, \%option);
+    $option{on_drain} = \&_http_client_transport_drain;
     my $self = $class->SUPER::connect(%option);
-    return $self->_init_http_client;
+    return $self->_init_http_client($user_on_drain);
 }
 
 sub transaction ($self) {
     return $self->{_http_client_active_transaction};
+}
+
+sub _http_client_transport_drain ($self) {
+    if (my $transaction = $self->{_http_client_active_transaction}) {
+        if (my $body = $transaction->_request_body_object) {
+            $body->_drain;
+        }
+    }
+    if (my $callback = $self->{_http_client_user_on_drain}) {
+        $callback->($self);
+    }
+    return;
 }
 
 sub _byte_string ($operation, $value) {
@@ -111,7 +138,33 @@ sub _serialize_request_head ($request) {
     return $head;
 }
 
-sub _prepare_request ($request) {
+sub _request_chunked_transfer ($version, $values) {
+    return 0 if !@$values;
+    croak 'request(): Transfer-Encoding is not valid for HTTP/1.0 requests'
+        if $version ne '1.1';
+
+    my @coding;
+    for my $value (@$values) {
+        for my $member (split /,/, $value, -1) {
+            $member =~ s/\A[ \t]+//;
+            $member =~ s/[ \t]+\z//;
+            croak 'request(): invalid Transfer-Encoding request value'
+                if $member eq '' || $member =~ /;/;
+            push @coding, lc $member;
+        }
+    }
+
+    croak 'request(): only chunked request Transfer-Encoding is supported'
+        if @coding != 1 || $coding[0] ne 'chunked';
+    return 1;
+}
+
+sub _chunk_wire ($bytes) {
+    return '' if !length($bytes);
+    return sprintf('%x', length($bytes)) . "\r\n" . $bytes . "\r\n";
+}
+
+sub _prepare_request ($request, $streaming = 0) {
     croak 'request(): requires a Linux::Event::HTTP::Request'
         if !blessed($request)
         || !$request->isa('Linux::Event::HTTP::Request');
@@ -129,11 +182,40 @@ sub _prepare_request ($request) {
         if @host > 1;
 
     my @transfer = $request->header_values('Transfer-Encoding');
-    croak 'request(): streaming/Transfer-Encoding request bodies are not implemented yet'
-        if @transfer;
-
     my $body = $request->body;
     my $length = $request->content_length;
+
+    if ($streaming) {
+        croak 'request(): stream_body cannot be combined with a scalar Request body'
+            if defined($body) || $request->_has_scalar_body;
+        croak 'request(): streaming Request cannot contain both Transfer-Encoding and Content-Length'
+            if @transfer && defined $length;
+
+        my $chunked = _request_chunked_transfer($version, \@transfer);
+        if (!@transfer && !defined $length) {
+            croak 'request(): HTTP/1.0 streaming Request requires Content-Length'
+                if $version ne '1.1';
+            $request->header('Transfer-Encoding', 'chunked');
+            $chunked = 1;
+        }
+
+        $request->_begin_stream_body;
+        my $head = _serialize_request_head($request);
+        return (
+            $head,
+            '',
+            {
+                streaming => 1,
+                chunked   => $chunked ? 1 : 0,
+                expected  => $length,
+                sent      => 0,
+                complete  => 0,
+            },
+        );
+    }
+
+    croak 'request(): Transfer-Encoding requires stream_body'
+        if @transfer;
 
     if (defined $body) {
         my $body_length = length($body);
@@ -144,11 +226,18 @@ sub _prepare_request ($request) {
             $request->header('Content-Length', $body_length);
         }
     } elsif (defined($length) && $length != 0) {
-        croak 'request(): non-zero Content-Length requires a scalar body in this client stage';
+        croak 'request(): non-zero Content-Length requires a scalar or streaming body';
     }
 
     my $head = _serialize_request_head($request);
-    return ($head, $body // '');
+    return (
+        $head,
+        $body // '',
+        {
+            streaming => 0,
+            complete  => 1,
+        },
+    );
 }
 
 sub request ($self, $request, %option) {
@@ -156,6 +245,14 @@ sub request ($self, $request, %option) {
     croak 'request(): connection is not reusable' if !$self->{_http_client_reusable};
     croak 'request(): another Transaction is already active on this connection'
         if $self->{_http_client_active_transaction};
+
+    my $stream_body;
+    if (exists $option{stream_body}) {
+        $stream_body = delete $option{stream_body};
+        croak 'request(): stream_body must be a hash reference'
+            if ref($stream_body) ne 'HASH';
+        $stream_body = { %$stream_body };
+    }
 
     my $buffer_limit;
     if (exists $option{buffer_body}) {
@@ -181,7 +278,9 @@ sub request ($self, $request, %option) {
         if defined($buffer_limit) && $callback{on_body};
     $callback{buffer_body} = $buffer_limit if defined $buffer_limit;
 
-    my ($head, $body) = _prepare_request($request);
+    my ($head, $body, $request_state) = _prepare_request(
+        $request, defined($stream_body) ? 1 : 0,
+    );
     $request->_mark_committed;
 
     my $transaction = Linux::Event::HTTP::Transaction->_new(
@@ -189,21 +288,28 @@ sub request ($self, $request, %option) {
         controller => $self,
     );
     $transaction->_activate;
+    my $request_body = defined($stream_body)
+        ? $transaction->request_body(%$stream_body)
+        : undef;
 
     $self->{_http_client_active_transaction} = $transaction;
     $self->{_http_client_callbacks} = \%callback;
+    $self->{_http_client_request_state} = $request_state;
     $self->{_http_client_response_state} = undef;
 
     my $wire = $head . $body;
-    my $written = eval {
-        $self->write($wire);
+    my ($accepted, $written);
+    my $ok = eval {
+        $accepted = $self->write($wire);
+        $written = 1;
         1;
     };
-    if (!$written) {
+    if (!$ok || !$written) {
         my $error = "$@";
         $self->_fail_active_transaction($error || 'request write failed', 1);
         croak $error || 'request(): write failed';
     }
+    $request_body->_block if $request_body && !$accepted;
 
     $self->_drive_http1 if length($self->{_http_client_input});
     return $transaction;
@@ -376,8 +482,39 @@ sub _callback ($self, $name, @args) {
 sub _clear_active_transaction ($self) {
     $self->{_http_client_active_transaction} = undef;
     $self->{_http_client_callbacks} = undef;
+    $self->{_http_client_request_state} = undef;
     $self->{_http_client_response_state} = undef;
     return;
+}
+
+sub _write_http_request_body ($self, $transaction, $body, $final, $operation) {
+    croak "$operation(): Transaction is not active on this HTTP connection"
+        if !$self->_same_active_transaction($transaction);
+
+    my $state = $self->{_http_client_request_state}
+        or croak "$operation(): Request body state is unavailable";
+    croak "$operation(): Request does not have an incremental body producer"
+        if !$state->{streaming};
+    croak "$operation(): streaming Request body is already complete"
+        if $state->{complete};
+
+    my $bytes = _byte_string($operation, $body);
+    my $new_sent = $state->{sent} + length($bytes);
+    if (defined($state->{expected}) && $new_sent > $state->{expected}) {
+        croak "$operation(): Request body exceeds Content-Length";
+    }
+    if ($final && defined($state->{expected}) && $new_sent != $state->{expected}) {
+        croak "$operation(): Request body length does not match Content-Length";
+    }
+
+    my $wire = $state->{chunked}
+        ? _chunk_wire($bytes) . ($final ? "0\r\n\r\n" : '')
+        : $bytes;
+    my $accepted = length($wire) ? $self->write($wire) : 1;
+
+    $state->{sent} = $new_sent;
+    $state->{complete} = 1 if $final;
+    return $accepted;
 }
 
 sub _buffer_response_chunk ($self, $chunk) {
@@ -402,8 +539,17 @@ sub _finish_active_response ($self) {
     my $response = $transaction->response or return;
     my $state = $self->{_http_client_response_state}
         or croak 'response completion requires framing state';
+    my $request_state = $self->{_http_client_request_state};
     my $callback = $self->{_http_client_callbacks}{on_complete};
     my $keep_alive = $state->{keep_alive} ? 1 : 0;
+
+    if ($request_state && $request_state->{streaming} && !$request_state->{complete}) {
+        if (my $body = $transaction->_request_body_object) {
+            $body->_cancel;
+        }
+        $keep_alive = 0;
+        $self->{_http_client_reusable} = 0;
+    }
 
     $response->_set_received_body($state->{buffer})
         if exists $state->{buffer_limit};
@@ -616,6 +762,16 @@ sub _drive_http1 ($self) {
                 $state->{buffer} = '';
             }
 
+            my $request_state = $self->{_http_client_request_state};
+            if ($request_state && $request_state->{streaming}
+                && !$request_state->{complete}) {
+                if (my $body = $transaction->_request_body_object) {
+                    $body->_cancel;
+                }
+                $state->{keep_alive} = 0;
+                $self->{_http_client_reusable} = 0;
+            }
+
             $transaction->_set_response($response);
             $self->{_http_client_response_state} = $state;
 
@@ -713,10 +869,14 @@ Linux::Event::HTTP::Client::Connection - one HTTP/1 client connection
 
     my $tx = $conn->request(
         Linux::Event::HTTP::Request->new(
-            method => 'GET',
+            method => 'POST',
             target => '/',
             headers => [ [ Host => 'example.test' ] ],
         ),
+        stream_body => {
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
+        },
         on_response => sub ($tx, $res) {
             say $res->status;
         },
@@ -731,6 +891,10 @@ Linux::Event::HTTP::Client::Connection - one HTTP/1 client connection
         },
     );
 
+    my $body = $tx->request_body;
+    $body->write($bytes);
+    $body->complete;
+
 =head1 DESCRIPTION
 
 C<Linux::Event::HTTP::Client::Connection> is the low-level HTTP/1 execution
@@ -742,13 +906,17 @@ The connection executes one L<Linux::Event::HTTP::Transaction> at a time. After
 a persistent response completes, another Transaction may reuse the same socket.
 HTTP/1 client pipelining is deliberately not enabled.
 
+Outgoing Request bodies may be complete scalars or Transaction-owned streaming
+producers. Streaming writes use Linux::Event's existing ordered-byte queue and
+cooperative high/low-watermark backpressure; HTTP maintains no second output
+queue.
+
 Response bodies are incremental-first. C<on_body> receives delivered body bytes;
 when it is absent, body bytes are drained and discarded rather than accumulated
 implicitly into the Response object. Explicit C<buffer_body> requests bounded
 whole-body accumulation using the same framing/consumption path.
 
-Outgoing streaming request bodies, CONNECT tunnels, and client Upgrade handoff
-remain later layers.
+CONNECT tunnels and client Upgrade handoff remain later layers.
 
 =head1 METHODS
 
@@ -759,7 +927,8 @@ contract. Requests may be submitted before transport readiness because
 Linux::Event already queues pre-connect output in order.
 
 The HTTP implementation owns C<on_data>, C<on_eof>, C<on_error>, and C<on_close>.
-Per-Transaction response callbacks belong to C<request>.
+Transport C<on_drain> is composed with streaming Request producer drain
+bookkeeping. Per-Transaction response callbacks belong to C<request>.
 
 =head2 transaction
 
@@ -767,24 +936,19 @@ Returns the currently active Transaction, or undef when the connection is idle.
 
 =head2 request
 
-    my $tx = $conn->request($request,
-        buffer_body      => 1_048_576,
-        on_response      => sub ($tx, $res) { ... },
-        on_complete      => sub ($tx) {
-            my $bytes = $tx->response->body;
-            ...;
-        },
-        on_error         => sub ($tx, $error) { ... },
-        on_informational => sub ($tx, $res) { ... },
-    );
-
 Starts one exchange and returns its Transaction immediately. Only one
 Transaction may be active on this connection at a time.
 
 For HTTP/1.1, the Request must contain exactly one Host field. A complete scalar
 body automatically gains Content-Length when it was not already supplied. An
-explicit Content-Length must match the scalar body. Transfer-Encoding request
-bodies are not implemented in this stage.
+explicit Content-Length must match the scalar body.
+
+C<stream_body =E<gt> { ... }> selects incremental Request production. The hash
+accepts C<on_drain> and C<on_cancel>, and the stable producer is then available
+through C<< $tx->request_body >>. When Content-Length is supplied it is enforced
+exactly. Without Content-Length, HTTP/1.1 automatically uses chunked transfer
+coding. HTTP/1.0 streaming requires Content-Length; request bodies are never
+close-delimited. Scalar C<body> and C<stream_body> are mutually exclusive.
 
 C<on_response> runs once after the final response head is validated and before
 body delivery. C<on_informational> receives 1xx responses such as 100 Continue;
@@ -800,6 +964,11 @@ and before body accumulation. Unknown-length/chunked bodies fail as soon as the
 delivered byte count would cross the limit. Limit failure is a Transaction error
 and closes the connection. On successful completion, C<< $tx->response->body >>
 returns the buffered scalar, including the empty string for a bodyless response.
+
+If a final Response arrives before an outgoing streaming Request body is
+complete, the Request producer is cancelled and that HTTP/1 connection is not
+reused. This permits early server rejection without leaving an application
+producer running against an exchange that has already ended.
 
 Cancellation closes the connection because an HTTP/1 response cannot in general
 be abandoned mid-message and then safely reused without consuming its remaining
@@ -831,6 +1000,6 @@ uses this same framing path and enforces its configured bound.
 
 L<Linux::Event::HTTP::Client>, L<Linux::Event::HTTP::Request>,
 L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Transaction>,
-L<Linux::Event::IO::Sock::Stream>.
+L<Linux::Event::HTTP::Body::Stream>, L<Linux::Event::IO::Sock::Stream>.
 
 =cut

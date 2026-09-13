@@ -115,9 +115,10 @@ Transaction does not own a socket, parser, connection pool, URL, redirect chain,
 or transport queue. Its current Client/Connection controller performs protocol
 execution.
 
-On the server, Transaction additionally owns outgoing Response body production,
-deferred scalar send, response-output progress, and Upgrade lifecycle. These
-operations do not make Response a transport object.
+On the server, Transaction owns outgoing Response body production, deferred
+scalar send, response-output progress, and Upgrade lifecycle. On the client,
+Transaction owns outgoing incremental Request body production. These operations
+do not make Request or Response transport objects.
 
 ## Server model
 
@@ -165,7 +166,7 @@ Client
 
 Client::Connection
     one HTTP/1 socket
-    Request serialization
+    Request serialization/framing
     Response parsing/framing
     persistence/reuse eligibility
     one active Transaction at a time
@@ -277,12 +278,45 @@ absent, body bytes are drained/discarded rather than accumulated.
 
 ### Client outgoing Request
 
-The current Client supports complete scalar Request bodies. Client::Connection
+A complete scalar Request uses normal message body state. Client::Connection
 adds Content-Length when needed and checks an explicit Content-Length against
 the scalar body length.
 
-Streaming outgoing Request bodies are deliberately later work. Transfer-Encoding
-Request bodies are rejected rather than partially supported.
+Incremental Request production is Transaction-owned:
+
+```perl
+my $tx = $client->post(
+    $url,
+    stream_body => {
+        on_drain  => sub ($body) { ... },
+        on_cancel => sub ($body) { ... },
+    },
+);
+
+my $body = $tx->request_body;
+$body->write($bytes);
+$body->complete;
+```
+
+`body` and `stream_body` are mutually exclusive. If the Request declares
+Content-Length, producer bytes are enforced against that exact size. If no
+length is known, HTTP/1.1 automatically uses `Transfer-Encoding: chunked`.
+HTTP/1.0 streaming requires Content-Length because request bodies are never
+close-delimited.
+
+Request `is_complete` remains false while the producer can still supply bytes
+and becomes true only after successful producer completion. A failed final write
+that does not satisfy Content-Length leaves the Request incomplete.
+
+Producer writes go directly into Linux::Event's existing ordered-byte output
+queue. A false `write` return means bytes were accepted but the producer must
+pause until `on_drain`. HTTP composes that producer drain signal with any custom
+Client::Connection `on_drain` behavior rather than replacing it.
+
+If a final server Response arrives while the Request producer is unfinished, the
+producer is cancelled and that HTTP/1 connection is marked non-reusable. The
+Response may still complete the Transaction normally; Request message
+completion is not fabricated just because the peer rejected the upload early.
 
 ### Client incoming Response
 
@@ -342,6 +376,7 @@ Message completion and protocol execution are intentionally different.
 
 - Request/Response `is_complete` describes the message body boundary.
 - Received message metadata is committed/read-only once parsed.
+- An outgoing streaming Request remains incomplete until its producer completes.
 - Server `Transaction->is_response_started` describes output commit/start.
 - `Transaction->is_complete` means the whole exchange succeeded.
 - Cancellation and error are separate terminal states.
@@ -373,7 +408,7 @@ rule.
 ## Backpressure and transport ownership
 
 Linux::Event remains the only transport-output queue. HTTP does not maintain a
-second queue for server body producers or client Requests.
+second queue for server Response producers or client Request producers.
 
 `Body::Stream->write()` preserves Linux::Event flow control:
 
@@ -423,15 +458,16 @@ for reusable stream tuning, socket policy, TLS defaults, or named callbacks.
 
 `Linux::Event::HTTP::Client::Connection` is also a
 `Linux::Event::IO::Sock::Stream` subclass. It executes one Transaction at a time
-and owns HTTP/1 request serialization and response parsing on one persistent
-socket.
+and owns HTTP/1 Request serialization/framing and Response parsing on one
+persistent socket.
 
 It is usable directly for low-level work where destination acquisition is
 already known. The high-level Client normally creates and reuses it.
 
 The Connection reserves its raw data/eof/error/close callbacks for HTTP protocol
-execution. Per-Transaction application callbacks and optional bounded buffering
-policy are supplied to its `request` method instead.
+execution. Transport drain is composed with Transaction-owned Request producer
+backpressure. Per-Transaction response callbacks, request producer options, and
+optional bounded response-buffering policy are supplied to its `request` method.
 
 ## TLS
 
@@ -483,22 +519,23 @@ a benchmark.
 The current foundation includes:
 
 1. Direction-neutral Request and Response message types.
-2. Transaction as one Request/Response exchange.
+2. Transaction as one Request/Response exchange with outgoing body producers.
 3. HTTP/1 Server and Server::Connection with request-body delivery, persistent
    ordering, scalar/incremental responses, TLS, deferred response send, and
    Upgrade.
-4. HTTP/1 Client::Connection with scalar Request serialization, strict Response
-   parsing, informational responses, incremental Content-Length/chunked/close
-   body delivery, cancellation, and sequential reuse.
+4. HTTP/1 Client::Connection with scalar and streaming Request serialization,
+   strict Response parsing, informational responses, incremental
+   Content-Length/chunked/close body delivery, cancellation, and sequential
+   reuse.
 5. High-level Client with URL parsing, Host synthesis, HTTP/HTTPS destination
-   acquisition, bounded same-origin idle reuse, common convenience verbs, and
-   explicit bounded whole-response buffering.
+   acquisition, bounded same-origin idle reuse, common convenience verbs,
+   streaming Request production, and explicit bounded whole-response buffering.
 6. One consolidated private `_HTTP1` native extension and no duplicate transport
    queues.
 
-Later client work includes streaming outgoing Request bodies, redirects, richer
-pool policy, proxy/auth/cookie conveniences, CONNECT/client Upgrade, and
-measurement-driven parser optimization.
+Later client work includes redirects, richer pool policy, proxy/auth/cookie
+conveniences, CONNECT/client Upgrade, and measurement-driven parser
+optimization.
 
 HTTP/2 is future protocol work. WebSocket remains a separate protocol
 distribution.

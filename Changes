@@ -82,8 +82,16 @@ Revision history for Linux-Event-HTTP
       callback lifecycle, and queue the 101 response before target-protocol output.
     - Add Linux::Event::HTTP::Client::Connection as the low-level HTTP/1 client executor
       on Linux::Event::IO::Sock::Stream.
-    - Serialize complete scalar Request messages, add Content-Length when needed, and
-      deliberately defer streaming request bodies to a later client layer.
+    - Serialize complete scalar Request messages and add Content-Length when needed.
+    - Add Transaction-owned streaming client Request bodies through the shared
+      Body::Stream producer abstraction without adding a second HTTP output queue.
+    - Enforce exact streamed Content-Length when declared; automatically use HTTP/1.1
+      chunked transfer coding for unknown-length streams and require Content-Length for
+      HTTP/1.0 streaming Requests.
+    - Compose streaming Request producer on_drain with Linux::Event transport drain and
+      custom Client::Connection subclass on_drain behavior.
+    - Cancel unfinished Request producers on early final Responses and mark the HTTP/1
+      connection non-reusable rather than continuing to emit bytes for a finished exchange.
     - Parse HTTP/1 response heads strictly in Perl as the correctness baseline before
       considering response-parser XS; reuse the existing native _HTTP1::Chunked decoder.
     - Deliver client response bodies incrementally for Content-Length, chunked, and
@@ -110,9 +118,10 @@ Revision history for Linux-Event-HTTP
     - Keep buffered response metadata committed/read-only, expose the completed scalar
       through Response->body only after the final message boundary, and close the HTTP/1
       connection on buffer-limit failure so unread response bytes cannot be reused.
-    - Add client tests for scalar request bodies, fixed/chunked/close-delimited responses,
-      informational responses, ambiguous framing rejection, cancellation, URL handling,
-      connection reuse, concurrency, HTTPS, and bounded whole-response buffering.
+    - Add client tests for scalar and streaming request bodies, fixed/chunked/
+      close-delimited responses, informational responses, ambiguous framing rejection,
+      cancellation, URL handling, connection reuse, concurrency, HTTPS, bounded
+      whole-response buffering, producer backpressure, and early upload cancellation.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.

@@ -119,6 +119,7 @@ sub new ($class, %args) {
         target    => $target,
         version   => "$version",
         headers   => [],
+        body_kind => undef,
         body      => undef,
         committed => 0,
         complete  => 1,
@@ -277,6 +278,9 @@ sub body ($self, @args) {
     return $self->{body} if !@args;
     die 'body accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
+    die 'body(): Request already has an incremental body producer'
+        if ($self->{body_kind} // '') eq 'stream';
+    $self->{body_kind} = 'scalar';
     $self->{body} = _byte_string('body', $args[0]);
     $self->{complete} = 1;
     return $self;
@@ -290,12 +294,39 @@ sub is_complete ($self) {
     return !!$self->{complete};
 }
 
+sub _begin_stream_body ($self) {
+    $self->_assert_mutable;
+    die 'request_body(): Request already has a complete scalar body'
+        if ($self->{body_kind} // '') eq 'scalar';
+    die 'request_body(): Request already has an incremental body producer'
+        if ($self->{body_kind} // '') eq 'stream';
+    $self->{body_kind} = 'stream';
+    $self->{complete} = 0;
+    return $self;
+}
+
+sub _has_scalar_body ($self) {
+    return 0 if _is_native($self);
+    return ($self->{body_kind} // '') eq 'scalar';
+}
+
+sub _has_incremental_body ($self) {
+    return 0 if _is_native($self);
+    return ($self->{body_kind} // '') eq 'stream';
+}
+
 sub _mark_complete ($self) {
     if (_is_native($self)) {
         $NATIVE_COMPLETE{$self} = 1;
     } else {
         $self->{complete} = 1;
     }
+    return $self;
+}
+
+sub _mark_incomplete ($self) {
+    die 'cannot mark a received Request incomplete' if _is_native($self);
+    $self->{complete} = 0;
     return $self;
 }
 
@@ -415,14 +446,15 @@ Parsed HTTP/1 requests have already had conflicting values rejected.
 =head2 body
 
 Gets or sets the complete scalar byte body of a locally constructed Request.
-Incoming bodies are delivered incrementally by the transaction/connection
-layer and are not implicitly accumulated here.
+Incremental outgoing bodies are selected through the owning Transaction rather
+than through the Request message. Incoming bodies are delivered incrementally
+by the transaction/connection layer and are not implicitly accumulated here.
 
 =head2 is_complete
 
 Returns whether the complete message body boundary has been reached. A locally
-constructed scalar-body request is complete immediately; an incoming request
-with a streamed body becomes complete when the protocol layer consumes its
-final body boundary.
+constructed scalar-body request is complete immediately; an outgoing or incoming
+streamed request becomes complete only when the protocol layer reaches its final
+body boundary.
 
 =cut
