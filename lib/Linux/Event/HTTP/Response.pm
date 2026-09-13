@@ -312,7 +312,9 @@ sub _try_native_default_final ($self, $connection, $body) {
     $connection->{_http_response_state} = undef;
 
     $connection->write($wire);
+    $connection->_complete_active_transaction_state;
 
+    $connection->{_http_active_transaction} = undef;
     $connection->{_http_active_request} = undef;
     $connection->{_http_active_response} = undef;
     $connection->{_http_request_state} = undef;
