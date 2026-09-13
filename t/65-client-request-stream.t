@@ -14,8 +14,15 @@ use Linux::Event::Loop;
     package T::HTTP::StreamingClientConnection;
     use parent 'Linux::Event::HTTP::Client::Connection';
 
+    our $DRAINS = 0;
+
     sub stream_tuning ($class) {
         return high_watermark => 128, low_watermark => 32;
+    }
+
+    sub on_drain ($self) {
+        ++$DRAINS;
+        return;
     }
 }
 
@@ -66,6 +73,17 @@ my $ok = eval {
 ok(!$ok, 'scalar body and stream_body are mutually exclusive');
 like($@, qr/body and stream_body are mutually exclusive/,
     'scalar/stream conflict reports a clear error');
+
+$ok = eval {
+    $client->post(
+        "$base/bad-stream-callback",
+        stream_body => { on_drain => 'not-a-coderef' },
+    );
+    1;
+};
+ok(!$ok, 'invalid stream_body callback is rejected before request start');
+like($@, qr/request_body\(\): on_drain must be a coderef/,
+    'invalid stream_body callback reports producer validation error');
 
 $ok = eval {
     $client->post(
@@ -233,6 +251,8 @@ is(lc($server_header{'/chunked'}{transfer_encoding} // ''), 'chunked',
 
 ok($drain_calls >= 1,
     'streaming Request producer is resumed through Linux::Event on_drain');
+ok($T::HTTP::StreamingClientConnection::DRAINS >= 1,
+    'subclass on_drain callback composes with HTTP producer drain bookkeeping');
 is($known_cancel, 0,
     'completed known-length producer is not cancelled');
 is($early_cancel, 1,
