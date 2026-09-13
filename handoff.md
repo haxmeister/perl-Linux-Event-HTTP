@@ -10,8 +10,8 @@ Updated: 2026-09-13 (America/Chicago)
   `bb44d15bb51d51a8d4ea0ddfa531532adc801963`.
 - Active branch: `feature/client-forward-proxy`
 - Draft PR: #25, `Add explicit client forward proxy routing`.
-- Current executable PR #25 head before this handoff refresh:
-  `c1ec67477007690bc6e6bde8c3ece55323b10b4f`.
+- Documentation-complete PR #25 head before this handoff checkpoint:
+  `76896e4ebd7a60de161816b7873f79b1938dafef`.
 - Do not merge PR #25 without explicit user authorization.
 - Separate draft PR #24, `Add server CONNECT tunnel handoff`, remains open,
   green, and unmerged on `feature/server-connect-tunnel` at
@@ -88,9 +88,6 @@ Exact PR #24 head
 `34740746617` across Perl 5.36, latest Perl, and latest threaded Perl; latest
 also passed end-to-end smoke and distribution integrity.
 
-If PR #24 is merged later, delete its feature branch through GitHub's normal
-branch cleanup UI if the connector still lacks branch deletion.
-
 ## PR #25 - explicit client forward proxy routing
 
 The active branch adds explicit forward-proxy routing for ordinary high-level
@@ -137,7 +134,7 @@ state machine.
 Without `proxy`:
 
 - existing direct behavior is unchanged;
-- the target path/query is sent in origin-form;
+- target path/query is sent in origin-form;
 - connection/TLS/pool identity is the target origin;
 - an explicit caller Host override continues to be preserved for direct use.
 
@@ -239,14 +236,17 @@ callback. This was a test lexical-scope mistake, not a Client implementation
 failure.
 
 The test was changed to predeclare and then assign `$first`, matching the pattern
-already used for the later operations. Executable head
+already used for later operations. Executable head
 `c1ec67477007690bc6e6bde8c3ece55323b10b4f` passed CI #385 / run
 `34742447070` across Perl 5.36, latest Perl, and latest threaded Perl; latest
 also passed end-to-end smoke and distribution integrity.
 
-After this checkpoint, align README, architecture, Changes, top-level POD, and
-this handoff with the implemented per-request proxy semantics. Run a final exact
-branch-head CI before presenting PR #25 as ready for merge.
+The documentation-complete implementation before this final handoff checkpoint
+is `76896e4ebd7a60de161816b7873f79b1938dafef`. README,
+`docs/ARCHITECTURE.md`, Changes, Client POD, top-level POD, MANIFEST, the focused
+test, and this handoff are aligned with the implemented per-request proxy
+semantics. Run final exact-head CI on the handoff commit before presenting PR
+#25 as ready for merge.
 
 ## Scope boundaries for PR #25
 
