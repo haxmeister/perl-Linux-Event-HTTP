@@ -271,6 +271,14 @@ sub _upgrade_http_transaction ($self, $transaction, $target_class) {
     return $transaction;
 }
 
+sub _tunnel_http_transaction ($self, $transaction, $target_class) {
+    require Linux::Event::HTTP::_ServerConnect;
+    Linux::Event::HTTP::_ServerConnect->schedule(
+        $self, $transaction, $target_class,
+    );
+    return $transaction;
+}
+
 sub _complete_active_transaction_state ($self) {
     my $transaction = $self->{_http_active_transaction} or return;
     return if $transaction->is_terminal;
@@ -301,6 +309,7 @@ sub _clear_transaction ($self) {
     $self->{_http_request_state} = undef;
     $self->{_http_response_state} = undef;
     delete $self->{_http_pending_upgrade};
+    delete $self->{_http_pending_tunnel};
     return;
 }
 
@@ -917,8 +926,8 @@ ordered-byte output queue.
 Each active exchange is represented by one L<Linux::Event::HTTP::Transaction>
 containing the Request and Response. The existing server callback API remains
 C<on_request($conn, $req, $res)>; the active Transaction is available through
-C<< $conn->transaction >> when lifecycle or streaming-body operations are
-needed.
+C<< $conn->transaction >> when lifecycle, streaming-body, Upgrade, or CONNECT
+tunnel operations are needed.
 
 Response message completion and server output completion are intentionally
 separate. C<Response-E<gt>is_complete> describes the message body; Transaction
@@ -931,6 +940,12 @@ C<transaction> returns the currently active HTTP Transaction, or undef when no
 exchange is active on the connection. During C<on_request>, C<on_body>, and
 C<on_request_end> it refers to the Transaction containing the supplied Request
 and Response.
+
+For a valid server-side HTTP/1.1 CONNECT request, C<< $conn->transaction->tunnel($class) >>
+accepts the tunnel and schedules handoff of the same live stream object to the
+target Linux::Event stream class after the successful response head is queued.
+Rejecting CONNECT requires no special API: configure an ordinary non-2xx
+Response instead.
 
 =head1 RESPONSE BODIES
 
