@@ -193,6 +193,17 @@ sub body ($self, @args) {
     return $self;
 }
 
+sub _set_received_body ($self, $body) {
+    die 'received response body can only be attached after message commit'
+        if !$self->{committed};
+    die 'received response body has already been attached'
+        if defined $self->{body_kind};
+
+    $self->{body_kind} = 'scalar';
+    $self->{body} = _body_bytes('received body', $body);
+    return $self;
+}
+
 sub _begin_stream_body ($self) {
     $self->_assert_mutable;
     die 'response_body(): Response already has a complete scalar body'
@@ -298,8 +309,8 @@ Server callbacks receive the same Response class:
 
 C<Linux::Event::HTTP::Response> represents one HTTP response message. It is not
 a socket, transaction, connection, or writable transport handle. The same
-message class is used for locally constructed outgoing responses and is intended
-for parsed incoming client responses.
+message class is used for locally constructed outgoing responses and parsed
+incoming client responses.
 
 A Response owns status, reason, version, headers, complete scalar-body data, and
 message completion state. It does not retain its peer Request or the Connection
@@ -307,10 +318,16 @@ that happens to carry it. Exchange lifecycle, output progress, cancellation,
 Upgrade, and incremental body production belong to
 L<Linux::Event::HTTP::Transaction> and the protocol Connection.
 
-Selecting a complete scalar C<body> makes the message body complete immediately.
-That does not mean the message has been written to a transport. Incremental body
-production is selected through the owning Transaction; the Response records only
-that its body is incomplete until the producer announces its final bytes.
+Selecting a complete scalar C<body> on a locally constructed Response makes the
+message body complete immediately. That does not mean the message has been
+written to a transport. Incremental body production is selected through the
+owning Transaction; the Response records only that its body is incomplete until
+the producer announces its final bytes.
+
+A received client Response normally exposes body bytes incrementally through the
+Client callback path. If the caller explicitly requests bounded whole-body
+buffering, C<body> returns that completed scalar after the message boundary is
+reached. Received response metadata remains committed and read-only either way.
 
 =head1 METHODS
 
@@ -360,9 +377,14 @@ Returns the declared Content-Length as an integer, or undef when absent.
 
 =head2 body
 
-Gets or sets the complete scalar byte body. Setting it declares that the
-message body itself is complete. Incremental output is selected through the
-owning Transaction rather than through the Response message.
+Gets or sets the complete scalar byte body. Setting it is available only while a
+locally constructed Response is mutable and declares that its message body is
+complete. Incremental output is selected through the owning Transaction rather
+than through the Response message.
+
+For a received client Response, the getter returns the complete body only when
+the client was explicitly asked to buffer it within a bounded limit. Otherwise
+received body bytes remain incremental and C<body> returns undef.
 
 =head2 is_complete
 
