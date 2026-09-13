@@ -69,6 +69,12 @@ sub complete ($self, $bytes = '') {
     return $self;
 }
 
+sub _block ($self) {
+    return if $self->{complete} || $self->{cancelled};
+    $self->{flow_blocked} = 1;
+    return;
+}
+
 sub _drain ($self) {
     return if $self->{complete} || $self->{cancelled};
     return if !$self->{flow_blocked};
