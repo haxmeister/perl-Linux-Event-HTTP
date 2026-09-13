@@ -134,7 +134,7 @@ Revision history for Linux-Event-HTTP
       request/get/head/post/put/delete methods returning Client::Operation objects.
     - Add Linux::Event::HTTP::Client::Operation as the high-level client lifecycle object;
       keep Transaction defined as exactly one HTTP exchange while an Operation can retain
-      the ordered Transaction history for a redirect chain.
+      the ordered Transaction history for redirects and authentication retries.
     - Use URI for URL parsing while keeping full URLs out of Request; synthesize Host and
       use path/query as the canonical direct request-target.
     - Add bounded automatic redirect following for 301, 302, 303, 307, and 308 with a
@@ -147,12 +147,12 @@ Revision history for Linux-Event-HTTP
     - Replay complete scalar bodies on method-preserving redirects but reject automatic
       replay of streaming Request producers because they are not inherently rewindable.
     - Regenerate Host and HTTP framing fields for every redirect hop; strip Authorization
-      and caller-managed Cookie on cross-origin target redirects, retain
+      and caller-managed Cookie on cross-origin target redirects, retain manually supplied
       Proxy-Authorization only for the same selected proxy route, and regenerate
       connection-specific fields rather than forwarding them verbatim.
     - Keep on_response/on_body/on_complete focused on the final response; expose
-      on_redirect($operation,$tx,$res,$next_url) for completed intermediate hops while
-      retaining each intermediate Transaction in Operation history.
+      on_redirect($operation,$tx,$res,$next_url) for completed intermediate redirects while
+      retaining every Transaction in Operation history.
     - Make max_redirects => 0 disable redirect interpretation completely so a 3xx,
       including duplicate Location fields, is delivered as an ordinary final response.
     - Add a bounded initial reuse policy that retains at most one idle connection per
@@ -166,7 +166,8 @@ Revision history for Linux-Event-HTTP
     - Count the buffer limit against delivered body bytes after HTTP/1 transfer framing;
       reject known oversized Content-Length bodies before accumulation and unknown-size
       bodies when decoded accumulation would cross the configured bound.
-    - Apply the same response-buffer bound while intermediate redirect bodies are consumed.
+    - Apply the same response-buffer bound while intermediate redirect and authentication
+      challenge bodies are consumed.
     - Keep buffered response metadata committed/read-only, expose the completed scalar
       through Response->body only after the final message boundary, and close the HTTP/1
       connection on buffer-limit failure so unread response bytes cannot be reused.
@@ -178,7 +179,9 @@ Revision history for Linux-Event-HTTP
       cross-origin credential stripping, redirect limits, disabled redirect policy,
       client Upgrade validation, same-read protocol handoff, redirected Upgrade,
       CONNECT validation, successful same-read tunnel handoff, non-2xx proxy response,
-      forward-proxy routing, default-proxy selection, and cookie-jar target isolation.
+      forward-proxy routing, default-proxy selection, cookie-jar target isolation,
+      target/proxy authentication retries, Digest auth-int context, authenticated CONNECT,
+      and streaming-body authentication replay refusal.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.
@@ -217,9 +220,9 @@ Revision history for Linux-Event-HTTP
     - Add explicit per-request forward-proxy routing with proxy => $proxy_url for ordinary
       high-level Client requests; direct requests remain origin-form while proxied
       requests use HTTP/1 absolute-form and regenerate Host from the target URL.
-    - Keep target origin and route origin separate: redirects, origin credentials, cookies,
-      and Operation URLs use the target, while connection acquisition and idle reuse use
-      the explicit proxy route.
+    - Keep target origin and route origin separate: redirects, target authentication,
+      cookies, and Operation URLs use the target, while connection acquisition, proxy
+      authentication, and idle reuse use the explicit proxy route.
     - Allow HTTP or HTTPS proxy endpoints without making HTTPS target URLs imply CONNECT;
       connect_tunnel() remains the explicit tunnel API.
     - Add a Client-level default proxy, a read-only proxy accessor, per-request proxy
@@ -230,13 +233,36 @@ Revision history for Linux-Event-HTTP
       reimplementing RFC cookie storage and selection in Linux::Event::HTTP.
     - Accept an explicitly injected Client cookie_jar and expose it through a read-only
       accessor; do not create hidden cookie state or decide persistence/sharing policy.
-    - Generate Cookie from cookie_header($target_url) before each ordinary request hop and
-      feed every Set-Cookie field to add($target_url,$value) before redirect/application
-      response processing.
+    - Generate Cookie from cookie_header($target_url) before each ordinary request exchange
+      and feed every Set-Cookie field to add($target_url,$value) before redirect,
+      authentication, or application response processing.
     - Recompute jar-managed Cookie on every redirect target, keeping proxy routes entirely
       outside cookie-origin decisions and delegating domain, path, expiry, Secure handling,
       and cookie ordering to HTTP::CookieJar.
     - Reject caller Cookie fields while cookie_jar is configured so cookie selection has
       one owner; applications can seed or alter state directly through the jar.
-    - Keep connect_tunnel() outside cookie-jar policy and leave automatic 407 proxy
-      challenge negotiation for a future concrete use case.
+    - Keep connect_tunnel() outside cookie-jar policy.
+    - Add Uniform::HTTP::Auth 0.01 as the HTTP authentication implementation rather than
+      reimplementing Basic, Bearer, Digest, challenge parsing, or Digest nonce state in
+      Linux::Event::HTTP.
+    - Add Client auth and proxy_auth policy objects for target 401 / WWW-Authenticate and
+      proxy 407 / Proxy-Authenticate respectively, with Client defaults and per-operation
+      override/bypass.
+    - Keep Uniform responsible for authentication mechanics while Linux::Event::HTTP owns
+      challenge reception, target-versus-route origin selection, replayability, response
+      draining, connection reuse, retry Transactions, and callback lifecycle.
+    - Add max_auth_retries (default three), auth_retry_count, and separate redirect/auth
+      accounting so each automatic challenge retry is another Transaction without
+      distorting redirect_count.
+    - Supply Uniform the exact wire request-target: origin-form for direct requests,
+      absolute-form for ordinary proxy requests, and authority-form for CONNECT.
+    - Replay complete scalar Request bodies and supply entity_body for Digest auth-int,
+      while refusing automatic authentication retry for streaming producers because their
+      application state is not inherently rewindable.
+    - Keep generated Authorization and Proxy-Authorization attempt-local rather than
+      propagating them across redirects; allow a proxy-authenticated attempt that receives
+      target 401 to retain proxy authentication while adding target Authorization.
+    - Let connect_tunnel() use proxy_auth for 407 challenge/retry before successful 2xx
+      handoff, while keeping target auth and cookies outside CONNECT policy.
+    - Reject manually supplied Authorization or Proxy-Authorization when the corresponding
+      Uniform manager is active so each authentication field has one policy owner.
