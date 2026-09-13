@@ -128,6 +128,23 @@ $body->write($bytes);
 $body->complete;
 ```
 
+On the client, an incremental outgoing Request body follows the same producer
+model:
+
+```perl
+my $tx = $client->post(
+    $url,
+    stream_body => {
+        on_drain  => sub ($body) { ... },
+        on_cancel => sub ($body) { ... },
+    },
+);
+
+my $body = $tx->request_body;
+$body->write($bytes);
+$body->complete;
+```
+
 Linux::Event remains the only output queue. `Body::Stream->write` preserves the
 Linux::Event flow-control contract:
 
@@ -135,6 +152,11 @@ Linux::Event flow-control contract:
 true  = bytes accepted; producer may continue
 false = bytes accepted; pause until on_drain
 ```
+
+A streaming Request with Content-Length must produce exactly that many bytes. If
+its length is unknown, HTTP/1.1 uses chunked transfer coding automatically.
+HTTP/1.0 streaming requires Content-Length; Request bodies are never
+close-delimited. Scalar `body` and `stream_body` are mutually exclusive.
 
 Incoming bodies are incremental-first. Server request bodies use `on_body`;
 Client response bodies use `on_body`. If no consumer is installed, bytes are
@@ -198,8 +220,9 @@ delete
 ```
 
 `request($method, $url, ...)` accepts absolute `http` and `https` URLs and builds
-the canonical Request. `headers` is an array reference of `[name, value]` pairs;
-`body` is a complete scalar byte body.
+the canonical Request. `headers` is an array reference of `[name, value]` pairs.
+`body` supplies a complete scalar Request body; `stream_body` selects a
+Transaction-owned producer instead.
 
 The first reuse policy is intentionally simple and bounded:
 
@@ -211,7 +234,10 @@ The first reuse policy is intentionally simple and bounded:
 - extra connections close when they later become idle.
 
 A scalar Request body automatically receives Content-Length when the caller did
-not supply it. Streaming outgoing Request bodies are a later layer.
+not supply it. Streaming bodies enforce an explicit Content-Length or use
+HTTP/1.1 chunked framing when length is unknown. If a final Response arrives
+before an outgoing producer finishes, the producer is cancelled and that HTTP/1
+connection is not reused.
 
 Client response framing supports Content-Length, HTTP/1.1 chunked transfer
 coding, bodyless HEAD/204/304 responses, informational responses, and
@@ -334,8 +360,8 @@ make test
 ```
 
 The distribution includes server/client, TLS, persistence, pipelining, Upgrade,
-request-body, response-body, framing-error, bounded-buffer, Transaction-lifecycle,
-and distribution-integrity coverage.
+request-body, streaming-upload, response-body, framing-error, bounded-buffer,
+Transaction-lifecycle, and distribution-integrity coverage.
 
 See `docs/ARCHITECTURE.md` for the detailed ownership and lifecycle model and
 `docs/BENCHMARKING.md` for benchmark discipline.
