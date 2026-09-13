@@ -41,14 +41,16 @@ Transactions when redirects are followed.
 =item * L<Linux::Event::HTTP::Server> and
 L<Linux::Event::HTTP::Server::Connection> execute inbound HTTP.
 
-=item * L<Linux::Event::HTTP::Client> owns outbound URL, redirect, TLS, and
-connection-selection policy, while L<Linux::Event::HTTP::Client::Connection>
-executes one HTTP Transaction on one client connection.
+=item * L<Linux::Event::HTTP::Client> owns outbound URL, redirect, TLS,
+connection-selection, and explicit protocol-handoff policy, while
+L<Linux::Event::HTTP::Client::Connection> executes one HTTP Transaction on one
+client connection.
 
 =back
 
 Linux::Event continues to own sockets, TLS, readiness, buffering, backpressure,
-connection acquisition primitives, and ordered byte output.
+connection acquisition primitives, ordered byte output, and the live stream
+transition primitive used for protocol handoff.
 
 The initial protocol executor targets HTTP/1.x. Server request-head parsing uses
 vendored picohttpparser with lazy native Request state. The client response-head
@@ -68,12 +70,20 @@ redirect hop is a separate Transaction retained by the Client::Operation.
 Method/body replay is explicit and conservative, and sensitive caller-supplied
 credentials are not propagated across origins automatically.
 
+HTTP/1.1 Upgrade is supported in both directions without introducing a second
+transport object. After a validated C<101 Switching Protocols>, the HTTP
+Transaction completes and Linux::Event C<transition_to()> hands the same live
+stream object, including already-read post-HTTP bytes, to the selected protocol
+class. WebSocket framing and other upgraded protocols remain separate
+protocol-layer distributions.
+
 =head1 DESIGN
 
 See F<README.md> for ordinary Client and Server examples and
 F<docs/ARCHITECTURE.md> for ownership, lifecycle, framing, redirect, pooling,
-and native-boundary details. F<docs/PICOHTTPPARSER-EXPERIMENT.md> records server
-parser provenance, correctness policy, and representation benchmarks.
+Upgrade, and native-boundary details. F<docs/PICOHTTPPARSER-EXPERIMENT.md>
+records server parser provenance, correctness policy, and representation
+benchmarks.
 
 =head1 THIRD-PARTY CODE
 
