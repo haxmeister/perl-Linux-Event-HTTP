@@ -72,6 +72,7 @@ t/71-client-connect-validation.t
 t/72-server-connect.t
 t/73-client-forward-proxy.t
 t/74-client-default-proxy.t
+t/75-client-cookie-jar.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
