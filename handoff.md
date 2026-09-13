@@ -6,11 +6,14 @@ Updated: 2026-09-13 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
+- Current main before this handoff refresh: `eee485823c3ba1cff4ba508aa4094a18e861002c`
 - Linux::Event minimum: `0.113`
-- Linux::Event::HTTP version remains `0.001 UNRELEASED`
-- Client CONNECT PR #23 merged to main as `bb44d15bb51d51a8d4ea0ddfa531532adc801963`.
-- Server CONNECT PR #24 merged to main as `cb57f65c622d483bc77d2a8669ccb0e4494949bd`.
-- Conflicted forward-proxy PR #25 is being replaced by the integration branch `feature/client-forward-proxy-integrated`, rebuilt from the post-#24 main so both feature sets coexist cleanly.
+- Linux::Event::HTTP remains `0.001 UNRELEASED`.
+- Client CONNECT PR #23 merged as `bb44d15bb51d51a8d4ea0ddfa531532adc801963`.
+- Server CONNECT PR #24 merged as `cb57f65c622d483bc77d2a8669ccb0e4494949bd`.
+- Conflicted forward-proxy PR #25 was closed as superseded.
+- Clean integration PR #26 merged server CONNECT plus forward-proxy Client work as `a57863cdeb568f8bafcf31ed2d7bb2bbc34ee0f8`.
+- Combined CONNECT documentation was then added on main as `eee485823c3ba1cff4ba508aa4094a18e861002c`.
 
 ## Settled object model
 
@@ -33,7 +36,7 @@ Do not move URL, redirect-chain, proxy-route, pool, socket, or endpoint-role lif
 
 ## CONNECT support
 
-Client CONNECT is explicit through:
+Client CONNECT is explicit:
 
 ```perl
 $client->connect_tunnel(
@@ -54,6 +57,8 @@ if ($req->method eq 'CONNECT') {
 ```
 
 Server tunnel acceptance validates HTTP/1.1 authority-form CONNECT, matching Host, absent request framing/body, and a bodyless 2xx response. The HTTP Transaction completes before Linux::Event `transition_to()` hands the same accepted stream to the target class. Destination authorization, upstream connection creation, and byte relaying remain outside Linux::Event::HTTP.
+
+Detailed combined behavior is documented in `docs/CONNECT.md`.
 
 ## Explicit forward proxy routing
 
@@ -88,12 +93,18 @@ Focused coverage: `t/73-client-forward-proxy.t`.
 
 - Server CONNECT exact head `c7fa07f5ae50873d2acebeda768c1201aa37fcdc` passed CI #383 / run `34740746617` across Perl 5.36, latest, and latest threaded; latest also passed smoke and `disttest`.
 - Forward-proxy exact pre-integration head `5b19a6a70d98bc5ae801a8ebef43c8f9e69142af` passed CI #392 / run `34742787560` across the same matrix, including latest smoke and `disttest`.
-- After rebuilding forward-proxy work on the post-#24 main, run the full CI matrix again before merging the integration branch.
+- Combined integration head `2c75feab9432788241d251e2c2e49e4c103f0285` passed CI #394 / run `34745011679` across Perl 5.36, latest, and latest threaded; latest also passed end-to-end smoke and distribution integrity.
 
 ## Next work
 
-After the combined branch is green and merged to main, continue from main. The next HTTP-specific client layers worth evaluating are proxy-authentication helpers and broader client policy such as cookies, while keeping automatic proxy discovery and richer pool behavior separate. Parser XS remains measurement-driven.
+Evaluate the next client-policy layer from main. The leading candidates are:
+
+1. Client-level default proxy with explicit per-request override, building only on the already-correct per-request proxy mechanics.
+2. Proxy-authentication convenience/policy, while avoiding automatic credential guessing or a large challenge framework.
+3. Cookie handling, preferably by reusing a mature CPAN implementation rather than reimplementing cookie RFC behavior.
+
+Keep automatic environment proxy discovery, PAC/NO_PROXY policy, SOCKS, richer pool behavior, and parser XS separate and measurement/need driven.
 
 ## Branch policy
 
-The user dislikes stale branches. Delete merged feature branches when the available GitHub tooling permits it. Do not reuse old merged feature branches for new work.
+The user dislikes stale branches. Delete merged feature branches when the available GitHub tooling permits it. The current connector can close superseded PRs but does not expose branch-ref deletion. Do not reuse old merged feature branches for new work.
