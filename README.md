@@ -50,8 +50,10 @@ Transaction = one Request + one Response + exchange lifecycle
 A locally constructed message is mutable until committed. A received message
 keeps the same public message API while its wire metadata is read-only.
 
-`Transaction` owns asynchronous exchange lifecycle such as cancellation and
-outgoing incremental body production. `Client` and `Server::Connection` own the
+`Request` and `Response` do not retain sockets, peer messages, or hidden
+Connection back-references. `Transaction` owns exchange lifecycle such as
+cancellation, response-output progress, protocol Upgrade, and outgoing
+incremental body production. `Client` and `Server::Connection` own the
 protocol/transport work that executes a Transaction.
 
 ## Response bodies
@@ -83,8 +85,25 @@ $res->body("hello\n");
 $res->header('X-After-Body', 'yes');   # valid
 ```
 
-If a waiting Response receives `body(...)` later from an asynchronous event
-callback, the complete response is committed immediately.
+The server automatically commits an ordinary scalar response after the HTTP
+callback returns when transaction state permits.
+
+A Response completed later from another event remains only a message; setting
+its body does not secretly write to a socket. Retain the Transaction and send
+the configured scalar response explicitly:
+
+```perl
+my $tx = $conn->transaction;
+
+Linux::Event::Kernel::Timer->new(
+    loop => $conn->loop,
+    after => 0.1,
+    on_timer => sub ($timer) {
+        $tx->response->body("later\n");
+        $tx->send_response;
+    },
+);
+```
 
 For a body produced over time, obtain the producer from the active Transaction:
 
@@ -131,6 +150,10 @@ false = bytes accepted, but stop producing until on_drain
 completion. `Transaction->is_complete` describes successful completion of the
 whole exchange. None of these normally means the TCP/TLS connection should be
 closed. HTTP/1.1 keep-alive can carry later transactions on the same connection.
+
+Response-output start state also belongs to Transaction rather than Response:
+`$tx->is_response_started` becomes true when protocol output commits the
+Response message.
 
 There is deliberately no Response `end` method. Transport shutdown remains a
 Linux::Event stream concept rather than an HTTP Response concept.
@@ -263,17 +286,23 @@ the same Connection class to serve plain HTTP and HTTPS listeners.
 
 ## Upgrade
 
-HTTP Upgrade is a protocol handoff on the same live transport:
+HTTP Upgrade is an exchange lifecycle operation on the same live transport. The
+Response describes the 101 message; the Transaction requests the handoff:
 
 ```perl
 $res->header('Upgrade', 'my-protocol');
-$res->upgrade('MyProtocolConnection');
+$conn->transaction->upgrade('MyProtocolConnection');
 ```
 
-Linux::Event::HTTP validates the HTTP/1.1 Upgrade, queues the 101 response, and
-uses Linux::Event `transition_to()` to hand the same stream object to the target
-protocol class. Socket identity, TLS state, queued output, and already-read
-post-HTTP bytes are preserved.
+Linux::Event::HTTP validates the HTTP/1.1 Upgrade, freezes the Response metadata,
+queues the 101 response, completes the HTTP Transaction, and uses Linux::Event
+`transition_to()` to hand the same stream object to the target protocol class.
+Socket identity, TLS state, queued output, and already-read post-HTTP bytes are
+preserved.
+
+`$tx->is_upgrading` reports the pending handoff state. Upgrade is deliberately
+not a method on Response because protocol transition is not a property of an
+HTTP message.
 
 WebSocket framing belongs in a separate `Linux::Event::WebSocket` distribution.
 
