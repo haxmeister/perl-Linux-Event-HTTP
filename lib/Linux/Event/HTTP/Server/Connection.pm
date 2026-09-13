@@ -197,7 +197,7 @@ sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
 
 sub _response_body_ready ($self, $response) {
     return if !$response || !$response->_has_scalar_body;
-    return if $response->is_complete;
+    return if $response->_is_output_complete;
     return if $self->{_http_dispatching};
 
     croak 'body(): connection is closing or closed'
@@ -217,6 +217,15 @@ sub _response_body_ready ($self, $response) {
 sub _complete_active_transaction_state ($self) {
     my $transaction = $self->{_http_active_transaction} or return;
     return if $transaction->is_terminal;
+
+    croak 'cannot complete server Transaction before Request body completion'
+        if !$transaction->request->is_complete;
+    my $response = $transaction->response;
+    croak 'cannot complete server Transaction before Response body completion'
+        if !$response || !$response->is_complete;
+    croak 'cannot complete server Transaction before Response output completion'
+        if !$response->_is_output_complete;
+
     $transaction->_mark_complete;
     return;
 }
@@ -263,7 +272,8 @@ sub _abort_started_response ($self, $response) {
         'HTTP response aborted after output started',
     );
     $response->_cancel_stream_body if $response;
-    $response->_mark_complete if $response && !$response->is_complete;
+    $response->_mark_output_complete
+        if $response && !$response->_is_output_complete;
     $self->_clear_transaction;
     $self->{_http_input} = '';
     $self->{_http_closing} = 1;
@@ -302,7 +312,7 @@ sub _finish_request_body ($self) {
     return if $self->{_http_closing} || $self->is_closed;
     return if !$self->{_http_active_request};
 
-    if ($response->is_complete) {
+    if ($response->_is_output_complete) {
         $self->_finalize_transaction;
     } else {
         $self->pause_read if !$self->is_read_paused;
@@ -424,7 +434,7 @@ sub _drive_http1 ($self) {
                 next;
             }
 
-            if ($response && $response->is_complete) {
+            if ($response && $response->_is_output_complete) {
                 $self->_finalize_transaction;
                 next;
             }
@@ -525,7 +535,7 @@ sub _drive_http1 ($self) {
                 next if !$self->{_http_active_request};
             }
 
-            if ($response->is_complete) {
+            if ($response->_is_output_complete) {
                 $self->_finalize_transaction;
                 next;
             }
@@ -745,7 +755,7 @@ sub _write_response ($self, $response, $body, $final, $operation = undef) {
 }
 
 sub _complete_response ($self, $response, $wire, $close_after) {
-    $response->_mark_complete;
+    $response->_mark_output_complete;
     $self->{_http_response_state} = undef;
 
     my $request_state = $self->{_http_request_state};
@@ -802,7 +812,7 @@ sub _protocol_error ($self, $status, $version = '1.1') {
     my $head = $response->_serialize_head($version);
     if (my $active = $self->{_http_active_response}) {
         $active->_cancel_stream_body;
-        $active->_mark_complete if !$active->is_complete;
+        $active->_mark_output_complete if !$active->_is_output_complete;
     }
     $self->_fail_active_transaction_state("HTTP protocol error ($status)");
     $self->_clear_transaction;
@@ -842,6 +852,11 @@ L<Linux::Event::HTTP::Transaction> containing the Request and Response. The
 existing server callback API remains C<on_request($conn, $req, $res)>; callers
 do not need an extra callback argument merely because lifecycle state is now
 modeled explicitly.
+
+Response message completion and server output completion are intentionally
+separate. C<Response-E<gt>is_complete> describes the message body; the
+Connection privately tracks whether that response has finished writing before
+it finalizes the Transaction or advances to a pipelined request.
 
 =head1 RESPONSE BODIES
 
