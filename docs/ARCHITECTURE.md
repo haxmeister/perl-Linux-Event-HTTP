@@ -54,6 +54,11 @@ There are deliberately no `Client::Request`, `Client::Response`,
 `Server::Request`, or `Server::Response` classes. Endpoint direction does not
 change HTTP message identity.
 
+There is also deliberately no public proxy object in the initial proxy support.
+Proxy selection is high-level Client route policy. Client::Connection remains a
+normal HTTP/1 executor and Request remains an HTTP message rather than a route
+object.
+
 ## Message model
 
 ```text
@@ -87,13 +92,13 @@ is_complete                     is_complete
 ```
 
 `target` is intentionally used instead of `uri`. An HTTP Request contains a
-request-target. Full URL parsing, scheme, authority, destination selection,
-Host synthesis, redirect resolution, and connection pooling are Client policy.
-They do not belong in Request merely because a client needs them.
+request-target. Full URL parsing, scheme, authority, route selection, Host
+synthesis, redirect resolution, proxy selection, and connection pooling are
+Client policy. They do not belong in Request merely because a client needs them.
 
 Request and Response do not retain their peer message, Connection, output
-writer, pool, redirect chain, or protocol-transition state. Those relationships
-belong to Transaction, Client::Operation, and protocol executors.
+writer, pool, redirect chain, proxy route, or protocol-transition state. Those
+relationships belong to Transaction, Client::Operation, and protocol executors.
 
 HTTP/1-only framing and persistence decisions remain private protocol state
 rather than generic message methods.
@@ -113,9 +118,9 @@ Transaction
     server Upgrade state
 ```
 
-A Transaction does not own a socket, parser, connection pool, URL, redirect
-chain, or transport output queue. Its Client::Connection or Server::Connection
-controller performs protocol execution.
+A Transaction does not own a socket, parser, connection pool, URL, proxy route,
+redirect chain, or transport output queue. Its Client::Connection or
+Server::Connection controller performs protocol execution.
 
 A redirect is another HTTP exchange and therefore another Transaction. This is
 an invariant, not an implementation detail.
@@ -147,8 +152,13 @@ For the common single-hop case, Operation delegates `request`, `response`,
 `request_body`, `cancel`, and terminal-state access so ordinary code remains
 concise. The actual body producer remains Transaction-owned.
 
+A proxy route does not change Operation identity. The Operation URLs remain the
+target URLs, including across redirects. The route used to reach those targets
+is Client policy outside the Transaction/Operation object model.
+
 Low-level `Client::Connection->request()` continues to return exactly one
-Transaction. Redirect policy exists only in the high-level Client.
+Transaction. Redirect and proxy-route policy exist only in the high-level
+Client.
 
 ## Server model
 
@@ -183,12 +193,12 @@ HTTP/1.1 the same socket normally remains available for later Transactions.
 
 ```text
 Client
-    absolute URL parsing
+    absolute target-URL parsing
     redirect policy
-    scheme/host/port selection
-    Host synthesis
+    target origin / Host policy
+    optional explicit proxy-route policy
     TLS transport creation
-    connection selection/reuse
+    route connection selection/reuse
     protocol-handoff policy
     explicit CONNECT tunnel establishment
     convenience verbs
@@ -196,7 +206,7 @@ Client
 Client::Operation
     one application-facing client action
     one or more Transactions
-    redirect history/limit
+    target URL history/redirect limit
     cancellation and operation terminal state
 
 Client::Connection
@@ -228,34 +238,41 @@ my $operation = $client->request(
 ```
 
 Convenience methods are `get`, `head`, `post`, `put`, and `delete`.
-`connect_tunnel` is the explicit high-level CONNECT operation.
+`connect_tunnel` is the explicit high-level CONNECT operation. Ordinary requests
+can opt into an explicit forward proxy with `proxy => $proxy_url`.
 
 The current connection-reuse policy is deliberately bounded:
 
 - no HTTP/1 pipelining;
 - one active Transaction per Client::Connection;
 - sequential keep-alive reuse;
-- at most one idle connection retained per origin;
-- concurrent same-origin operations may create additional connections;
-- when multiple connections later become idle for one origin, one is retained
-  and extras are closed;
-- each redirect hop independently selects a connection for its target origin;
+- at most one idle connection retained per route origin;
+- direct route origin equals target origin;
+- proxied route origin equals the selected proxy origin;
+- sequential requests to different target origins can therefore reuse one
+  persistent proxy connection;
+- concurrent operations may create additional connections;
+- when multiple connections later become idle for one route origin, one is
+  retained and extras are closed;
+- redirect security identity remains the target origin even when the proxy route
+  does not change;
 - a connection transitioned to another protocol or tunnel is never returned to
   the HTTP idle pool.
 
-## Client URL and redirect policy
+## Target URL and redirect policy
 
 Client uses the established `URI` distribution rather than implementing URL
 parsing itself.
 
-Only absolute `http` and `https` starting URLs are accepted. Fragments are not
-transmitted. Origin-form path plus query becomes the Request target, with `/`
-used when the URL has no path. HTTP/1.1 Host is synthesized when absent.
+Only absolute `http` and `https` target URLs are accepted. Fragments are not
+transmitted. Without a proxy, origin-form path plus query becomes the Request
+target, with `/` used when the URL has no path. HTTP/1.1 Host is synthesized when
+absent. Direct callers may deliberately supply their own Host field.
 
 Userinfo is rejected rather than silently creating authentication policy.
 
 Automatic redirect following recognizes 301, 302, 303, 307, and 308. Relative
-Location references are resolved against the current absolute URL. When a
+Location references are resolved against the current absolute target URL. When a
 redirect Location omits a fragment, the existing fragment is inherited for URL
 processing; fragments still never enter the HTTP request-target.
 
@@ -281,10 +298,11 @@ A redirect that changes POST to GET can proceed because no body replay is
 required.
 
 Each redirect hop regenerates Host and framing/connection-specific fields.
-Cross-origin redirects additionally remove Authorization and Cookie.
-Proxy-Authorization is never propagated automatically. The Client does not yet
-implement a cookie jar or authentication manager; this is defensive forwarding
-policy for caller-supplied headers.
+Cross-origin target redirects additionally remove Authorization and Cookie.
+For direct requests, Proxy-Authorization is never propagated automatically.
+For an operation using one explicit proxy route, caller-supplied
+Proxy-Authorization is retained because it authenticates the unchanged proxy,
+not the redirected target.
 
 When an operation is explicitly waiting for HTTP Upgrade, a redirect hop also
 regenerates `Connection: Upgrade` and the originally offered `Upgrade` protocol
@@ -297,10 +315,76 @@ but are not emitted through final `on_body`. `on_redirect` receives each
 completed intermediate redirect Transaction before the next hop begins.
 `on_informational` remains per-Transaction and can run on any hop.
 
+## Explicit forward-proxy policy
+
+Forward-proxy routing is an explicit per-request Client option:
+
+```perl
+my $operation = $client->get(
+    'http://origin.example/items?limit=10',
+    proxy => 'http://proxy.example:3128',
+    headers => [
+        [ 'Proxy-Authorization' => $value ],
+    ],
+);
+```
+
+The initial design intentionally has no constructor-wide proxy default,
+environment-variable discovery, PAC/NO_PROXY policy, or automatic
+proxy-authentication loop.
+
+The target URL and proxy URL have separate responsibilities:
+
+```text
+target URL
+    Operation URL/history
+    Request Host
+    redirect base
+    origin credential boundary
+    ordinary HTTP semantics
+
+proxy URL
+    socket/TLS destination
+    route-origin pool key
+    proxy credential boundary
+```
+
+When `proxy` is supplied:
+
+- the proxy URL must be absolute `http` or `https`;
+- it must not contain a path or query;
+- connection acquisition and reuse use the proxy origin;
+- `https` proxy means TLS is established to the proxy;
+- the Request target uses HTTP/1 absolute-form based on the target URL;
+- fragments remain excluded;
+- Host is regenerated from the target URL and caller Host overrides are removed
+  so Host and the absolute-form target cannot disagree;
+- scalar/streaming Request bodies and the normal response state machine remain
+  unchanged;
+- redirects remain target-URL redirects while the same explicit proxy route is
+  carried to the next hop.
+
+This is deliberately implemented above Client::Connection. The low-level
+executor does not have a proxy mode; it serializes the Request it is given and
+runs the existing HTTP/1 response/framing lifecycle. That keeps route policy out
+of protocol execution and avoids a proxy-specific Connection hierarchy.
+
+The RFC wire rule is the standard HTTP/1 proxy rule: ordinary requests sent to a
+proxy use absolute-form request targets, while Host still identifies the target
+authority.
+
+An HTTPS target URL with `proxy` is sent as an absolute-form `https://...` URI to
+the selected forward proxy. That is not an implicit CONNECT tunnel and does not
+establish end-to-end target TLS. Code that needs tunnel semantics uses the
+separate `connect_tunnel` operation.
+
+`request('CONNECT', ..., proxy => ...)` is therefore rejected rather than
+creating a second way to express CONNECT.
+
 ## Explicit CONNECT tunnel policy
 
 `Client->connect_tunnel($proxy_url,$target_authority,...)` is intentionally a
-separate high-level operation rather than hidden proxy policy on ordinary
+separate high-level operation rather than hidden behavior on ordinary proxied
 requests:
 
 ```perl
@@ -330,7 +414,7 @@ CONNECT consumes that HTTP connection permanently; it never returns to the pool.
 
 `connect_tunnel` deliberately does not follow redirects or implement automatic
 proxy authentication. Callers may supply fields such as Proxy-Authorization
-explicitly. General forward-proxy policy remains separate future work.
+explicitly.
 
 ## Body model
 
@@ -407,6 +491,10 @@ $body->complete;
 Known-length streams enforce Content-Length exactly. Unknown-length HTTP/1.1
 streams use chunked transfer coding. HTTP/1.0 streaming requires Content-Length.
 
+The same body producer/framing path is used for direct and forward-proxied
+requests; proxy routing changes the request-target form and route connection,
+not the outgoing body machinery.
+
 ### Client incoming Response
 
 Client bodies are incremental-first:
@@ -457,6 +545,10 @@ Message, Transaction, and Operation completion are distinct:
   and the Operation is marked complete before `on_tunnel` runs;
 - cancellation and errors are separate terminal states.
 
+Proxy routing does not add another lifecycle state. A proxied ordinary request
+uses the same Transaction and Operation completion semantics as a direct
+request.
+
 ## Client HTTP/1 response framing
 
 Client::Connection applies framing independently from application handling:
@@ -495,7 +587,7 @@ Linux::Event owns queued bytes, watermarks, pending-byte limits, readiness,
 drain signaling, connection progress, and TLS transport state.
 
 The optional Client response buffer is retained message/application data, not a
-transport queue.
+transport queue. Forward-proxy routing adds no queue of its own.
 
 ## Native HTTP/1 boundary
 
@@ -516,6 +608,9 @@ The client response-head parser is intentionally strict Perl code. Do not add
 parser XS merely for symmetry. Benchmark representative client workloads before
 adding another native fast path.
 
+Forward-proxy selection and absolute-target construction are high-level Perl
+policy. They do not justify another native parser or serializer path.
+
 ## Connection classes
 
 `Linux::Event::HTTP::Server::Connection` and
@@ -527,18 +622,26 @@ Upgrade handoff. Client::Connection owns exactly one active client Transaction,
 Request serialization, Response framing, reuse eligibility, validated 101
 handoff, and validated CONNECT tunnel handoff.
 
-The high-level Client normally creates Client::Connection objects. Direct
-Client::Connection use is appropriate when destination acquisition and redirect
-policy are being handled elsewhere.
+Client::Connection does not know whether a normal Request is direct or being
+sent through a forward proxy. The high-level Client selects the socket route and
+constructs origin-form or absolute-form Request targets before handing the
+message to Client::Connection.
+
+Direct Client::Connection use is appropriate when destination acquisition,
+proxy routing, and redirect policy are being handled elsewhere.
 
 ## TLS
 
 HTTPS uses the same message, lifecycle, and connection classes. TLS remains
-Linux::Event transport policy. Client HTTPS uses the URL host as server name and
-currently offers only `http/1.1` through ALPN.
+Linux::Event transport policy.
 
-An HTTPS proxy endpoint in `connect_tunnel` uses the same TLS transport creation
-path, with TLS terminating at the proxy before the CONNECT tunnel begins.
+For a direct HTTPS request, the target URL host is the TLS server name and the
+Client currently offers only `http/1.1` through ALPN.
+
+For an HTTPS forward-proxy endpoint, TLS is established to the proxy and the
+target URI is then sent in absolute-form. This is not end-to-end TLS to an HTTPS
+target. An HTTPS proxy endpoint in `connect_tunnel` likewise terminates TLS at
+the proxy before the CONNECT tunnel begins.
 
 There is no separate HTTPS hierarchy.
 
@@ -613,6 +716,11 @@ CONNECT handling is Perl-side execution policy around existing transport
 primitives. It adds no native parser path, extra transport object, or second
 output queue.
 
+Ordinary forward-proxy routing and CONNECT are intentionally distinct. The
+`proxy` request option sends an absolute URI to a forward proxy and never
+silently converts an HTTPS target into a tunnel. `connect_tunnel` is the one
+high-level API for explicit tunnel establishment.
+
 ## Performance policy
 
 Correctness, ease of correct use, coherent APIs, maintainability, and
@@ -647,16 +755,18 @@ The current foundation includes:
    bounded redirect policy, cross-origin sensitive-header stripping, safe
    refusal to replay non-rewindable streaming Request bodies, Upgrade lifecycle
    integration, and explicit single-Transaction CONNECT tunnel operations.
-6. High-level Client URL parsing, HTTP/HTTPS destination acquisition, bounded
-   same-origin idle reuse, common convenience verbs, explicit bounded
+6. High-level Client URL parsing, HTTP/HTTPS route acquisition, explicit
+   per-request forward-proxy routing with absolute-form targets, bounded
+   route-origin idle reuse, common convenience verbs, explicit bounded
    whole-response buffering, redirect-to-Upgrade handshake regeneration, and
    explicit HTTP/HTTPS proxy-endpoint CONNECT establishment.
 7. One consolidated private `_HTTP1` native extension and no duplicate transport
    queues.
 
-Later client work includes automatic forward-proxy policy, proxy/auth/cookie
-conveniences, richer pool policy only when justified by workload, and
-measurement-driven parser optimization.
+Later client work may include an optional default proxy policy,
+proxy-authentication helpers, NO_PROXY-style selection, cookie conveniences, and
+richer pool policy only when justified by workload. None is implied by the
+initial explicit per-request `proxy` option.
 
-HTTP/2 is future protocol work. WebSocket remains a separate protocol
-distribution.
+Client parser optimization remains measurement-driven. HTTP/2 is future protocol
+work. WebSocket remains a separate protocol distribution.
