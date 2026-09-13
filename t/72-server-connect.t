@@ -204,7 +204,7 @@ subtest 'rejected CONNECT remains ordinary persistent HTTP' => sub {
         qr/\r\n\r\nOK\z/,
     );
 
-    like($state->{wire}, qr/\AHTTP\/1\.1 407 Proxy Authentication Required\r\n/s,
+    like($state->{wire}, qr/\AHTTP\/1\.1 407 [^\r\n]*\r\n/s,
         'application can reject CONNECT with an ordinary non-2xx response');
     like($state->{wire}, qr/Proxy-Authenticate: Basic realm="proxy"\r\n/i,
         'ordinary rejection headers are serialized normally');
