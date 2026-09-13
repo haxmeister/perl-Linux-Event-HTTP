@@ -130,6 +130,14 @@ sub _copy_headers ($headers) {
     return \@copy;
 }
 
+sub _validate_buffer_body ($value) {
+    croak 'request(): buffer_body must be a positive integer byte limit'
+        if !defined($value) || ref($value) || "$value" !~ /\A[0-9]+\z/;
+    croak 'request(): buffer_body must be greater than zero'
+        if "$value" !~ /[1-9]/;
+    return "$value";
+}
+
 sub _track_connection ($self, $connection) {
     my $id = refaddr($connection);
     $self->{connections}{$id} = $connection;
@@ -198,6 +206,10 @@ sub request ($self, $method, $url, %option) {
     my $version = delete($option{version}) // '1.1';
     my $has_body = exists $option{body};
     my $body = delete $option{body};
+    my $has_buffer_body = exists $option{buffer_body};
+    my $buffer_body = $has_buffer_body
+        ? _validate_buffer_body(delete $option{buffer_body})
+        : undef;
 
     my %callback;
     for my $name (keys %CALLBACK) {
@@ -208,6 +220,8 @@ sub request ($self, $method, $url, %option) {
         $callback{$name} = $value if defined $value;
     }
 
+    croak 'request(): buffer_body cannot be combined with on_body'
+        if $has_buffer_body && $callback{on_body};
     croak 'request(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -235,6 +249,7 @@ sub request ($self, $method, $url, %option) {
             return;
         };
     }
+    $connection_callback{buffer_body} = $buffer_body if $has_buffer_body;
 
     my $user_complete = $callback{on_complete};
     $connection_callback{on_complete} = sub ($transaction) {
@@ -316,20 +331,14 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
 
 =head1 SYNOPSIS
 
-    use Linux::Event::HTTP::Client;
-
     my $client = Linux::Event::HTTP::Client->new(loop => $loop);
 
-    my $tx = $client->get(
-        'http://example.com/items?limit=10',
-        on_response => sub ($tx, $res) {
-            say $res->status;
-        },
-        on_body => sub ($tx, $res, $bytes) {
-            process_bytes($bytes);
-        },
+    $client->get(
+        'https://example.com/config.json',
+        buffer_body => 1_048_576,
         on_complete => sub ($tx) {
-            say 'done';
+            my $bytes = $tx->response->body;
+            ...;
         },
         on_error => sub ($tx, $error) {
             warn $error;
@@ -338,49 +347,15 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
 
 =head1 DESCRIPTION
 
-C<Linux::Event::HTTP::Client> is the ordinary high-level entry point for
-outbound HTTP exchanges. It owns destination parsing, connection creation, and a
-small bounded reuse policy while L<Linux::Event::HTTP::Client::Connection> owns
-HTTP/1 wire execution.
+C<Linux::Event::HTTP::Client> is the high-level outbound HTTP entry point. It
+owns URL parsing, destination selection, connection creation, HTTPS transport
+policy, and a small bounded reuse policy. Client methods return
+L<Linux::Event::HTTP::Transaction>.
 
-Client methods return L<Linux::Event::HTTP::Transaction>. The Transaction owns
-the canonical Request and eventual Response messages. A Request remains an HTTP
-message with a request-target; the full URL belongs to Client destination
-policy and is not stored on the Request merely to make connection management
-convenient.
-
-Response bodies remain incremental-first. The Client does not implicitly buffer
-whole responses. Supply C<on_body> to consume bytes; otherwise body bytes are
-drained and discarded. A bounded buffered convenience may be layered on this
-primitive later.
-
-The current reuse policy keeps at most one idle connection per origin. If that
-connection is busy, a concurrent request creates another connection. When
-multiple concurrent connections later become idle for the same origin, one is
-kept and the extra connection is closed. HTTP/1 pipelining is not used.
-
-Redirects, proxy policy, cookies, authentication helpers, and buffered-body
-conveniences are intentionally not part of this first Client layer.
-
-=head1 CONSTRUCTION
-
-    my $client = Linux::Event::HTTP::Client->new(
-        loop => $loop,
-        connect_timeout => 10,
-        tls => {
-            verify => 1,
-            ca_file => '/etc/ssl/certs/custom.pem',
-        },
-    );
-
-C<loop> is required. C<connect_timeout> is passed to Linux::Event outbound
-connection acquisition. C<tls> accepts client verification/CA and handshake or
-shutdown timeout policy. HTTPS always offers only C<http/1.1> through ALPN in
-this implementation.
-
-C<connection_class> may name a subclass of
-L<Linux::Event::HTTP::Client::Connection> for reusable stream tuning, socket
-policy, or specialized connection behavior.
+Response handling remains incremental-first. C<on_body> consumes body chunks.
+Without C<on_body>, body bytes are drained and discarded. Explicit
+C<buffer_body =E<gt> $max_bytes> requests bounded whole-body buffering; there is
+no implicit unbounded buffering.
 
 =head1 METHODS
 
@@ -389,56 +364,61 @@ policy, or specialized connection behavior.
     my $tx = $client->request(
         'POST',
         'https://example.com/api/items',
-        headers => [
-            [ 'Content-Type', 'application/json' ],
-        ],
         body => $json,
+        buffer_body => 1_048_576,
         on_response => sub ($tx, $res) { ... },
-        on_body => sub ($tx, $res, $bytes) { ... },
-        on_complete => sub ($tx) { ... },
+        on_complete => sub ($tx) {
+            my $bytes = $tx->response->body;
+            ...;
+        },
         on_error => sub ($tx, $error) { ... },
     );
 
 Builds the canonical Request, obtains or creates a connection for the URL
-origin, starts one Transaction, and returns it immediately.
+origin, starts one Transaction, and returns it immediately. Only absolute
+C<http> and C<https> URLs are accepted. The URL path/query becomes the Request
+target and Host is synthesized when absent.
 
-Only absolute C<http> and C<https> URLs are accepted. URL fragments are not sent.
-The request-target is origin-form path plus query, defaulting to C</>. For
-HTTP/1.1 a Host field is synthesized from the URL when the caller did not supply
-one. Non-default ports are included in the synthesized Host value.
-
-C<headers> is an array reference of C<[name, value]> pairs so order and repeated
-fields are preserved. C<body> is a complete scalar byte body. The response
-callbacks have the same signatures as Client::Connection C<request>.
+C<buffer_body =E<gt> $max_bytes> must be a positive integer byte limit and
+cannot be combined with C<on_body>. The limit counts the same body bytes that
+C<on_body> would receive after HTTP/1 chunk framing has been removed. A known
+Content-Length above the limit fails after C<on_response>; unknown-length bodies
+fail when accumulation would cross the limit. On success,
+C<< $tx->response->body >> contains the complete scalar before C<on_complete>
+runs. A limit failure is a Transaction error and closes the HTTP/1 connection.
 
 =head2 get, head, post, put, delete
 
-Convenience forms that call C<request> with the corresponding HTTP method and
-otherwise accept the same options.
+Convenience forms that call C<request> with the corresponding HTTP method.
 
 =head2 loop
 
-Returns the Linux::Event Loop used for outbound connections.
+Returns the Linux::Event Loop.
 
 =head2 connection_class
 
-Returns the configured low-level HTTP client Connection class.
+Returns the configured Client::Connection class.
 
 =head2 is_closed
 
-True after C<close> has been called.
+True after C<close>.
 
 =head2 close
 
-Closes all currently reachable idle or active client connections and prevents
-new requests. Returns the Client.
+Closes all reachable idle or active client connections and prevents new
+requests. Returns the Client.
+
+=head1 CONNECTION REUSE
+
+At most one idle connection is retained per origin. A concurrent request may
+open another connection rather than queueing or using HTTP/1 pipelining. When
+multiple connections later become idle, one is retained and extras are closed.
 
 =head1 HTTPS
 
-HTTPS uses the same Client::Connection class and HTTP message model. Client
-creates a normal Linux::Event TLS transport with the URL host as the TLS server
-name and C<http/1.1> as the only offered ALPN protocol. TLS remains transport
-policy rather than an HTTP class hierarchy.
+HTTPS uses the same Client::Connection class with a Linux::Event TLS transport,
+the URL host as the TLS server name, and C<http/1.1> as the offered ALPN
+protocol.
 
 =head1 SEE ALSO
 
