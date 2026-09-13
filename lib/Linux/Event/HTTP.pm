@@ -11,7 +11,7 @@ __END__
 
 =head1 NAME
 
-Linux::Event::HTTP - native high-performance HTTP protocol support for Linux::Event
+Linux::Event::HTTP - native HTTP protocol support for Linux::Event
 
 =head1 VERSION
 
@@ -19,33 +19,55 @@ Version 0.001
 
 =head1 DESCRIPTION
 
-Linux::Event::HTTP is an HTTP protocol distribution built on
-L<Linux::Event>. It is intentionally a protocol layer rather than a web
-framework.
+Linux::Event::HTTP is an HTTP communications layer built on L<Linux::Event>.
+It provides native event-driven HTTP server and client APIs while deliberately
+remaining a protocol layer rather than a web framework.
 
-The initial implementation targets HTTP/1.1 while keeping application-facing
-request and response concepts separate from HTTP/1-specific wire details.
+The public model separates HTTP messages from exchange and transport lifecycle:
 
-HTTP/1 request-head parsing uses picohttpparser. Its source is vendored in this
-distribution at a recorded upstream revision, so configuration, building,
-installation, and runtime do not depend on the upstream repository or a network
-fetch.
+=over 4
 
-Parsed request metadata remains in native state. Method, target, and header
-strings are materialized as Perl scalars only when application code requests
-them. This preserves substantially more of the native parser's performance than
-eagerly constructing Perl structures for every parsed field.
+=item * L<Linux::Event::HTTP::Request> and L<Linux::Event::HTTP::Response>
+represent endpoint-neutral HTTP messages.
+
+=item * L<Linux::Event::HTTP::Transaction> represents exactly one
+Request/Response exchange.
+
+=item * L<Linux::Event::HTTP::Server> and
+L<Linux::Event::HTTP::Server::Connection> execute inbound HTTP.
+
+=item * L<Linux::Event::HTTP::Client> and
+L<Linux::Event::HTTP::Client::Connection> execute outbound HTTP.
+
+=back
+
+Linux::Event continues to own sockets, TLS, readiness, buffering, backpressure,
+connection acquisition, and ordered byte output.
+
+The initial protocol executor targets HTTP/1.x. Server request-head parsing uses
+vendored picohttpparser with lazy native Request state. The first client
+response-head parser is deliberately strict Perl code so correctness and actual
+workload cost can be measured before adding more HTTP-specific XS. The existing
+native chunked decoder is shared by client and server.
+
+Incoming bodies are incremental-first and are not implicitly accumulated into
+unbounded whole-body scalars. Complete scalar message bodies remain available as
+a convenience when the application already owns all bytes.
 
 =head1 DESIGN
 
-See F<docs/ARCHITECTURE.md> for the current design constraints and development
-plan. F<docs/PICOHTTPPARSER-EXPERIMENT.md> records the parser provenance,
-correctness policy, and representation benchmarks.
+See F<README.md> for ordinary Client and Server examples and
+F<docs/ARCHITECTURE.md> for ownership, lifecycle, framing, pooling, and native
+boundary details. F<docs/PICOHTTPPARSER-EXPERIMENT.md> records server parser
+provenance, correctness policy, and representation benchmarks.
 
 =head1 THIRD-PARTY CODE
 
 The distribution includes picohttpparser by Kazuho Oku and contributors. The
 vendored source and upstream license are under F<vendor/picohttpparser/>.
+
+The high-level Client uses the established L<URI> distribution for URL parsing;
+full URLs remain Client destination policy rather than Request message state.
 
 =head1 SECURITY
 
