@@ -26,6 +26,16 @@ ok(!Linux::Event::HTTP::Response->can('write'),
     'Response does not expose streaming write');
 ok(!Linux::Event::HTTP::Response->can('complete'),
     'Response does not expose body completion operation');
+ok(!Linux::Event::HTTP::Response->can('connection'),
+    'Response does not retain a Connection relationship');
+ok(!Linux::Event::HTTP::Response->can('request'),
+    'Response does not retain its peer Request');
+ok(!Linux::Event::HTTP::Response->can('is_started'),
+    'Response does not expose transport output state');
+ok(!Linux::Event::HTTP::Response->can('is_upgrading'),
+    'Response does not expose Upgrade lifecycle state');
+ok(!Linux::Event::HTTP::Response->can('upgrade'),
+    'Response does not perform protocol Upgrade');
 ok(Linux::Event::HTTP::Response->can('is_complete'),
     'Response exposes message completion state');
 ok(!Linux::Event::HTTP::Response->can('end'),
@@ -38,6 +48,14 @@ ok(Linux::Event::HTTP::Transaction->can('response'),
     'Transaction exposes its Response');
 ok(Linux::Event::HTTP::Transaction->can('response_body'),
     'Transaction owns outgoing Response body production');
+ok(Linux::Event::HTTP::Transaction->can('send_response'),
+    'Transaction owns deferred scalar Response send');
+ok(Linux::Event::HTTP::Transaction->can('upgrade'),
+    'Transaction owns protocol Upgrade lifecycle');
+ok(Linux::Event::HTTP::Transaction->can('is_response_started'),
+    'Transaction exposes response output start state');
+ok(Linux::Event::HTTP::Transaction->can('is_upgrading'),
+    'Transaction exposes Upgrade lifecycle state');
 ok(Linux::Event::HTTP::Transaction->can('cancel'),
     'Transaction exposes cancellation');
 ok(Linux::Event::HTTP::Server::Connection->can('transaction'),
