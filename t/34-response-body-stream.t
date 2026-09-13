@@ -36,11 +36,11 @@ use Linux::Event::HTTP::Server::Connection;
                 = Scalar::Util::refaddr($body)
                 == Scalar::Util::refaddr($transaction->response_body) ? 1 : 0;
             $self->data->{started_after_response_body}
-                = $res->is_started ? 1 : 0;
+                = $transaction->is_response_started ? 1 : 0;
             $res->header('X-After-Response-Body', 'yes');
             push @{$self->data->{write_status}}, $body->write("one\n");
             $self->data->{started_after_body_write}
-                = $res->is_started ? 1 : 0;
+                = $transaction->is_response_started ? 1 : 0;
             my $late_metadata = eval {
                 $res->header('X-Too-Late', 'no');
                 1;
@@ -52,13 +52,22 @@ use Linux::Event::HTTP::Server::Connection;
         }
 
         if ($req->target eq '/async') {
+            my $transaction = $self->transaction;
             my $timer;
             $timer = Linux::Event::Kernel::Timer->new(
                 loop  => $self->loop,
                 after => 0.01,
+                data  => {
+                    transaction => $transaction,
+                    response    => $res,
+                },
                 on_timer => sub ($timer_object) {
-                    $res->header('X-Async', 'yes');
-                    $res->body("later\n");
+                    my $data = $timer_object->data;
+                    my $transaction = $data->{transaction};
+                    my $response = $data->{response};
+                    $response->header('X-Async', 'yes');
+                    $response->body("later\n");
+                    $transaction->send_response;
                     $self->data->{async_timer} = undef;
                 },
             );
@@ -157,7 +166,7 @@ like(
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nX-Async: yes\r\nContent-Length: 6\r\nConnection: close\r\n\r\nlater\n\z/s,
-    'body set from a later event callback commits the waiting response',
+    'deferred scalar body is explicitly sent through its Transaction',
 );
 
 {
