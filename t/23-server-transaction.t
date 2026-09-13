@@ -7,8 +7,6 @@ use Test::More;
 use Linux::Event::Loop;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::HTTP::_HTTP1 ();
-use Linux::Event::HTTP::Response;
 use Linux::Event::HTTP::Server::Connection;
 use Linux::Event::HTTP::Transaction;
 
@@ -17,7 +15,7 @@ use Linux::Event::HTTP::Transaction;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
     sub on_request ($self, $request, $response) {
-        my $transaction = $self->{_http_active_transaction};
+        my $transaction = $self->transaction;
         $self->data->{transaction} = $transaction;
         $self->data->{request} = $request;
         $self->data->{response_object} = $response;
@@ -37,7 +35,7 @@ use Linux::Event::HTTP::Transaction;
         $self->data->{request_complete_on_end}
             = $request->is_complete ? 1 : 0;
         $self->data->{transaction_state_on_end}
-            = $self->{_http_active_transaction}->state;
+            = $self->transaction->state;
         $response->body("ok\n");
         return;
     }
@@ -103,70 +101,17 @@ ok($state->{request_complete_on_end},
 is($state->{transaction_state_on_end}, 'active',
     'Transaction remains active while on_request_end configures the response');
 ok($state->{transaction}->is_complete,
-    'server Transaction completes after request and response complete');
+    'server Transaction completes after request and response output complete');
 like($state->{response}, qr/\r\n\r\nok\n\z/,
     'server Transaction still emits the expected response');
 
-{
-    package T::FastPathConnection;
+ok(!$state->{response_object}->can('connection'),
+    'server Response remains independent of the carrying Connection');
+ok(!$state->{response_object}->can('request'),
+    'server Response remains independent of its peer Request');
 
-    sub new ($class) {
-        return bless {
-            _http_closing            => 0,
-            _http_response_state      => undef,
-            _http_active_transaction => undef,
-            _http_active_request     => undef,
-            _http_active_response    => undef,
-            _http_request_state      => undef,
-            writes                   => [],
-        }, $class;
-    }
-
-    sub is_closed      ($self) { 0 }
-    sub is_read_paused ($self) { 0 }
-    sub resume_read    ($self) { return }
-
-    sub write ($self, $bytes) {
-        push @{$self->{writes}}, $bytes;
-        return 1;
-    }
-
-    sub _complete_active_transaction_state ($self) {
-        my $transaction = $self->{_http_active_transaction} or return;
-        $transaction->_mark_complete if !$transaction->is_terminal;
-        return;
-    }
-}
-
-my $request = Linux::Event::HTTP::_HTTP1->parse_request(
-    "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n",
-    0,
-    100,
-);
-my $connection = T::FastPathConnection->new;
-my $response = Linux::Event::HTTP::Response->_new_bound($connection, $request);
-my $transaction = Linux::Event::HTTP::Transaction->_new(
-    request    => $request,
-    controller => $connection,
-);
-$transaction->_set_response($response);
-$transaction->_activate;
-
-$connection->{_http_active_transaction} = $transaction;
-$connection->{_http_active_request} = $request;
-$connection->{_http_active_response} = $response;
-$connection->{_http_request_state} = { body_done => 1 };
-
-ok($response->_try_native_default_final($connection, 'hello'),
-    'native default final response fast path remains available');
-ok($transaction->is_complete,
-    'native default final response completes the Transaction');
-ok(!defined $connection->{_http_active_transaction},
-    'native default final response clears active Transaction state');
-is(
-    $connection->{writes}[0],
-    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
-    'native fast path still emits the same optimized wire response',
-);
+# The native default-final response builder is exercised through the real
+# Server::Connection path in t/50-final-response.t. Do not recreate a synthetic
+# bound Response merely to unit-test a transport optimization.
 
 done_testing;
