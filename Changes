@@ -18,6 +18,8 @@ Revision history for Linux-Event-HTTP
       future client and current server code rather than endpoint-role-specific objects.
     - Add public locally constructible Request and Response messages while preserving
       the existing lazy XS-backed representation for parsed server Requests.
+    - Keep Response transport-independent: it owns response message metadata/body state
+      but no Connection, peer Request, output writer, or protocol-handoff lifecycle.
     - Use protocol-neutral message accessors such as version(), while keeping HTTP/1
       framing and persistence decisions private to the HTTP/1 execution layer.
     - Add symmetric header APIs including add_header, remove_header, header_values,
@@ -28,6 +30,7 @@ Revision history for Linux-Event-HTTP
       exchange as $conn->transaction rather than adding another callback argument.
     - Separate Response message completion from server transport-output completion so
       Response->is_complete describes the HTTP message rather than socket write state.
+    - Move response-output start/completion state from Response to Transaction.
     - Define Response->body as a complete scalar byte body declaration.
     - Move incremental response-body producer ownership from Response to Transaction;
       use $conn->transaction->response_body for server-side incremental output.
@@ -40,13 +43,16 @@ Revision history for Linux-Event-HTTP
     - Remove transitional public Response->write, Response->complete, and
       Response->stream_body methods rather than carrying compatibility aliases in this
       unreleased distribution.
+    - Remove Response connection/request/output/Upgrade lifecycle accessors so Request
+      and Response remain usable as the same message classes on client and server.
     - Expose Request->is_complete at the actual received body boundary and
       Response->is_complete at the complete scalar/final incremental body boundary.
-    - Lock response status and headers once output begins, not merely when message body
-      completion becomes known.
-    - Defer scalar body commit until the enclosing HTTP callback returns so metadata may
-      still be configured after body assignment; commit later asynchronous body assignment
-      immediately when a Response is waiting.
+    - Lock response status and headers when protocol output commits the message, not
+      merely when complete body bytes become known.
+    - Defer scalar response output until the enclosing HTTP callback returns so metadata
+      may still be configured after body assignment.
+    - Add Transaction->send_response for a scalar Response completed later from another
+      event callback, avoiding a hidden Connection back-reference in Response.
     - Stream Content-Length request bodies through cached on_body callbacks.
     - Decode chunked request bodies natively with picohttpparser while preserving pipeline bytes.
     - Add on_request_end request completion and body draining when no consumer is installed.
@@ -68,8 +74,10 @@ Revision history for Linux-Event-HTTP
       Server::Connection subclass, including server-handshake validation and HTTP/1.1 ALPN.
     - Verify TLS readiness precedes HTTP dispatch and expose negotiated ALPN, protocol,
       and cipher through ordinary Server::Connection transport accessors.
-    - Add Response->upgrade for validated HTTP/1.1 101 handoff to another compatible
-      Linux::Event stream-socket protocol while preserving live transport state.
+    - Move validated HTTP/1.1 101 handoff from Response->upgrade to
+      Transaction->upgrade while preserving live transport state.
+    - Expose Transaction Upgrade pending state and complete the HTTP Transaction before
+      Linux::Event transition_to() hands the same live stream to the target protocol.
     - Preserve same-read post-HTTP bytes across Upgrade, keep the normal request-end
       callback lifecycle, and queue the 101 response before target-protocol output.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
@@ -89,8 +97,8 @@ Revision history for Linux-Event-HTTP
       update the transaction-ladder contract for the callback-return body commit point.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
     - Add focused Transaction tests covering pairing, request/response completion,
-      cancellation, body-producer backpressure, chunking, close delimiting, and the native
-      scalar fast path.
+      cancellation, body-producer backpressure, chunking, close delimiting, deferred
+      send, Upgrade, and the native scalar fast path.
     - Simplify the README around the normal Server callback API, moving Connection
       subclassing, TLS, Upgrade, and implementation details into clearly advanced sections.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
