@@ -1,6 +1,6 @@
-# picohttpparser experiment
+# picohttpparser evaluation
 
-This branch evaluates vendored picohttpparser as the native HTTP/1 request-head parser for Linux::Event::HTTP.
+This document records the evaluation of vendored picohttpparser as the native HTTP/1 request-head parser for Linux::Event::HTTP.
 
 ## Result
 
@@ -36,11 +36,11 @@ The request object owns stable request-head bytes, so later mutation or reuse of
 
 ## Public request semantics
 
-The request API intentionally avoids HTTP/1 parser details. Current accessors are:
+The request API intentionally avoids HTTP/1 parser details. Relevant accessors include:
 
 - `method`
 - `target`
-- `http_version`
+- `version`
 - `header`
 - `header_values`
 - `header_count`

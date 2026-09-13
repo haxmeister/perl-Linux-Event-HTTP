@@ -11,9 +11,9 @@ versions, configuration, impact, and a minimal reproducer when possible.
 
 ## Supported versions
 
-Until the first stable release, security fixes are applied to the current
-development line only. After stable releases begin, this document will be
-updated with the supported release policy.
+For the current pre-1.0 line, security fixes are applied to the latest released
+version and the current development line. Older pre-1.0 releases may not receive
+backports unless a security issue warrants one.
 
 ## Installation and usage issues
 

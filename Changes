@@ -41,8 +41,8 @@ Revision history for Linux-Event-HTTP
       and freezes metadata.
     - Keep complete scalar body and incremental producer selection mutually exclusive.
     - Remove transitional public Response->write, Response->complete, and
-      Response->stream_body methods rather than carrying compatibility aliases in this
-      unreleased distribution.
+      Response->stream_body methods rather than carrying compatibility aliases into the
+      initial release.
     - Remove Response connection/request/output/Upgrade lifecycle accessors so Request
       and Response remain usable as the same message classes on client and server.
     - Expose Request->is_complete at the actual received body boundary and
@@ -242,9 +242,9 @@ Revision history for Linux-Event-HTTP
     - Reject caller Cookie fields while cookie_jar is configured so cookie selection has
       one owner; applications can seed or alter state directly through the jar.
     - Keep connect_tunnel() outside cookie-jar policy.
-    - Add Uniform::HTTP::Auth 0.01 as the HTTP authentication implementation rather than
-      reimplementing Basic, Bearer, Digest, challenge parsing, or Digest nonce state in
-      Linux::Event::HTTP.
+    - Add Uniform::HTTP::Auth 0.02 from the Uniform-HTTP distribution as the HTTP
+      authentication implementation rather than reimplementing Basic, Bearer, Digest,
+      challenge parsing, or Digest nonce state in Linux::Event::HTTP.
     - Add Client auth and proxy_auth policy objects for target 401 / WWW-Authenticate and
       proxy 407 / Proxy-Authenticate respectively, with Client defaults and per-operation
       override/bypass.
@@ -266,3 +266,19 @@ Revision history for Linux-Event-HTTP
       handoff, while keeping target auth and cookies outside CONNECT policy.
     - Reject manually supplied Authorization or Proxy-Authorization when the corresponding
       Uniform manager is active so each authentication field has one policy owner.
+    - Make Request and Response conform by behavior to the Uniform::HTTP 0.02 message
+      contract without replacing the native/live message classes or adding inheritance.
+    - Make public header_values return an array reference, preserve first-occurrence
+      position on header replacement, return undef for past-end indexed access, and expose
+      explicit buffered-body, mutability, lossless-header, and exact-target capabilities.
+    - Preserve the lazy XS-backed parsed Request representation and private list-oriented
+      header access for executor hot paths while exposing the Uniform-compatible public API.
+    - Pass the actual Linux::Event::HTTP::Request object to Uniform::HTTP::Auth 0.02 so
+      method, exact request-target, and buffered scalar body come through the shared
+      message contract without consuming incremental body producers.
+    - Add focused Uniform message-contract coverage including an XS-parsed native Request.
+    - Repair the transaction-lifecycle diagnostic to the Transaction-owned response
+      lifecycle and run its smoke mode in regular latest-Perl CI to prevent benchmark/API
+      drift before release.
+    - Complete CPAN metadata for all public modules, mark private helper packages no_index,
+      and include all advertised benchmark backends in the distribution MANIFEST.

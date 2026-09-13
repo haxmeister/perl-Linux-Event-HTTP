@@ -25,16 +25,16 @@ my %case = (
         description => 'Perl input buffer plus pico parse_request/native Request construction; prebuilt response write',
     },
     bound => {
-        label => '3b + Response binding',
+        label => '3b + Response construction',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'bound',
-        description => 'Parsed Request plus Response->_new_bound; prebuilt response write',
+        description => 'Parsed Request plus Response construction using the request HTTP version; prebuilt response write',
     },
     state => {
-        label => '3c + transaction state',
+        label => '3c + Transaction/body state',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'state',
-        description => 'Response binding plus production-style bodyless state reuse and active transaction assignment/clear; prebuilt response write',
+        description => 'Response construction plus Transaction activation, production-style bodyless Request completion/state reuse, active assignment, and clear; prebuilt response write',
     },
     callbacks => {
         label => '3d + guarded callbacks',
@@ -52,7 +52,7 @@ my %case = (
         label => '3f + native eligibility',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'eligibility',
-        description => 'Fused callbacks plus native-default response and active-transaction eligibility checks; prebuilt response write',
+        description => 'Fused callbacks plus current native-default Response/Transaction eligibility checks; prebuilt response write',
     },
     build => {
         label => '3g + native wire build',
@@ -61,16 +61,16 @@ my %case = (
         description => 'Native eligibility plus _HTTP1 build_default_final; generated response write',
     },
     mark => {
-        label => '3h + response marking',
+        label => '3h + message/output marking',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'mark',
-        description => 'Native wire build plus Response started/complete marking; generated response write',
+        description => 'Native wire build plus public scalar Response body, message commit, and Transaction response-output markers; generated response write',
     },
     commit => {
-        label => '3i + transaction commit',
+        label => '3i + Transaction completion',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'commit',
-        description => 'Response marking plus write-before-clear transaction commit and read-resume check',
+        description => 'Message/output marking plus wire write, Transaction completion checks, active clear, and read-resume check',
     },
     complete => {
         label => '3j + guarded public Response body',
@@ -85,15 +85,15 @@ my %case = (
         description => 'Guarded public Response body plus production parser eval/error boundary, request-head size guard, and Expect validation',
     },
     bodyless => {
-        label => '3l semantic bodyless driver',
+        label => '3l production Connection driver',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'bodyless',
-        description => 'Benchmark-only bodyless common path retaining production driver guards, parser/error checks, guarded callbacks, post-callback lifecycle checks, and public Response body while omitting generic body-mode branches',
+        description => 'Actual Server::Connection bodyless request driver and native default-final path using a raw Listener, excluding only the Server convenience wrapper',
     },
     http => {
         label => '4 Full HTTP transaction',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
-        description => 'Current Server::Connection::_drive_http1 request/response lifecycle with the private native default-final optimization enabled',
+        description => 'Current Server plus Server::Connection request/response lifecycle with the private native default-final optimization enabled',
     },
 );
 
@@ -195,11 +195,11 @@ for my $i (1 .. $#summary) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my %contract = map { $_ => $case{$_}{description} } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; parse through checked are cumulative staged costs; bodyless is a semantic-safety common-path candidate; full HTTP uses Server::Connection::_drive_http1';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; parse through checked are cumulative staged costs; bodyless uses the production Server::Connection driver through a raw Listener; full HTTP adds the Server convenience wrapper';
 
     my $report = {
         benchmark => 'linux-event-http-transaction-ladder',
-        benchmark_contract_version => 6,
+        benchmark_contract_version => 7,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
@@ -436,6 +436,7 @@ sub fill_pipeline ($state, $wire, $depth, $measure) {
         ++$state->{sent};
     }
 }
+
 sub write_all ($fh, $bytes) {
     my $offset = 0;
     while ($offset < length($bytes)) {
@@ -523,10 +524,11 @@ Options:
   --help                  show this help
 
 The stages cumulatively decompose the cost between a parsed Request with a
-prebuilt response and the full Server::Connection::_drive_http1 lifecycle. The
-bodyless stage is a benchmark-only semantic-safety candidate for the persistent
-no-body request common path. All stages use the same raw client and Linux::Event
-Stream transport; this benchmark adds no new XS/C implementation.
+prebuilt response and the full Server/Server::Connection HTTP lifecycle. The
+bodyless stage uses the production Server::Connection driver directly through a
+raw Listener, while the final HTTP stage adds the Server convenience wrapper.
+All stages use the same raw client and Linux::Event Stream transport; this
+benchmark adds no new XS/C implementation.
 USAGE
     exit $exit;
 }

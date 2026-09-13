@@ -58,8 +58,8 @@ There is deliberately no public proxy object. Proxy selection is high-level
 Client route policy. Client::Connection remains a normal HTTP/1 executor and
 Request remains an HTTP message rather than a route object.
 
-Cookie and authentication engines are also external policy objects rather than
-new HTTP message or connection types. `HTTP::CookieJar` owns cookie semantics and
+Cookie and authentication engines are external policy objects rather than new
+HTTP message or connection types. `HTTP::CookieJar` owns cookie semantics and
 `Uniform::HTTP::Auth` owns HTTP authentication mechanics.
 
 ## Message model
@@ -73,6 +73,17 @@ A locally constructed message is mutable until protocol commit. A received
 message uses the same public type but its wire metadata is committed/read-only.
 Parsed server Requests retain lazy XS-backed storage rather than being eagerly
 expanded into Perl hashes or header objects.
+
+Request and Response conform by behavior to the `Uniform::HTTP` 0.02 message
+contract without inheriting from or being replaced by Uniform classes. This lets
+other Uniform-aware code consume the native/live Linux::Event::HTTP messages
+while connection, Transaction, streaming, retry, and handoff state remain
+outside the message objects.
+
+The message classes preserve duplicate header occurrences, inter-field order,
+and original field-name spelling. `header_values` returns an array reference.
+Capability methods report `has_buffered_body`, `is_mutable`, and
+`headers_are_lossless`; Request additionally reports `target_is_exact`.
 
 Common message concepts are:
 
@@ -91,7 +102,11 @@ header_name                     header_name
 header_value                    header_value
 content_length                  content_length
 body                            body
+has_buffered_body               has_buffered_body
 is_complete                     is_complete
+is_mutable                      is_mutable
+headers_are_lossless            headers_are_lossless
+target_is_exact
 ```
 
 `target` is intentionally used instead of `uri`. An HTTP Request contains a
@@ -164,10 +179,9 @@ concise. The actual body producer remains Transaction-owned.
 performed automatic authentication retries only. Both kinds of exchange remain
 visible in `transactions`; authentication retries repeat the same URL in `urls`.
 
-A proxy route does not change Operation identity. The Operation URLs remain the
-target URLs, including across redirects and target authentication retries. The
-route used to reach those targets is Client policy outside the
-Transaction/Operation object model.
+A proxy route does not change Operation identity. Operation URLs remain target
+URLs, including across redirects and target authentication retries. The route
+used to reach those targets is Client policy outside Transaction/Operation.
 
 Low-level `Client::Connection->request()` continues to return exactly one
 Transaction. Redirect, authentication, cookie, and proxy-route policy exist only
@@ -267,13 +281,13 @@ The current connection-reuse policy is deliberately bounded:
 - at most one idle connection retained per route origin;
 - direct route origin equals target origin;
 - proxied route origin equals the selected proxy origin;
-- sequential requests to different target origins can therefore reuse one
-  persistent proxy connection;
+- sequential requests to different target origins can reuse one persistent proxy
+  connection;
 - concurrent operations may create additional connections;
 - when multiple connections later become idle for one route origin, one is
   retained and extras are closed;
-- target redirect/authentication/cookie identity remains target-based even when
-  a proxy route does not change;
+- target redirect/authentication/cookie identity remains target-based even when a
+  proxy route does not change;
 - proxy authentication identity follows the route origin;
 - a connection transitioned to another protocol or tunnel is never returned to
   the HTTP idle pool.
@@ -361,7 +375,8 @@ owns cookie selection. `connect_tunnel()` does not consult the cookie jar.
 
 ## Authentication policy
 
-Authentication mechanics are delegated to `Uniform::HTTP::Auth 0.01`.
+Authentication mechanics are delegated to `Uniform::HTTP::Auth 0.02` from the
+`Uniform-HTTP` distribution.
 
 Client has two independent policy slots:
 
@@ -381,7 +396,13 @@ owns receiving the challenge Response, selecting the correct protection-space
 origin, deciding replayability, draining the Response, reusing/selecting a
 connection, and creating the retry Transaction.
 
-The Client supplies Uniform the exact wire request-target:
+The Client supplies the normalized protection-space origin and the actual
+`Linux::Event::HTTP::Request` object to Uniform. Through the shared message
+contract Uniform can read the exact method, request-target, and complete buffered
+scalar body without consuming an incremental producer. Bodyless requests supply
+an explicit empty entity body for Digest `qop=auth-int` calculations.
+
+The exact wire target remains:
 
 ```text
 direct ordinary request  -> origin-form
@@ -391,14 +412,13 @@ CONNECT                   -> authority-form
 
 Target 401 uses the normalized target origin. Proxy 407 uses the selected route
 origin. This allows one operation to answer proxy 407 and subsequently target
-401 without conflating the protection spaces.
+401 without conflating protection spaces.
 
 `max_auth_retries` defaults to 3 and is independent from `max_redirects`. Zero
 exposes 401/407 as ordinary final Responses. Hitting the limit likewise exposes
 the next challenge instead of retrying again.
 
-Complete scalar Request bodies are replayable and are supplied to Uniform as
-`entity_body`, supporting Digest `qop=auth-int`. Streaming body producers are not
+Complete scalar Request bodies are replayable. Streaming body producers are not
 replayed automatically even if production has completed: the HTTP layer does
 not own enough application state to rewind a producer safely. A satisfiable
 challenge therefore terminates such an Operation with a replayability error.
@@ -410,8 +430,8 @@ retains Proxy-Authorization while adding target Authorization.
 
 When `auth` is active, it owns Authorization. When `proxy_auth` is active, it
 owns Proxy-Authorization. Caller fields are rejected under those managers;
-disable the corresponding manager for an operation when manual header
-construction is desired.
+disable the corresponding manager for an operation when manual construction is
+desired.
 
 ## Explicit forward-proxy policy
 
@@ -456,8 +476,8 @@ When a proxy route is selected:
 - `https` proxy means TLS is established to the proxy;
 - the Request target uses HTTP/1 absolute-form based on the target URL;
 - fragments remain excluded;
-- Host is regenerated from the target URL and caller Host overrides are removed
-  so Host and the absolute-form target cannot disagree;
+- Host is regenerated from the target URL so Host and the absolute-form target
+  cannot disagree;
 - scalar/streaming Request bodies and the normal response state machine remain
   unchanged;
 - redirects remain target-URL redirects while the selected proxy route is
@@ -465,20 +485,15 @@ When a proxy route is selected:
 
 This is deliberately implemented above Client::Connection. The low-level
 executor does not have a proxy mode; it serializes the Request it is given and
-runs the existing HTTP/1 response/framing lifecycle. That keeps route policy out
-of protocol execution and avoids a proxy-specific Connection hierarchy.
-
-The RFC wire rule is the standard HTTP/1 proxy rule: ordinary requests sent to a
-proxy use absolute-form request targets, while Host still identifies the target
-authority.
+runs the existing HTTP/1 response/framing lifecycle.
 
 An HTTPS target URL with `proxy` is sent as an absolute-form `https://...` URI to
 the selected forward proxy. That is not an implicit CONNECT tunnel and does not
 establish end-to-end target TLS. Code that needs tunnel semantics uses the
 separate `connect_tunnel` operation.
 
-`request('CONNECT', ..., proxy => ...)` is therefore rejected rather than
-creating a second way to express CONNECT.
+`request('CONNECT', ..., proxy => ...)` is rejected rather than creating a second
+way to express CONNECT.
 
 Environment discovery, PAC, NO_PROXY, and SOCKS remain outside the current
 explicit route policy.
@@ -832,9 +847,9 @@ not delimit HTTP content after a successful CONNECT. Non-2xx responses remain
 ordinary HTTP and can retain the proxy connection for reuse.
 
 High-level CONNECT can use `proxy_auth` to answer 407 challenges before tunnel
-establishment. Uniform receives the proxy origin and authority-form CONNECT
-target; Linux::Event::HTTP drains the 407 and performs another CONNECT
-Transaction when allowed.
+establishment. Uniform receives the proxy origin and actual CONNECT Request;
+Linux::Event::HTTP drains the 407 and performs another CONNECT Transaction when
+allowed.
 
 CONNECT handling is Perl-side execution policy around existing transport
 primitives. It adds no native parser path, extra transport object, or second
@@ -859,22 +874,27 @@ expensive primitive is reusable socket, buffer, or write machinery that belongs
 in Linux::Event core.
 
 Do not add a second HTTP output queue. Do not split the consolidated `_HTTP1`
-extension without a measured reason. Do not add HTTP-specific XS merely to win
-a benchmark.
+extension without a measured reason. Do not add HTTP-specific XS merely to win a
+benchmark.
+
+The transaction-lifecycle ladder is a diagnostic of current internal costs, not
+a compatibility surface. It is kept aligned with the Transaction-owned response
+lifecycle and its smoke mode runs in regular CI so internal API drift is caught.
 
 ## Current status
 
 The current foundation includes:
 
-1. Direction-neutral Request and Response message types.
+1. Direction-neutral Request and Response message types conforming behaviorally
+   to the Uniform::HTTP 0.02 message contract.
 2. Transaction as exactly one Request/Response exchange.
 3. HTTP/1 Server and Server::Connection with request-body delivery, persistent
    ordering, scalar/incremental responses, TLS, deferred response send, Upgrade,
    and explicit CONNECT handoff.
-4. HTTP/1 Client::Connection with scalar/streaming Request serialization,
-   strict Response parsing, informational responses, incremental
-   Content-Length/chunked/close body delivery, cancellation, sequential reuse,
-   validated 101 protocol handoff, and validated CONNECT tunnel handoff.
+4. HTTP/1 Client::Connection with scalar/streaming Request serialization, strict
+   Response parsing, informational responses, incremental Content-Length/chunked/
+   close body delivery, cancellation, sequential reuse, validated 101 handoff,
+   and validated CONNECT tunnel handoff.
 5. High-level Client::Operation with distinct Transaction history for redirects
    and authentication retries, separate redirect/auth retry accounting,
    cancellation, and final operation state.
@@ -885,7 +905,7 @@ The current foundation includes:
    CONNECT establishment.
 7. Explicit `HTTP::CookieJar` integration for target cookie policy without
    duplicating RFC cookie storage/selection logic.
-8. Explicit `Uniform::HTTP::Auth` integration for target 401 and proxy 407
+8. Explicit `Uniform::HTTP::Auth 0.02` integration for target 401 and proxy 407
    challenge handling, including Basic/Bearer/Digest mechanics, replay-safe
    retry Transactions, Digest auth-int scalar context, and authenticated CONNECT.
 9. One consolidated private `_HTTP1` native extension and no duplicate transport

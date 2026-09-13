@@ -64,7 +64,7 @@ ok(Linux::Event::HTTP::Transaction->can('cancel'),
 ok(Linux::Event::HTTP::Client::Operation->can('transaction'),
     'Client Operation exposes current/final Transaction');
 ok(Linux::Event::HTTP::Client::Operation->can('transactions'),
-    'Client Operation exposes redirect Transaction history');
+    'Client Operation exposes Transaction history');
 ok(Linux::Event::HTTP::Client::Operation->can('cancel'),
     'Client Operation owns high-level cancellation');
 ok(Linux::Event::HTTP::Server::Connection->can('transaction'),

@@ -9,13 +9,15 @@ if ($^O ne 'linux') {
 
 my @public_modules = qw(
     Linux::Event::HTTP
+    Linux::Event::HTTP::Body::Stream
     Linux::Event::HTTP::Client
     Linux::Event::HTTP::Client::Connection
+    Linux::Event::HTTP::Client::Operation
+    Linux::Event::HTTP::Server
     Linux::Event::HTTP::Server::Connection
     Linux::Event::HTTP::Request
     Linux::Event::HTTP::Response
     Linux::Event::HTTP::Transaction
-    Linux::Event::HTTP::Server
 );
 
 my $distribution_version = MM->parse_version('lib/Linux/Event/HTTP.pm');
@@ -55,8 +57,11 @@ WriteMakefile(
         no_index => {
             package => [qw(
                 Linux::Event::HTTP::_ClientAuth
+                Linux::Event::HTTP::_ClientConnect
+                Linux::Event::HTTP::_ClientUpgrade
                 Linux::Event::HTTP::_HTTP1
                 Linux::Event::HTTP::_HTTP1::Chunked
+                Linux::Event::HTTP::_ServerConnect
                 Linux::Event::HTTP::_Upgrade
             )],
         },

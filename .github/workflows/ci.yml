@@ -65,6 +65,10 @@ jobs:
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: perl -Mblib bench/run-http-end-to-end.pl --smoke
 
+      - name: Transaction lifecycle diagnostic smoke
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: perl -Mblib bench/run-http-transaction-ladder.pl --smoke
+
       - name: Distribution integrity
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: make disttest

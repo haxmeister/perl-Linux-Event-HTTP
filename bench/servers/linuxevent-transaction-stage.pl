@@ -7,6 +7,7 @@ use Linux::Event::Loop;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::HTTP::Server::Connection;
 use Linux::Event::HTTP::Response;
+use Linux::Event::HTTP::Transaction;
 use Linux::Event::HTTP::_HTTP1 ();
 
 my $port = $ENV{BENCH_PORT} // die "BENCH_PORT is required\n";
@@ -37,122 +38,52 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
     }
 
-    # Connection->new requires an application request handler. The benchmark
-    # invokes the cached benchmark handlers explicitly below so each stage can
-    # add exactly the intended lifecycle work.
-    sub on_request ($self, $request, $response) { return }
+    sub on_request ($self, $request, $response) {
+        $response->body($self->data->{payload})
+            if $main::STAGE eq 'bodyless';
+        return;
+    }
+
+    sub _new_bench_transaction ($self, $request, $response) {
+        my $transaction = Linux::Event::HTTP::Transaction->_new(
+            request    => $request,
+            controller => $self,
+        );
+        $transaction->_set_response($response);
+        $transaction->_activate;
+        return $transaction;
+    }
+
+    sub _bodyless_state ($self, $request) {
+        my $state = $self->{_http_bodyless_state} //= {
+            mode      => 'none',
+            body_done => 0,
+        };
+        $state->{body_done} = 1;
+        delete $state->{close_after_response};
+        $request->_mark_complete;
+        return $state;
+    }
 
     sub native_default_context ($self, $response) {
         return if ref($response) ne 'Linux::Event::HTTP::Response';
-        return if $response->{status} != 200 || defined($response->{reason});
-        return if @{$response->{headers}};
+        return if $response->status != 200 || defined($response->reason);
+        return if $response->header_count;
         return if $self->{_http_closing} || $self->is_closed;
         return if $self->{_http_response_state};
 
-        my $active = $self->{_http_active_response} or return;
+        my $transaction = $self->{_http_active_transaction} or return;
+        my $active = $transaction->response or return;
         return if refaddr($active) != refaddr($response);
 
-        my $request = $self->{_http_active_request} or return;
-        return if !defined($response->{request})
-            || refaddr($request) != refaddr($response->{request});
-
+        my $request = $transaction->request or return;
         my $request_state = $self->{_http_request_state} or return;
         return if !$request_state->{body_done};
         return $request;
     }
 
-    sub _on_data_bodyless_fast ($self, $bytes) {
-        return if $self->{_http_closing} || $self->is_closed;
-        $self->{_bench_input} = '' if !defined $self->{_bench_input};
-        $self->{_bench_input} .= $bytes;
-
-        return if $self->{_http_driving};
-        local $self->{_http_driving} = 1;
-
-        while (!$self->{_http_closing} && !$self->is_closed) {
-            last if $self->{_http_active_request};
-            last if !length($self->{_bench_input});
-
-            my $request;
-            my $parsed = eval {
-                $request = $PARSER->parse_request(
-                    $self->{_bench_input}, 0, $MAX_HEADERS,
-                );
-                1;
-            };
-            if (!$parsed) {
-                my $failure = "$@";
-                my $status = $failure =~ /semantic error \(501\)/ ? 501 : 400;
-                $self->_protocol_error($status);
-                last;
-            }
-            if (!defined $request) {
-                if (length($self->{_bench_input}) > $MAX_REQUEST_HEAD) {
-                    $self->_protocol_error(431);
-                }
-                last;
-            }
-
-            my $consumed = $request->_consumed;
-            if ($consumed > $MAX_REQUEST_HEAD) {
-                $self->_protocol_error(431, $request->http_version);
-                last;
-            }
-            substr($self->{_bench_input}, 0, $consumed, '');
-
-            my $expect = Linux::Event::HTTP::Server::Connection::_expect_continue(
-                $request,
-            );
-            if ($expect < 0) {
-                $self->_protocol_error(417, $request->http_version);
-                last;
-            }
-
-            my $response = Linux::Event::HTTP::Response->_new_bound(
-                $self, $request,
-            );
-            my $body_mode = $request->body_mode;
-            die "bodyless benchmark unexpectedly parsed $body_mode request\n"
-                if $body_mode ne 'none';
-
-            my $request_state = $self->{_http_bodyless_state} //= {
-                mode      => 'none',
-                body_done => 0,
-            };
-            $request_state->{body_done} = 0;
-            delete $request_state->{close_after_response};
-
-            $self->{_http_active_request} = $request;
-            $self->{_http_active_response} = $response;
-            $self->{_http_request_state} = $request_state;
-            $self->{_http_response_state} = undef;
-
-            if (!$self->_invoke_http_callback($NOOP, $request, $response)) {
-                last;
-            }
-            last if $self->{_http_closing} || $self->is_closed;
-            next if !$self->{_http_active_request};
-
-            $request_state->{body_done} = 1;
-            if (!$self->_invoke_http_callback($COMPLETE, $request, $response)) {
-                last;
-            }
-            last if $self->{_http_closing} || $self->is_closed;
-            next if !$self->{_http_active_request};
-
-            if ($response->is_complete) {
-                $self->_finalize_transaction;
-                next;
-            }
-
-            $self->pause_read if !$self->is_read_paused;
-            last;
-        }
-        return;
-    }
-
     sub on_data ($self, $bytes) {
-        return $self->_on_data_bodyless_fast($bytes)
+        return $self->SUPER::on_data($bytes)
             if $main::STAGE eq 'bodyless';
 
         $self->{_bench_input} = '' if !defined $self->{_bench_input};
@@ -188,7 +119,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
 
             my $consumed = $request->_consumed;
             if ($main::STAGE eq 'checked' && $consumed > $MAX_REQUEST_HEAD) {
-                $self->_protocol_error(431, $request->http_version);
+                $self->_protocol_error(431, $request->version);
                 last;
             }
             substr($self->{_bench_input}, 0, $consumed, '');
@@ -199,7 +130,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                     $request,
                 );
                 if ($expect < 0) {
-                    $self->_protocol_error(417, $request->http_version);
+                    $self->_protocol_error(417, $request->version);
                     last;
                 }
             }
@@ -209,8 +140,8 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            my $response = Linux::Event::HTTP::Response->_new_bound(
-                $self, $request,
+            my $response = Linux::Event::HTTP::Response->new(
+                version => $request->version,
             );
 
             if ($main::STAGE eq 'bound') {
@@ -218,29 +149,25 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            my $body_mode = $request->body_mode;
-            my $bodyless = $body_mode eq 'none';
-            my $request_state;
-            if ($bodyless) {
-                $request_state = $self->{_http_bodyless_state} //= {
-                    mode      => 'none',
-                    body_done => 0,
-                };
-                $request_state->{body_done} = 0;
-                delete $request_state->{close_after_response};
-            } else {
-                $request_state
-                    = Linux::Event::HTTP::Server::Connection::_new_request_state(
-                        $request, $body_mode,
-                    );
-            }
+            my $transaction = $self->_new_bench_transaction(
+                $request, $response,
+            );
 
+            my $body_mode = $request->_http1_body_mode;
+            die "bodyless benchmark unexpectedly parsed $body_mode request\n"
+                if $body_mode ne 'none';
+            my $request_state = $self->_bodyless_state($request);
+
+            $self->{_http_active_transaction} = $transaction;
             $self->{_http_active_request} = $request;
             $self->{_http_active_response} = $response;
             $self->{_http_request_state} = $request_state;
             $self->{_http_response_state} = undef;
 
-            if ($expect && Linux::Event::HTTP::Server::Connection::_body_pending($request_state)) {
+            if ($expect
+                && Linux::Event::HTTP::Server::Connection::_body_pending(
+                    $request_state,
+                )) {
                 $self->write("HTTP/1.1 100 Continue\r\n\r\n");
             }
 
@@ -259,17 +186,19 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 last if !$self->_invoke_http_callback(
                     $NOOP, $request, $response,
                 );
-                $request_state->{body_done} = 1;
+                last if $self->{_http_closing} || $self->is_closed;
+                next if !$self->{_http_active_request};
                 last if !$self->_invoke_http_callback(
                     $handler, $request, $response,
                 );
+                last if $self->{_http_closing} || $self->is_closed;
+                next if !$self->{_http_active_request};
             } else {
                 my $ok;
                 {
                     local $self->{_http_dispatching} = 1;
                     $ok = eval {
                         $NOOP->($self, $request, $response);
-                        $request_state->{body_done} = 1;
                         $handler->($self, $request, $response);
                         1;
                     };
@@ -294,7 +223,11 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            next if $main::STAGE eq 'complete' || $main::STAGE eq 'checked';
+            if ($main::STAGE eq 'complete' || $main::STAGE eq 'checked') {
+                die "guarded public Response body did not finalize transaction\n"
+                    if $self->{_http_active_transaction};
+                next;
+            }
 
             my $native_request = $self->native_default_context($response)
                 or die "native default response unexpectedly ineligible\n";
@@ -318,8 +251,10 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            $response->{started} = 1;
-            $response->{ended} = 1;
+            $response->body($self->data->{payload});
+            $response->_commit;
+            $transaction->_mark_response_started;
+            $transaction->_mark_response_output_complete;
             $self->{_http_response_state} = undef;
 
             if ($main::STAGE eq 'mark') {
@@ -329,10 +264,8 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
             }
 
             $self->write($native_wire);
-            $self->{_http_active_request} = undef;
-            $self->{_http_active_response} = undef;
-            $self->{_http_request_state} = undef;
-            $self->{_http_response_state} = undef;
+            $self->_complete_active_transaction_state;
+            $self->_clear_transaction;
             $self->resume_read if $self->is_read_paused;
         }
         return;
