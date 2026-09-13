@@ -129,7 +129,7 @@ hop begins.
 redirect bodies are still consumed through correct HTTP framing but are not
 emitted through the final `on_body` callback.
 
-## Redirect tests
+## Redirect tests and validation
 
 Focused test:
 
@@ -150,17 +150,26 @@ Coverage includes:
 - safe refusal to replay a non-rewindable streaming body.
 
 First implementation CI #341 / run `34733086338` passed on commit
-`ad4fc134e589b50c600228aabf5e0d870568df45` across:
+`ad4fc134e589b50c600228aabf5e0d870568df45` across Perl 5.36, latest Perl, and
+latest threaded Perl.
+
+Documentation-complete redirect head `9873b5acb3759962913f20bf7145224446730503`
+passed final CI #348 / run `34733424818` across:
 
 - Perl 5.36;
 - latest Perl;
 - latest threaded Perl;
 - full test suite;
-- normal end-to-end server smoke;
-- distribution integrity where scheduled.
+- end-to-end server smoke on latest Perl;
+- distribution integrity on latest Perl.
 
-After that checkpoint, the disabled-follow Location edge and documentation were
-updated. A final branch-head CI run must pass before PR #21 is review-ready.
+A final lifecycle review also confirmed that an early final Response during a
+streaming upload marks the old Client::Connection non-reusable and closes it
+before the high-level redirect controller attempts to release the connection.
+An interrupted upload therefore cannot be returned to the idle pool.
+
+The only change after CI #348 is this handoff validation note. PR #21 should
+remain draft/unmerged until explicit authorization.
 
 ## Server baseline remains unchanged
 
