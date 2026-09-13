@@ -178,6 +178,42 @@ not assumed to be rewindable.
 
 Cross-origin redirects remove caller-supplied `Authorization` and `Cookie`.
 Connection-specific fields are regenerated rather than forwarded verbatim.
+When a cookie jar is configured, Cookie is regenerated independently for each
+hop from the new target URL.
+
+## Cookies
+
+Cookie policy is provided by `HTTP::CookieJar` rather than implemented by
+Linux::Event::HTTP. Applications explicitly create and own the jar:
+
+```perl
+use HTTP::CookieJar;
+
+my $jar = HTTP::CookieJar->new;
+my $client = Linux::Event::HTTP::Client->new(
+    loop       => $loop,
+    cookie_jar => $jar,
+);
+```
+
+Before each ordinary request hop, Client asks the jar for cookies using the
+target URL. Every `Set-Cookie` field from final and redirect Responses is fed
+back to the jar using that same target URL before redirect or application
+response processing continues.
+
+This distinction matters with proxies: the proxy is only the route. It never
+becomes the cookie origin merely because the TCP or TLS connection terminates
+there. Redirects ask the jar again for the new target URL, leaving domain, path,
+expiry, Secure handling, and cookie ordering to `HTTP::CookieJar`.
+
+Linux::Event::HTTP does not create an implicit jar. Jar lifetime, sharing,
+persistence, preloading, and clearing remain application policy. When a jar is
+configured, caller-supplied `Cookie` fields are rejected so cookie selection has
+one owner; seed or alter cookies through the jar itself.
+
+`connect_tunnel()` does not consult the cookie jar because CONNECT is an explicit
+exchange with the named proxy endpoint followed by protocol handoff, not an
+ordinary target-resource request.
 
 ## Forward proxies
 
@@ -215,9 +251,10 @@ HTTP/1 requests use absolute-form targets such as
 `http://origin.example/path?x=1`. Host is always derived from the target URL in
 proxy mode.
 
-The target origin remains the redirect and origin-credential identity. The route
-origin selects the actual connection and idle-pool entry. Sequential requests to
-different target origins can therefore reuse one persistent proxy connection.
+The target origin remains the redirect, cookie, and origin-credential identity.
+The route origin selects the actual connection and idle-pool entry. Sequential
+requests to different target origins can therefore reuse one persistent proxy
+connection without sharing target cookies.
 Caller-supplied `Proxy-Authorization` stays associated with that selected proxy
 route across redirects while target credentials still obey cross-origin rules.
 
@@ -306,6 +343,8 @@ parallel HTTPS hierarchy.
 Server TLS is configured on `Server->new(tls => {...})`. Direct Client HTTPS
 uses the target URL host as the TLS server name and currently advertises only
 `http/1.1` through ALPN. An HTTPS proxy endpoint uses TLS to the proxy itself.
+Secure-cookie selection still uses the target URL supplied to `HTTP::CookieJar`,
+not the proxy transport scheme.
 
 ## Connection reuse
 
@@ -365,13 +404,14 @@ make
 make test
 ```
 
-Linux::Event::HTTP currently requires Linux::Event 0.113 or newer.
+Linux::Event::HTTP currently requires Linux::Event 0.113 or newer and uses
+`HTTP::CookieJar` for optional high-level cookie policy.
 
 ## Design documents
 
 - `docs/ARCHITECTURE.md` - ownership, lifecycle, framing, pooling, and native boundaries.
 - `docs/CONNECT.md` - client and server CONNECT validation and handoff semantics.
-- `docs/CLIENT-POLICY.md` - client policy roadmap and deliberately deferred policy.
+- `docs/CLIENT-POLICY.md` - implemented and deliberately deferred client policy.
 - `docs/BENCHMARKING.md` - benchmark discipline and interpretation.
 - `docs/PICOHTTPPARSER-EXPERIMENT.md` - parser provenance and representation experiments.
 
