@@ -41,7 +41,6 @@ sub new ($class, %args) {
         upgrade_pending => 0,
         body_kind       => undef,
         body            => undef,
-        stream_body     => undef,
     }, $class;
 
     if (defined $headers) {
@@ -77,7 +76,6 @@ sub _new_bound ($class, $connection, $request) {
         upgrade_pending => 0,
         body_kind       => undef,
         body            => undef,
-        stream_body     => undef,
     }, $class;
     weaken($self->{connection});
     return $self;
@@ -218,7 +216,7 @@ sub body ($self, @args) {
 
     die 'body accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
-    die 'body(): response already has a streaming body'
+    die 'body(): response already has an incremental body producer'
         if ($self->{body_kind} // '') eq 'stream';
 
     $self->{body_kind} = 'scalar';
@@ -232,24 +230,16 @@ sub body ($self, @args) {
     return $self;
 }
 
-sub stream_body ($self, @args) {
-    if ($self->{stream_body}) {
-        die 'stream_body options may only be supplied when the stream is created'
-            if @args;
-        return $self->{stream_body};
-    }
-
+sub _begin_stream_body ($self) {
     $self->_assert_mutable;
-    die 'stream_body(): response already has a scalar body'
+    die 'response_body(): Response already has a complete scalar body'
         if ($self->{body_kind} // '') eq 'scalar';
-    die 'stream_body options must be key/value pairs' if @args % 2;
+    die 'response_body(): Response already has an incremental body producer'
+        if ($self->{body_kind} // '') eq 'stream';
 
-    require Linux::Event::HTTP::Body::Stream;
-    my $body = Linux::Event::HTTP::Body::Stream->_new($self, @args);
     $self->{body_kind} = 'stream';
     $self->{complete} = 0;
-    $self->{stream_body} = $body;
-    return $body;
+    return $self;
 }
 
 sub _has_scalar_body ($self) {
@@ -258,46 +248,6 @@ sub _has_scalar_body ($self) {
 
 sub _scalar_body ($self) {
     return $self->{body};
-}
-
-sub _stream_write ($self, $bytes) {
-    die 'stream body write rejected: response has an Upgrade handoff pending'
-        if $self->{upgrade_pending};
-    die 'stream body write rejected: response output is already complete'
-        if $self->{ended};
-    my $connection = $self->{connection}
-        or die 'stream body write rejected: response is not bound to an active HTTP connection';
-    return $connection->_write_response($self, $bytes, 0, 'stream_body->write');
-}
-
-sub _stream_complete ($self, $bytes = '') {
-    die 'stream body complete rejected: response has an Upgrade handoff pending'
-        if $self->{upgrade_pending};
-    die 'stream body complete rejected: response output is already complete'
-        if $self->{ended};
-    my $connection = $self->{connection}
-        or die 'stream body complete rejected: response is not bound to an active HTTP connection';
-
-    $self->{complete} = 1;
-    my $ok = eval {
-        $connection->_write_response($self, $bytes, 1, 'stream_body->complete');
-        1;
-    };
-    if (!$ok) {
-        $self->{complete} = 0;
-        die $@;
-    }
-    return $self;
-}
-
-sub _stream_body_object ($self) {
-    return $self->{stream_body};
-}
-
-sub _cancel_stream_body ($self) {
-    my $body = $self->{stream_body} or return;
-    $body->_cancel;
-    return;
 }
 
 sub _try_native_default_final ($self, $connection, $body) {
@@ -350,6 +300,11 @@ sub _mark_started ($self) {
 
 sub _mark_complete ($self) {
     $self->{complete} = 1;
+    return;
+}
+
+sub _mark_incomplete ($self) {
+    $self->{complete} = 0;
     return;
 }
 
@@ -419,18 +374,19 @@ Server callbacks receive the same Response class:
 =head1 DESCRIPTION
 
 C<Linux::Event::HTTP::Response> represents one HTTP response message. It is not
-a socket or connection object. The same message class is intended for both
-locally constructed outgoing responses and parsed incoming responses.
+a socket, transaction, or connection object. The same message class is intended
+for both locally constructed outgoing responses and parsed incoming responses.
 
 A Response's message completion state is separate from transport/output
 completion. Selecting a complete scalar C<body> makes the message body complete
-immediately, while the server may not have written that response yet. Streaming
-body production becomes complete when the producer announces its final bytes.
+immediately, while the server may not have written that response yet.
+Incremental body production is owned by L<Linux::Event::HTTP::Transaction>;
+the Response records only that such a body is incomplete until the producer
+announces its final bytes.
 
 The current server implementation still binds its outgoing Response to server
-transaction machinery for scalar commit, streaming output, and Upgrade. Those
-remaining lifecycle responsibilities are being separated from the message API
-as the shared Transaction layer is introduced.
+transaction machinery for scalar commit and Upgrade. Those remaining lifecycle
+responsibilities can be separated independently of body production.
 
 =head1 METHODS
 
@@ -481,21 +437,14 @@ Returns the declared Content-Length as an integer, or undef when absent.
 =head2 body
 
 Gets or sets the complete scalar byte body. Setting it declares that the
-message body itself is complete. Incremental body transfer is a
-transaction/connection responsibility rather than a different kind of HTTP
-message.
+message body itself is complete. Incremental output is selected through the
+owning Transaction rather than through the Response message.
 
 =head2 is_complete
 
 Returns whether the complete HTTP message body is known or its final boundary
 has been reached. This is deliberately independent of whether an outgoing
 message has finished writing to its transport.
-
-=head2 stream_body
-
-The existing server streaming producer remains available while streaming
-ownership is moved to Transaction. It writes through Linux::Event's existing
-ordered-byte transport and does not create a second HTTP output queue.
 
 =head2 upgrade
 
