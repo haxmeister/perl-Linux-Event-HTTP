@@ -9,7 +9,7 @@ Updated: 2026-09-13 (America/Chicago)
 - Current main baseline: `8a39aa272d99a9303ac38eb7bb32f3fc371dc244`
 - That baseline is the merge of PR #29, client Uniform authentication integration.
 - Active branch: `feature/uniform-message-contract`
-- Draft PR: #30, `Conform native HTTP messages to Uniform 0.02 contract`
+- PR #30: `Conform native HTTP messages to Uniform 0.02 contract`
 - Do not merge PR #30 without explicit user authorization.
 - Linux::Event minimum: `0.113`
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
@@ -66,11 +66,13 @@ retry Transactions, and callback/Operation lifecycle.
 
 ## Validation
 
-Executable conformance head:
+Executable conformance head
+`c4530551081fce199cca57b02fd31a1243ef8086` passed CI #424 / run
+`34784790047` across the complete repository matrix.
 
-`c4530551081fce199cca57b02fd31a1243ef8086`
-
-passed CI #424 / run `34784790047` across the complete repository matrix.
+Documentation-aligned head
+`38f72adc488f99802718968c6515f8ee6d398b9b` passed CI #426 / run
+`34788300925` across the complete repository matrix.
 
 Focused coverage includes:
 
@@ -81,10 +83,10 @@ Focused coverage includes:
 - Response 100..599 status validation;
 - `t/79-uniform-message-contract.t`, including an XS-parsed native Request.
 
-Documentation cleanup after that green executable head has begun. Client policy
-has been updated for Uniform 0.02 and the direct native Request integration. The
-branch head moved beyond the executable checkpoint for documentation, so run CI
-again on the final documentation-complete head before marking PR #30 ready.
+Client policy documentation now names Uniform 0.02 and documents direct native
+Request integration. Request/Response POD documents the public message contract.
+Broader release-note wording cleanup can be handled in the planned 0.001
+release-readiness audit rather than widening PR #30.
 
 ## Design constraints that remain fixed
 
@@ -100,13 +102,11 @@ again on the final documentation-complete head before marking PR #30 ready.
 
 ## Next actions
 
-1. Finish README / architecture / Changes wording for Uniform message conformance
-   and remove stale Uniform 0.01 references.
-2. Update PR #30 body with the final documentation scope and CI checkpoints.
-3. Run CI on the final branch head.
-4. If fully green, mark PR #30 ready for review but do not merge without explicit
-   user authorization.
-5. After merge, perform the planned 0.001 release-readiness audit rather than
+1. Update PR #30 body with the final scope and validation checkpoints.
+2. Confirm CI on this final handoff-only branch head.
+3. Mark PR #30 ready for review if green, but do not merge without explicit user
+   authorization.
+4. After merge, perform the planned 0.001 release-readiness audit rather than
    automatically adding another protocol-policy subsystem.
 
 ## Branch policy
