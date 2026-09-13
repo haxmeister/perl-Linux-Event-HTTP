@@ -3,7 +3,6 @@ use strict;
 use warnings;
 
 use Test::More;
-use Linux::Event::HTTP::Request;
 use Linux::Event::HTTP::Response;
 
 my $class = 'Linux::Event::HTTP::Response';
@@ -19,29 +18,23 @@ $response->version('1.0');
 is($response->version, '1.0', 'response version is mutable before commit');
 $response->version('1.1');
 
-my $bound_connection = {};
-my $bound_request = Linux::Event::HTTP::Request->new(
-    method  => 'GET',
-    target  => '/',
-    version => '1.0',
-);
-my $bound = $class->_new_bound($bound_connection, $bound_request);
-is($bound->status, 200, 'bound response uses the default status');
-is($bound->version, '1.0', 'bound response inherits request HTTP version');
-is($bound->header('X-Missing'), undef, 'bound response starts without headers');
+my $first_empty = $class->new(version => '1.0');
+is($first_empty->status, 200, 'new response uses the default status');
+is($first_empty->version, '1.0', 'constructor accepts HTTP version');
+is($first_empty->header('X-Missing'), undef, 'new response starts without headers');
 is(
-    $bound->_serialize_head('1.0'),
+    $first_empty->_serialize_head('1.0'),
     "HTTP/1.0 200 OK\r\n\r\n",
-    'bound response with shared empty headers serializes normally',
+    'new response with shared empty headers serializes normally',
 );
-$bound->add_header('X-Bound', 'yes');
-is($bound->header('X-Bound'), 'yes', 'bound response lazily owns added headers');
+$first_empty->add_header('X-First', 'yes');
+is($first_empty->header('X-First'), 'yes', 'response lazily owns added headers');
 
-my $second_bound = $class->_new_bound($bound_connection, $bound_request);
+my $second_empty = $class->new(version => '1.0');
 is(
-    $second_bound->header('X-Bound'),
+    $second_empty->header('X-First'),
     undef,
-    'adding a header does not mutate another bound response',
+    'adding a header does not mutate another Response',
 );
 
 $response->header('Content-Type', 'text/plain');
@@ -192,11 +185,17 @@ ok(!$ok, 'native serializer revalidates tampered field values');
 
 ok(!$class->can('stream_body'),
     'Response message does not expose a transport body producer');
+ok(!$class->can('connection'),
+    'Response message does not retain a transport Connection');
+ok(!$class->can('request'),
+    'Response message does not retain a peer Request');
+ok(!$class->can('upgrade'),
+    'Response message does not perform protocol Upgrade');
 
-my $unbound = $class->new;
-$unbound->_mark_started;
-$ok = eval { $unbound->status(201); 1 };
-ok(!$ok, 'response metadata locks after output starts');
+my $committed = $class->new;
+$committed->_commit;
+$ok = eval { $committed->status(201); 1 };
+ok(!$ok, 'response metadata locks after message commit');
 like($@, qr/cannot change/, 'metadata lock error is clear');
 
 done_testing;
