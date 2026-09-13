@@ -41,7 +41,7 @@ sub new ($class, %option) {
         if exists $option{on_data};
     croak 'new(): HTTP Server cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
-    croak 'new(): on_request_final was removed; use on_request and Response->body or stream_body'
+    croak 'new(): on_request_final was removed; use on_request and Response->body or Transaction->response_body'
         if exists $option{on_request_final};
 
     my $connection_class = _load_connection_class(
@@ -181,10 +181,21 @@ The callback receives:
 
 =back
 
-A Response describes one HTTP response message. C<body> selects a complete
-scalar body; C<stream_body> returns a streaming body producer. Completing an
-HTTP response does not normally close the connection. HTTP keep-alive may reuse
-the same connection for later requests.
+A Response describes one HTTP response message. C<body> supplies a complete
+scalar body. For an incremental outgoing body, use the active
+L<Linux::Event::HTTP::Transaction> from C<< $conn->transaction >> and its
+C<response_body> producer. Completing an HTTP response does not normally close
+the connection; HTTP keep-alive may reuse the same connection for later
+requests.
+
+For example:
+
+    on_request => sub ($conn, $req, $res) {
+        $res->header('Content-Type', 'text/plain');
+        my $body = $conn->transaction->response_body;
+        $body->write("one\n");
+        $body->complete("two\n");
+    },
 
 =head1 REQUEST BODIES
 
@@ -319,8 +330,8 @@ connections keep their independent lifecycles.
 
 =head1 SEE ALSO
 
-L<Linux::Event::HTTP::Server::Connection>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Body::Stream>,
-L<Linux::Event::TLS>.
+L<Linux::Event::HTTP::Server::Connection>, L<Linux::Event::HTTP::Transaction>,
+L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Response>,
+L<Linux::Event::HTTP::Body::Stream>, L<Linux::Event::TLS>.
 
 =cut
