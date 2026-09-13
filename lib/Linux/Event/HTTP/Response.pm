@@ -37,6 +37,7 @@ sub new ($class, %args) {
         request         => undef,
         started         => 0,
         ended           => 0,
+        complete        => 0,
         upgrade_pending => 0,
         body_kind       => undef,
         body            => undef,
@@ -72,6 +73,7 @@ sub _new_bound ($class, $connection, $request) {
         request         => $request,
         started         => 0,
         ended           => 0,
+        complete        => 0,
         upgrade_pending => 0,
         body_kind       => undef,
         body            => undef,
@@ -84,15 +86,16 @@ sub _new_bound ($class, $connection, $request) {
 sub connection   ($self) { $self->{connection} }
 sub request      ($self) { $self->{request} }
 sub is_started   ($self) { !!$self->{started} }
-sub is_complete  ($self) { !!$self->{ended} }
+sub is_complete  ($self) { !!$self->{complete} }
 sub is_upgrading ($self) { !!$self->{upgrade_pending} }
+
+sub _is_output_complete ($self) { !!$self->{ended} }
 
 sub _assert_mutable ($self) {
     die 'response metadata cannot change after Upgrade handoff is requested'
         if $self->{upgrade_pending};
     die 'response metadata cannot change after output has started'
         if $self->{started};
-    die 'response is already complete' if $self->{ended};
     return;
 }
 
@@ -220,6 +223,7 @@ sub body ($self, @args) {
 
     $self->{body_kind} = 'scalar';
     $self->{body} = _body_bytes('body', $args[0]);
+    $self->{complete} = 1;
 
     if (my $connection = $self->{connection}) {
         $connection->_response_body_ready($self);
@@ -243,6 +247,7 @@ sub stream_body ($self, @args) {
     require Linux::Event::HTTP::Body::Stream;
     my $body = Linux::Event::HTTP::Body::Stream->_new($self, @args);
     $self->{body_kind} = 'stream';
+    $self->{complete} = 0;
     $self->{stream_body} = $body;
     return $body;
 }
@@ -258,7 +263,7 @@ sub _scalar_body ($self) {
 sub _stream_write ($self, $bytes) {
     die 'stream body write rejected: response has an Upgrade handoff pending'
         if $self->{upgrade_pending};
-    die 'stream body write rejected: response is already complete'
+    die 'stream body write rejected: response output is already complete'
         if $self->{ended};
     my $connection = $self->{connection}
         or die 'stream body write rejected: response is not bound to an active HTTP connection';
@@ -268,11 +273,20 @@ sub _stream_write ($self, $bytes) {
 sub _stream_complete ($self, $bytes = '') {
     die 'stream body complete rejected: response has an Upgrade handoff pending'
         if $self->{upgrade_pending};
-    die 'stream body complete rejected: response is already complete'
+    die 'stream body complete rejected: response output is already complete'
         if $self->{ended};
     my $connection = $self->{connection}
         or die 'stream body complete rejected: response is not bound to an active HTTP connection';
-    $connection->_write_response($self, $bytes, 1, 'stream_body->complete');
+
+    $self->{complete} = 1;
+    my $ok = eval {
+        $connection->_write_response($self, $bytes, 1, 'stream_body->complete');
+        1;
+    };
+    if (!$ok) {
+        $self->{complete} = 0;
+        die $@;
+    }
     return $self;
 }
 
@@ -335,6 +349,11 @@ sub _mark_started ($self) {
 }
 
 sub _mark_complete ($self) {
+    $self->{complete} = 1;
+    return;
+}
+
+sub _mark_output_complete ($self) {
     $self->{ended} = 1;
     return;
 }
@@ -403,10 +422,15 @@ C<Linux::Event::HTTP::Response> represents one HTTP response message. It is not
 a socket or connection object. The same message class is intended for both
 locally constructed outgoing responses and parsed incoming responses.
 
+A Response's message completion state is separate from transport/output
+completion. Selecting a complete scalar C<body> makes the message body complete
+immediately, while the server may not have written that response yet. Streaming
+body production becomes complete when the producer announces its final bytes.
+
 The current server implementation still binds its outgoing Response to server
 transaction machinery for scalar commit, streaming output, and Upgrade. Those
-lifecycle responsibilities are being separated from the message API as the
-shared Transaction layer is introduced.
+remaining lifecycle responsibilities are being separated from the message API
+as the shared Transaction layer is introduced.
 
 =head1 METHODS
 
@@ -456,15 +480,16 @@ Returns the declared Content-Length as an integer, or undef when absent.
 
 =head2 body
 
-Gets or sets the complete scalar byte body. Incremental body transfer is a
+Gets or sets the complete scalar byte body. Setting it declares that the
+message body itself is complete. Incremental body transfer is a
 transaction/connection responsibility rather than a different kind of HTTP
 message.
 
 =head2 is_complete
 
-Reports whether the protocol layer has completed this message. During the
-server-to-Transaction migration this still follows the existing server response
-lifecycle and becomes true after final output is committed.
+Returns whether the complete HTTP message body is known or its final boundary
+has been reached. This is deliberately independent of whether an outgoing
+message has finished writing to its transport.
 
 =head2 stream_body
 
