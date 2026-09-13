@@ -51,6 +51,7 @@ sub _init_http_client ($self, $user_on_drain = undef) {
     $self->{_http_client_callbacks} = undef;
     $self->{_http_client_request_state} = undef;
     $self->{_http_client_response_state} = undef;
+    $self->{_http_client_pending_upgrade} = undef;
     $self->{_http_client_user_on_drain} = $user_on_drain;
     $self->{_http_client_driving} = 0;
     $self->{_http_client_reusable} = 1;
@@ -259,9 +260,13 @@ sub request ($self, $request, %option) {
         $buffer_limit = _buffer_limit(delete $option{buffer_body});
     }
 
+    my $upgrade_to = exists($option{upgrade_to})
+        ? delete($option{upgrade_to})
+        : undef;
+
     my %callback;
     my %known = map { $_ => 1 } qw(
-        on_response on_body on_complete on_error on_informational
+        on_response on_body on_complete on_error on_informational on_upgrade
     );
     my @unknown = grep { !$known{$_} } keys %option;
     croak 'request(): unknown options: ' . join(', ', sort @unknown)
@@ -276,11 +281,26 @@ sub request ($self, $request, %option) {
 
     croak 'request(): buffer_body cannot be combined with on_body'
         if defined($buffer_limit) && $callback{on_body};
+    croak 'request(): on_upgrade requires upgrade_to'
+        if $callback{on_upgrade} && !defined($upgrade_to);
+    croak 'request(): upgrade_to cannot be combined with buffer_body'
+        if defined($upgrade_to) && defined($buffer_limit);
+    croak 'request(): upgrade_to cannot be combined with on_body'
+        if defined($upgrade_to) && $callback{on_body};
     $callback{buffer_body} = $buffer_limit if defined $buffer_limit;
 
     my ($head, $body, $request_state) = _prepare_request(
         $request, defined($stream_body) ? 1 : 0,
     );
+
+    if (defined $upgrade_to) {
+        require Linux::Event::HTTP::_ClientUpgrade;
+        $upgrade_to = Linux::Event::HTTP::_ClientUpgrade->prepare_request(
+            $request, $upgrade_to, $request_state,
+        );
+        $callback{upgrade_to} = $upgrade_to;
+    }
+
     $request->_mark_committed;
 
     my $transaction = Linux::Event::HTTP::Transaction->_new(
@@ -296,6 +316,7 @@ sub request ($self, $request, %option) {
     $self->{_http_client_callbacks} = \%callback;
     $self->{_http_client_request_state} = $request_state;
     $self->{_http_client_response_state} = undef;
+    $self->{_http_client_pending_upgrade} = undef;
 
     my $wire = $head . $body;
     my ($accepted, $written);
@@ -484,6 +505,7 @@ sub _clear_active_transaction ($self) {
     $self->{_http_client_callbacks} = undef;
     $self->{_http_client_request_state} = undef;
     $self->{_http_client_response_state} = undef;
+    $self->{_http_client_pending_upgrade} = undef;
     return;
 }
 
@@ -718,10 +740,25 @@ sub _drive_http1 ($self) {
 
             if ($response->status >= 100 && $response->status < 200) {
                 if ($response->status == 101) {
-                    $self->_fail_active_transaction(
-                        'HTTP/1 101 Upgrade is not implemented by Client::Connection yet',
-                        1,
-                    );
+                    my $target = $self->{_http_client_callbacks}{upgrade_to};
+                    if (!defined $target) {
+                        $self->_fail_active_transaction(
+                            'HTTP/1 101 Upgrade requires upgrade_to', 1,
+                        );
+                        last;
+                    }
+
+                    my $scheduled = eval {
+                        require Linux::Event::HTTP::_ClientUpgrade;
+                        Linux::Event::HTTP::_ClientUpgrade->schedule(
+                            $self, $transaction, $response, $target,
+                        );
+                        1;
+                    };
+                    if (!$scheduled) {
+                        my $error = "$@";
+                        $self->_fail_active_transaction($error, 1);
+                    }
                     last;
                 }
 
@@ -808,6 +845,7 @@ sub _drive_http1 ($self) {
 sub on_data ($self, $bytes) {
     return if $self->is_closed;
     $self->{_http_client_input} .= $bytes;
+    return if $self->{_http_client_pending_upgrade};
     $self->_drive_http1;
     return;
 }
@@ -916,7 +954,9 @@ when it is absent, body bytes are drained and discarded rather than accumulated
 implicitly into the Response object. Explicit C<buffer_body> requests bounded
 whole-body accumulation using the same framing/consumption path.
 
-CONNECT tunnels and client Upgrade handoff remain later layers.
+HTTP/1.1 C<101 Switching Protocols> can hand the same live connection to another
+L<Linux::Event::IO::Sock::Stream> subclass with C<upgrade_to>. CONNECT tunnels
+remain a separate later layer.
 
 =head1 METHODS
 
@@ -951,10 +991,21 @@ coding. HTTP/1.0 streaming requires Content-Length; request bodies are never
 close-delimited. Scalar C<body> and C<stream_body> are mutually exclusive.
 
 C<on_response> runs once after the final response head is validated and before
-body delivery. C<on_informational> receives 1xx responses such as 100 Continue;
-101 Upgrade is not yet supported. C<on_body> receives decoded Content-Length,
-chunked, or close-delimited body bytes. C<on_complete> runs after the complete
-message boundary. C<on_error> reports terminal protocol or transport failure.
+body delivery. C<on_informational> receives non-switching 1xx responses such as
+100 Continue. C<on_body> receives decoded Content-Length, chunked, or
+close-delimited body bytes. C<on_complete> runs after the complete message
+boundary. C<on_error> reports terminal protocol or transport failure.
+
+C<upgrade_to =E<gt> $class> opts this request into HTTP/1.1 Upgrade handoff. The
+Request must be bodyless and must advertise C<Connection: Upgrade> plus at least
+one C<Upgrade> protocol. A valid C<101> must select a protocol offered by the
+Request, must contain C<Connection: Upgrade>, and cannot contain Content-Length
+or Transfer-Encoding. C<on_upgrade> receives C<($tx, $res, $connection)> after
+the HTTP Transaction completes and after the same live stream object has been
+transitioned to C<$class>. Any bytes already read after the C<101> head are
+preserved as input for the target protocol. C<on_complete> then runs for the
+completed HTTP Transaction. A bare C<101> without C<upgrade_to> is a protocol
+error and closes the HTTP connection.
 
 C<buffer_body =E<gt> $max_bytes> explicitly requests whole-body buffering with a
 positive byte limit. It cannot be combined with C<on_body>. The limit counts the
@@ -990,6 +1041,9 @@ C<_HTTP1::Chunked> decoder;
 
 =item * responses without a length or transfer coding are close-delimited and
 make the connection non-reusable.
+
+=item * a validated 101 response terminates HTTP framing and transitions the
+same live stream to the explicitly requested target protocol class.
 
 =back
 
