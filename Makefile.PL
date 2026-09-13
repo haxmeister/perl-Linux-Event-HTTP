@@ -43,10 +43,10 @@ WriteMakefile(
         'Test::More' => 0,
     },
     PREREQ_PM => {
-        'HTTP::CookieJar'    => '0.014',
-        'Linux::Event'       => '0.113',
-        'Uniform::HTTP::Auth' => '0.01',
-        'URI'                => 0,
+        'HTTP::CookieJar'     => '0.014',
+        'Linux::Event'        => '0.113',
+        'Uniform::HTTP::Auth' => '0.02',
+        'URI'                 => 0,
     },
     META_MERGE => {
         'meta-spec' => {
