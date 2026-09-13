@@ -4,7 +4,7 @@ use strict;
 use warnings;
 
 use Scalar::Util qw(blessed);
-use Uniform::HTTP::Auth 0.01 ();
+use Uniform::HTTP::Auth 0.02 ();
 
 sub validate_manager ($value, $where, $name) {
     return undef if !defined $value;
