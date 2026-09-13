@@ -6,104 +6,111 @@ Updated: 2026-09-13 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Current main baseline: `8070e6a182c11768904c6dd02330253a6b4ac1d6`
-- That baseline is the merge of PR #30, native Uniform::HTTP 0.02 message-contract conformance.
-- PR #29, client Uniform authentication integration, is also merged.
-- No active feature branch is required for the current baseline.
-- Linux::Event minimum: `0.113`
-- Linux::Event::HTTP remains `0.001 UNRELEASED`.
+- Release-candidate code commit: `a6273a739981d88ede641c23590c9137dcb6a110`
+- That commit performs the 0.001 release-readiness audit and fixes found issues.
+- PR #29 (Uniform authentication) and PR #30 (Uniform message conformance) are merged.
+- No active feature branch is required.
+- Linux::Event minimum: `0.113`.
+- Linux::Event::HTTP remains `0.001 UNRELEASED` until the actual release is authorized.
 
-## Uniform message contract
+## 0.001 release-readiness audit
 
-`Linux::Event::HTTP::Request` and `Linux::Event::HTTP::Response` now conform by
-behavior to the Uniform::HTTP 0.02 message contract without replacing the
-native/live classes and without adding inheritance.
+The audit covered public API/POD/docs consistency, dependency and PAUSE metadata,
+MANIFEST contents, CI/disttest coverage, benchmark diagnostics, stale pre-release
+wording, and the current Uniform::HTTP integration.
 
-Public message behavior includes:
+Release-candidate fixes in `a6273a739981d88ede641c23590c9137dcb6a110`:
 
-- `header_values($name)` always returns an array reference, including an empty
-  array reference when the field is absent;
-- `header($name,$value)` replaces all matching occurrences while retaining the
-  first occurrence position and using the caller-supplied field spelling;
-- `header_name($index)` / `header_value($index)` return undef beyond the end and
-  reject invalid indexes;
-- `has_buffered_body`, `is_mutable`, and `headers_are_lossless` capability
-  methods on both message types;
-- `target_is_exact` on Request;
-- no buffered body is distinct from an explicitly buffered empty body;
-- body setters require defined byte strings;
-- message version may be explicitly cleared to undef;
-- Response status is constrained to 100..599;
-- Response metadata/body setters consistently enforce the byte-string contract.
-
-Parsed native server Requests remain lazy XS-backed objects. They report
-`is_mutable == 0`, preserve exact header spelling/order/duplicates, and expose
-the same public Uniform-compatible methods. The native XSUB list behavior is
-kept behind the private `_header_values_list` path for HTTP executor hot paths.
-
-Request/Response remain transport-independent. Connection, Transaction,
-streaming body producer, retry, pool, Upgrade, and CONNECT state stay outside
-message objects.
-
-## Uniform authentication
-
-Authentication mechanics are supplied by the `Uniform-HTTP` distribution:
-
-- repository: `haxmeister/perl-Uniform-HTTP`
-- module: `Uniform::HTTP::Auth 0.02`
-
-`Linux::Event::HTTP::_ClientAuth` passes the actual
-`Linux::Event::HTTP::Request` message to Uniform 0.02 instead of reconstructing
-method/request-target/entity-body arguments. Bodyless Requests still provide an
-explicit empty entity body where needed; streaming producers remain outside the
-message buffer and remain non-replayable.
-
-Uniform owns authentication mechanics. Linux::Event::HTTP owns 401/407 receipt,
-protection-space selection, replayability, response draining, connection reuse,
-retry Transactions, and callback/Operation lifecycle.
+- add `Linux::Event::HTTP::Body::Stream` and
+  `Linux::Event::HTTP::Client::Operation` to generated META `provides`;
+- mark `_ClientConnect`, `_ClientUpgrade`, and `_ServerConnect` no_index along
+  with the existing private helper packages;
+- include the tracked Feersum, Go, and libh2o benchmark backends in MANIFEST so
+  the CPAN tarball contains the advertised comparison suite;
+- update Changes and architecture documentation from the old standalone
+  `Uniform::HTTP::Auth 0.01` wording to `Uniform::HTTP::Auth 0.02` from the
+  `Uniform-HTTP` distribution;
+- document the direct Uniform::HTTP 0.02 Request/Response behavioral contract and
+  the direct native Request handoff to Uniform authentication;
+- make the picohttpparser evaluation branch-neutral and replace the obsolete
+  public `http_version` name with `version`;
+- repair the transaction-lifecycle ladder after response output state moved from
+  Response into Transaction;
+- make the ladder's `bodyless` case run the real production
+  `Server::Connection` driver through a raw Listener instead of maintaining a
+  second copied bodyless driver;
+- bump the transaction-ladder benchmark contract to 7 and update stage
+  descriptions to the current lifecycle;
+- add transaction-ladder `--smoke` to regular latest-Perl CI so future internal
+  API drift is detected;
+- update pre-1.0 security support wording;
+- clean minor stale test/release wording while preserving the full 0.001 history.
 
 ## Validation
 
-PR #30 exact final head
-`59d900f4ccaa5aa23ca3866d1b8a704587d7ce3c` passed CI #427 / run
-`34788358803` across Perl 5.36, latest, and latest threaded. Latest also passed
-end-to-end smoke and distribution integrity.
+Push CI #430 / run `34790481247` on exact release-candidate code commit
+`a6273a739981d88ede641c23590c9137dcb6a110` is fully green:
 
-Earlier checkpoints also passed:
+- Perl 5.36 build and tests: success;
+- latest Perl build and tests: success;
+- latest threaded Perl build and tests: success;
+- latest end-to-end benchmark smoke: success;
+- latest transaction lifecycle diagnostic smoke: success;
+- latest `make disttest`: success.
 
-- executable conformance head `c4530551081fce199cca57b02fd31a1243ef8086`:
-  CI #424 / run `34784790047`;
-- documentation-aligned head `38f72adc488f99802718968c6515f8ee6d398b9b`:
-  CI #426 / run `34788300925`.
+The repaired transaction-lifecycle diagnostic therefore has executable coverage
+in ordinary CI rather than only the manual workflow-dispatch comparison job.
 
-Focused coverage includes:
+## Uniform integration baseline
 
-- updated Request/Response tests for the arrayref `header_values` contract;
-- exact replacement/order semantics;
-- body-buffer capability distinction;
-- mutability/lossless capability reporting;
-- Response 100..599 status validation;
-- `t/79-uniform-message-contract.t`, including an XS-parsed native Request.
+Messages:
+
+- Request and Response conform by behavior to the Uniform::HTTP 0.02 message
+  contract without inheritance or replacement;
+- parsed native server Requests remain lazy XS-backed and immutable;
+- executor hot paths retain private list-oriented header access while public
+  `header_values` returns an array reference.
+
+Authentication:
+
+- distribution/repository: `haxmeister/perl-Uniform-HTTP`;
+- module: `Uniform::HTTP::Auth 0.02`;
+- `_ClientAuth` passes the actual `Linux::Event::HTTP::Request` to Uniform;
+- Linux::Event::HTTP retains ownership of 401/407 receipt, replayability,
+  response draining, connection selection/reuse, retry Transactions, and
+  Operation/callback lifecycle.
+
+## External CPAN indexing caveat
+
+`Uniform-HTTP` 0.02 has been uploaded by the user, but CPAN mirror/index
+propagation is currently unhealthy. CI therefore first tries normal CPAN
+resolution and then falls back to the exact Uniform repository commit
+`b2b243957a8f82dfef6081431d7e5e6f84dc1b08`.
+
+This is not a Linux::Event::HTTP code defect, but it can cause installation
+friction if Linux::Event::HTTP is uploaded before standard CPAN clients can
+resolve `Uniform::HTTP::Auth 0.02`. Prefer waiting for the CPAN index to expose
+that dependency before the public 0.001 upload unless temporary installation
+friction is acceptable.
 
 ## Design constraints that remain fixed
 
 - Do not replace Request/Response with Uniform classes.
-- Do not add inheritance solely for Uniform interoperability; behavioral
-  conformance is the contract.
-- Do not add Uniform-specific state to the HTTP message objects.
+- Do not add inheritance solely for Uniform interoperability.
+- Do not add Uniform-specific transport/lifecycle state to message objects.
 - Do not convert native parsed Requests into Perl adapter objects.
-- Keep HTTP executor list-oriented header access private so the public arrayref
-  contract does not force avoidable hot-path allocation.
+- Keep HTTP executor list-oriented header access private for hot paths.
+- Linux::Event remains the only transport output queue.
 - Do not modify Linux::Event core from this Project unless explicitly requested.
 - Do not add CONNECT relay/proxy bridging to Transaction.
 
 ## Next action
 
-Perform the planned `0.001` release-readiness audit. In particular, reconcile
-remaining historical/release-note wording such as stale Uniform 0.01 references,
-review README/POD/docs against the actual public API, confirm MANIFEST and
-`disttest`, and verify that no unreleased experimental wording or stale branch
-references remain before setting the release version/date.
+The repository code is ready for the 0.001 release process. Keep
+`0.001 UNRELEASED` in Changes until the actual release is authorized. Before the
+CPAN upload, recheck whether `Uniform::HTTP::Auth 0.02` is visible through normal
+CPAN indexing; then stamp the release date, build the distribution, and create
+the tag/release as explicitly authorized.
 
 ## Branch policy
 
