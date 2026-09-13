@@ -26,9 +26,7 @@ use Linux::Event::HTTP::Server::Connection;
         push @{$self->data->{paired}},
             $transaction
             && $transaction->request == $request
-            && $transaction->response == $response
-            && $response->request == $request
-            && $response->connection == $self ? 1 : 0;
+            && $transaction->response == $response ? 1 : 0;
 
         $response->status(200);
         $response->header('Content-Type', 'text/plain');
@@ -138,11 +136,11 @@ is_deeply(
 ok($state->{write_status}[0], 'response body producer exposes Stream backpressure status');
 ok(
     $state->{responses}[0]->is_complete && $state->{responses}[1]->is_complete,
-    'each Response is complete when its transaction completes',
+    'each Response message body is complete when its transaction completes',
 );
 my $mutation_ok = eval { $state->{responses}[0]->status(201); 1 };
-ok(!$mutation_ok, 'completed Response metadata is immutable after output commit');
-like($@, qr/cannot change|already complete/, 'completed metadata rejection is clear');
+ok(!$mutation_ok, 'completed Response metadata is immutable after message commit');
+like($@, qr/cannot change/, 'completed metadata rejection is clear');
 ok($state->{eof}, 'Connection close request drains responses then ends stream');
 
 my $wire = $state->{response};
@@ -166,19 +164,29 @@ like(
     use Linux::Event::Kernel::Timer;
 
     sub on_request ($self, $request, $response) {
+        my $transaction = $self->transaction;
         $self->data->{request} = $request;
-        $self->data->{bound_response} = $response;
+        $self->data->{response_object} = $response;
+        $self->data->{transaction} = $transaction;
 
         Linux::Event::Kernel::Timer->new(
             loop  => $self->loop,
             after => 0.02,
-            data  => $response,
+            data  => {
+                connection  => $self,
+                transaction => $transaction,
+                response    => $response,
+            },
             on_timer => sub ($timer) {
-                my $response = $timer->data;
-                my $connection = $response->connection;
+                my $data = $timer->data;
+                my $connection = $data->{connection};
+                my $transaction = $data->{transaction};
+                my $response = $data->{response};
+
                 $connection->data->{paused_before_response}
                     = $connection->is_read_paused ? 1 : 0;
                 $response->body("later\n");
+                $transaction->send_response;
             },
         );
         return;
@@ -229,7 +237,7 @@ $loop->run;
 
 ok(
     $deferred->{paused_before_response},
-    'Connection pauses reads while its bound Response is pending',
+    'Connection pauses reads while its Response is pending',
 );
 is(
     $deferred->{request}->target,
@@ -237,18 +245,27 @@ is(
     'deferred callback retains stable Request object',
 );
 is(
-    $deferred->{bound_response}->request,
+    $deferred->{transaction}->request,
     $deferred->{request},
-    'deferred Response retains its paired Request',
+    'deferred Transaction retains its Request',
+);
+is(
+    $deferred->{transaction}->response,
+    $deferred->{response_object},
+    'deferred Transaction retains its Response',
 );
 ok(
-    $deferred->{bound_response}->is_complete,
-    'deferred Response records transaction completion',
+    $deferred->{response_object}->is_complete,
+    'deferred Response message records scalar body completion',
+);
+ok(
+    $deferred->{transaction}->is_complete,
+    'explicit send_response completes the deferred Transaction',
 );
 like(
     $deferred->{response},
     qr/Content-Length: 6\r\nConnection: close\r\n\r\nlater\n\z/s,
-    'Response body can be supplied from a later event',
+    'deferred Response body is sent explicitly through its Transaction',
 );
 
 my $removed_ok = eval {
