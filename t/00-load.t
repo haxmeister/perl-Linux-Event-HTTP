@@ -5,6 +5,7 @@ use warnings;
 use Test::More;
 
 use_ok('Linux::Event::HTTP');
+use_ok('Linux::Event::HTTP::Client');
 use_ok('Linux::Event::HTTP::Client::Connection');
 use_ok('Linux::Event::HTTP::Server');
 use_ok('Linux::Event::HTTP::Server::Connection');
@@ -65,5 +66,11 @@ ok(Linux::Event::HTTP::Client::Connection->can('request'),
     'client Connection starts HTTP Transactions');
 ok(Linux::Event::HTTP::Client::Connection->can('transaction'),
     'client Connection exposes its active Transaction');
+ok(Linux::Event::HTTP::Client->can('request'),
+    'Client exposes generic request method');
+for my $verb (qw(get head post put delete)) {
+    ok(Linux::Event::HTTP::Client->can($verb),
+        "Client exposes $verb convenience method");
+}
 
 done_testing;
