@@ -10,8 +10,8 @@ The design separates five responsibilities:
 - **Transport** - Linux::Event owns sockets, TLS, readiness, byte buffering,
   backpressure, deadlines, ordered output queues, and event dispatch.
 - **Protocol execution** - Client::Connection and Server::Connection own HTTP/1
-  parsing, serialization, framing, ordering, persistence, and movement of bytes
-  across Linux::Event transports.
+  parsing, serialization, framing, ordering, persistence, protocol handoff, and
+  movement of bytes across Linux::Event transports.
 - **Messages** - Request and Response represent HTTP messages independent of
   whether they were created or received by a client or server.
 - **Exchange lifecycle** - Transaction represents exactly one Request/Response
@@ -120,6 +120,10 @@ controller performs protocol execution.
 A redirect is another HTTP exchange and therefore another Transaction. This is
 an invariant, not an implementation detail.
 
+A successful client or server Upgrade still completes the HTTP Transaction
+before the live transport belongs to the next protocol. Protocol handoff is an
+executor/transport transition, not a new kind of HTTP message.
+
 ## Client::Operation model
 
 High-level Client methods return Client::Operation rather than pretending a
@@ -184,6 +188,7 @@ Client
     Host synthesis
     TLS transport creation
     connection selection/reuse
+    protocol-handoff policy
     convenience verbs
 
 Client::Operation
@@ -198,6 +203,7 @@ Client::Connection
     Request serialization
     Response parsing/framing
     persistence/reuse eligibility
+    validated 101 protocol handoff
 
 Transaction
     exactly one Request/Response exchange
@@ -230,7 +236,9 @@ The current connection-reuse policy is deliberately bounded:
 - concurrent same-origin operations may create additional connections;
 - when multiple connections later become idle for one origin, one is retained
   and extras are closed;
-- each redirect hop independently selects a connection for its target origin.
+- each redirect hop independently selects a connection for its target origin;
+- a connection transitioned to another protocol is never returned to the HTTP
+  idle pool.
 
 ## Client URL and redirect policy
 
@@ -274,6 +282,11 @@ Cross-origin redirects additionally remove Authorization and Cookie.
 Proxy-Authorization is never propagated automatically. The Client does not yet
 implement a cookie jar or authentication manager; this is defensive forwarding
 policy for caller-supplied headers.
+
+When an operation is explicitly waiting for HTTP Upgrade, a redirect hop also
+regenerates `Connection: Upgrade` and the originally offered `Upgrade` protocol
+fields. The Client does not forward a previous hop's connection-specific header
+verbatim.
 
 `on_response`, `on_body`, and `on_complete` are final-response callbacks.
 Intermediate redirect responses are consumed to their actual message boundary
@@ -400,6 +413,8 @@ Message, Transaction, and Operation completion are distinct:
 - `Transaction->is_complete` means one HTTP exchange succeeded;
 - `Client::Operation->is_complete` means the overall high-level client action,
   including followed redirects, reached its final successful Transaction;
+- for a successful client Upgrade, the final 101 Response and Transaction are
+  complete and the Operation is marked complete before `on_upgrade` runs;
 - cancellation and errors are separate terminal states.
 
 ## Client HTTP/1 response framing
@@ -407,14 +422,16 @@ Message, Transaction, and Operation completion are distinct:
 Client::Connection applies framing independently from application handling:
 
 - HEAD, 204, and 304 have no delivered body;
-- informational 1xx responses may precede the final Response;
+- non-switching informational 1xx responses may precede the final Response;
 - Content-Length is consumed to the exact declared boundary;
 - HTTP/1.1 chunked transfer coding is decoded with the existing native decoder;
 - a response without Content-Length or Transfer-Encoding is close-delimited and
   makes the connection non-reusable;
 - Transfer-Encoding plus Content-Length is rejected as ambiguous;
 - only plain `chunked` Transfer-Encoding is currently supported;
-- 101 client Upgrade and CONNECT tunneling remain later handoff work.
+- a validated `101 Switching Protocols` completes HTTP framing and transitions
+  the same live stream to the explicitly requested target class;
+- CONNECT tunneling remains separate work.
 
 Cancelling an active client Transaction closes its HTTP/1 connection because an
 unfinished response cannot generally be skipped safely while preserving stream
@@ -465,7 +482,8 @@ adding another native fast path.
 
 Server::Connection owns HTTP/1 server ordering, parsing, response output, and
 Upgrade handoff. Client::Connection owns exactly one active client Transaction,
-Request serialization, Response framing, and reuse eligibility.
+Request serialization, Response framing, reuse eligibility, and validated 101
+handoff.
 
 The high-level Client normally creates Client::Connection objects. Direct
 Client::Connection use is appropriate when destination acquisition and redirect
@@ -492,8 +510,39 @@ The 101 response is validated and queued, the HTTP Transaction completes, and
 Linux::Event `transition_to()` hands the same live stream object to the next
 protocol class while preserving transport identity/state.
 
-Client-side 101 handoff is not implemented here. WebSocket handshake/frame
-semantics belong in a separate `Linux::Event::WebSocket` distribution.
+Client-side Upgrade is an explicit Client/Client::Connection policy layered on
+the same Linux::Event transport primitive:
+
+```perl
+my $operation = $client->get(
+    $url,
+    headers => [
+        [ Connection => 'Upgrade' ],
+        [ Upgrade    => 'my-protocol' ],
+    ],
+    upgrade_to => 'MyProtocolConnection',
+    on_upgrade => sub ($op, $tx, $res, $connection) {
+        ...;
+    },
+);
+```
+
+The Request must be bodyless HTTP/1.1 and advertise `Connection: Upgrade` plus
+at least one Upgrade protocol. A successful 101 must use HTTP/1.1, contain
+`Connection: Upgrade`, contain no Content-Length or Transfer-Encoding, and
+select only protocols offered by the Request.
+
+The 101 Response and HTTP Transaction complete before handoff callback delivery.
+Linux::Event `transition_to()` reuses the same live stream object and preserves
+bytes already read after the response head as target-protocol input. The
+transitioned stream is no longer an HTTP connection and is never returned to the
+Client's idle HTTP pool. Redirect hops may precede the 101; Upgrade handshake
+fields are regenerated on each hop.
+
+An unexpected bare 101 without `upgrade_to` is a protocol error. CONNECT is a
+separate tunnel operation and remains future work. WebSocket handshake/frame
+semantics belong in a separate `Linux::Event::WebSocket` distribution that can
+use the client/server handoff primitives here.
 
 ## Performance policy
 
@@ -523,19 +572,20 @@ The current foundation includes:
    Upgrade.
 4. HTTP/1 Client::Connection with scalar/streaming Request serialization,
    strict Response parsing, informational responses, incremental
-   Content-Length/chunked/close body delivery, cancellation, and sequential
-   reuse.
+   Content-Length/chunked/close body delivery, cancellation, sequential reuse,
+   and validated 101 protocol handoff.
 5. High-level Client::Operation with redirect chains of distinct Transactions,
-   bounded redirect policy, cross-origin sensitive-header stripping, and safe
-   refusal to replay non-rewindable streaming Request bodies.
+   bounded redirect policy, cross-origin sensitive-header stripping, safe
+   refusal to replay non-rewindable streaming Request bodies, and client Upgrade
+   lifecycle integration.
 6. High-level Client URL parsing, HTTP/HTTPS destination acquisition, bounded
-   same-origin idle reuse, common convenience verbs, and explicit bounded
-   whole-response buffering.
+   same-origin idle reuse, common convenience verbs, explicit bounded
+   whole-response buffering, and redirect-to-Upgrade handshake regeneration.
 7. One consolidated private `_HTTP1` native extension and no duplicate transport
    queues.
 
 Later client work includes richer pool policy, proxy/auth/cookie conveniences,
-CONNECT/client Upgrade, and measurement-driven parser optimization.
+CONNECT, and measurement-driven parser optimization.
 
 HTTP/2 is future protocol work. WebSocket remains a separate protocol
 distribution.
