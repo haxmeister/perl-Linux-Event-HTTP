@@ -47,6 +47,11 @@ jobs:
           cpanm --notest 'Linux::Event@0.113' || \
             cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v.113.tar.gz
 
+      - name: Install Uniform::HTTP::Auth release dependency
+        run: |
+          cpanm --notest 'Uniform::HTTP::Auth@0.01' || \
+            cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP-Auth/archive/d5c555d85711b34127fd134e1c512f98860e8e32.tar.gz
+
       - name: Install Perl dependencies
         run: cpanm --notest --installdeps .
 
@@ -95,6 +100,8 @@ jobs:
         run: |
           cpanm --notest 'Linux::Event@0.113' || \
             cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v.113.tar.gz
+          cpanm --notest 'Uniform::HTTP::Auth@0.01' || \
+            cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP-Auth/archive/d5c555d85711b34127fd134e1c512f98860e8e32.tar.gz
           cpanm --notest --installdeps .
           cpanm --notest Mojolicious Feersum
           python3 -m venv .venv
