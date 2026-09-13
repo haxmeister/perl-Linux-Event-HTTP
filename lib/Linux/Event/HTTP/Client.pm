@@ -138,6 +138,12 @@ sub _validate_buffer_body ($value) {
     return "$value";
 }
 
+sub _validate_stream_body ($value) {
+    croak 'request(): stream_body must be a hash reference'
+        if ref($value) ne 'HASH';
+    return { %$value };
+}
+
 sub _track_connection ($self, $connection) {
     my $id = refaddr($connection);
     $self->{connections}{$id} = $connection;
@@ -206,10 +212,17 @@ sub request ($self, $method, $url, %option) {
     my $version = delete($option{version}) // '1.1';
     my $has_body = exists $option{body};
     my $body = delete $option{body};
+    my $has_stream_body = exists $option{stream_body};
+    my $stream_body = $has_stream_body
+        ? _validate_stream_body(delete $option{stream_body})
+        : undef;
     my $has_buffer_body = exists $option{buffer_body};
     my $buffer_body = $has_buffer_body
         ? _validate_buffer_body(delete $option{buffer_body})
         : undef;
+
+    croak 'request(): body and stream_body are mutually exclusive'
+        if $has_body && $has_stream_body;
 
     my %callback;
     for my $name (keys %CALLBACK) {
@@ -249,6 +262,7 @@ sub request ($self, $method, $url, %option) {
             return;
         };
     }
+    $connection_callback{stream_body} = $stream_body if $has_stream_body;
     $connection_callback{buffer_body} = $buffer_body if $has_buffer_body;
 
     my $user_complete = $callback{on_complete};
@@ -333,17 +347,21 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
 
     my $client = Linux::Event::HTTP::Client->new(loop => $loop);
 
-    $client->get(
-        'https://example.com/config.json',
-        buffer_body => 1_048_576,
-        on_complete => sub ($tx) {
-            my $bytes = $tx->response->body;
-            ...;
+    my $tx = $client->post(
+        'https://example.com/upload',
+        stream_body => {
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
         },
+        on_complete => sub ($tx) { ... },
         on_error => sub ($tx, $error) {
             warn $error;
         },
     );
+
+    my $body = $tx->request_body;
+    $body->write($bytes);
+    $body->complete;
 
 =head1 DESCRIPTION
 
@@ -352,10 +370,11 @@ owns URL parsing, destination selection, connection creation, HTTPS transport
 policy, and a small bounded reuse policy. Client methods return
 L<Linux::Event::HTTP::Transaction>.
 
-Response handling remains incremental-first. C<on_body> consumes body chunks.
-Without C<on_body>, body bytes are drained and discarded. Explicit
-C<buffer_body =E<gt> $max_bytes> requests bounded whole-body buffering; there is
-no implicit unbounded buffering.
+Outgoing Request bodies may be complete scalar bodies or explicit streaming
+producers owned by the Transaction. Incoming Response handling remains
+incremental-first. C<on_body> consumes body chunks. Without C<on_body>, body
+bytes are drained and discarded. Explicit C<buffer_body =E<gt> $max_bytes>
+requests bounded whole-body buffering; there is no implicit unbounded buffering.
 
 =head1 METHODS
 
@@ -364,9 +383,11 @@ no implicit unbounded buffering.
     my $tx = $client->request(
         'POST',
         'https://example.com/api/items',
-        body => $json,
+        stream_body => {
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
+        },
         buffer_body => 1_048_576,
-        on_response => sub ($tx, $res) { ... },
         on_complete => sub ($tx) {
             my $bytes = $tx->response->body;
             ...;
@@ -378,6 +399,13 @@ Builds the canonical Request, obtains or creates a connection for the URL
 origin, starts one Transaction, and returns it immediately. Only absolute
 C<http> and C<https> URLs are accepted. The URL path/query becomes the Request
 target and Host is synthesized when absent.
+
+C<body> supplies a complete scalar Request body. C<stream_body =E<gt> { ... }>
+selects incremental body production instead; the two are mutually exclusive.
+The stream options are C<on_drain> and C<on_cancel>. The producer is available
+from C<< $tx->request_body >>. A supplied Content-Length is enforced exactly;
+otherwise HTTP/1.1 uses chunked transfer coding automatically. HTTP/1.0
+streaming requires Content-Length.
 
 C<buffer_body =E<gt> $max_bytes> must be a positive integer byte limit and
 cannot be combined with C<on_body>. The limit counts the same body bytes that
@@ -423,6 +451,7 @@ protocol.
 =head1 SEE ALSO
 
 L<Linux::Event::HTTP::Client::Connection>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Transaction>.
+L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Transaction>,
+L<Linux::Event::HTTP::Body::Stream>.
 
 =cut
