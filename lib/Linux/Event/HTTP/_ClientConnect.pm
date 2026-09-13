@@ -62,15 +62,15 @@ sub prepare_request ($class, $request, $target, $request_state) {
     croak 'request(): CONNECT Request must not contain a scalar body'
         if $request->_has_scalar_body;
 
-    my @length = $request->header_values('Content-Length');
+    my @length = $request->_header_values_list('Content-Length');
     croak 'request(): CONNECT Request must not contain Content-Length'
         if @length;
-    my @transfer = $request->header_values('Transfer-Encoding');
+    my @transfer = $request->_header_values_list('Transfer-Encoding');
     croak 'request(): CONNECT Request must not contain Transfer-Encoding'
         if @transfer;
 
     my $authority = _authority($request->target);
-    my @host = $request->header_values('Host');
+    my @host = $request->_header_values_list('Host');
     croak 'request(): CONNECT requires exactly one Host field'
         if @host != 1;
     my $host = _trim("$host[0]");

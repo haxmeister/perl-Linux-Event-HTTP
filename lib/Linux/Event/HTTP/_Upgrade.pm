@@ -89,18 +89,18 @@ sub schedule ($class, $conn, $transaction, $target) {
         || ($req->_http1_body_mode eq 'content-length'
             && ($req->content_length // '0') ne '0');
 
-    my @request_connection = $req->header_values('Connection');
+    my @request_connection = $req->_header_values_list('Connection');
     croak 'upgrade(): request Connection field must contain Upgrade'
         if !_connection_has(\@request_connection, 'upgrade');
     croak 'upgrade(): request cannot combine Connection: close with Upgrade'
         if _connection_has(\@request_connection, 'close')
         || !$req->_http1_keep_alive;
 
-    my @offered = _tokens('request Upgrade', $req->header_values('Upgrade'));
+    my @offered = _tokens('request Upgrade', $req->_header_values_list('Upgrade'));
     croak 'upgrade(): request must contain an Upgrade field' if !@offered;
 
     my @selected = _tokens(
-        'response Upgrade', $response->header_values('Upgrade'),
+        'response Upgrade', $response->_header_values_list('Upgrade'),
     );
     croak 'upgrade(): response must select at least one Upgrade protocol'
         if !@selected;
@@ -111,11 +111,11 @@ sub schedule ($class, $conn, $transaction, $target) {
     }
 
     croak 'upgrade(): response cannot contain Content-Length'
-        if $response->header_values('Content-Length');
+        if $response->_header_values_list('Content-Length');
     croak 'upgrade(): response cannot contain Transfer-Encoding'
-        if $response->header_values('Transfer-Encoding');
+        if $response->_header_values_list('Transfer-Encoding');
 
-    my @response_connection = $response->header_values('Connection');
+    my @response_connection = $response->_header_values_list('Connection');
     if (@response_connection) {
         croak 'upgrade(): response Connection field must contain Upgrade'
             if !_connection_has(\@response_connection, 'upgrade');

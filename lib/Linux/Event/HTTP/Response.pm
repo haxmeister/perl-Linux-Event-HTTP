@@ -12,6 +12,17 @@ our $VERSION = '0.001';
 
 my $EMPTY_HEADERS = [];
 
+sub _byte_string ($operation, $value) {
+    die "$operation(): value must be a defined scalar byte string"
+        if !defined($value) || ref($value);
+    my $bytes = "$value";
+    if (utf8::is_utf8($bytes)) {
+        die "$operation(): value contains wide characters; encode it to bytes first"
+            if !utf8::downgrade($bytes, 1);
+    }
+    return $bytes;
+}
+
 sub new ($class, %args) {
     my $status  = delete($args{status}) // 200;
     my $reason  = delete $args{reason};
@@ -24,13 +35,13 @@ sub new ($class, %args) {
         if %args;
 
     _validate_status($status);
-    _validate_reason($reason) if defined $reason;
-    _validate_version($version);
+    $reason = _validate_reason($reason) if defined $reason;
+    $version = _validate_version($version);
 
     my $self = bless {
         status    => 0 + $status,
         reason    => $reason,
-        version   => "$version",
+        version   => $version,
         headers   => $EMPTY_HEADERS,
         committed => 0,
         complete  => 0,
@@ -58,10 +69,13 @@ sub _new ($class, %args) {
 }
 
 sub is_complete ($self) { !!$self->{complete} }
+sub is_mutable ($self) { $self->{committed} ? 0 : 1 }
+sub headers_are_lossless ($self) { 1 }
+sub has_buffered_body ($self) { ($self->{body_kind} // '') eq 'scalar' ? 1 : 0 }
 
 sub _assert_mutable ($self) {
     die 'response metadata cannot change after message commit'
-        if $self->{committed};
+        if !$self->is_mutable;
     return;
 }
 
@@ -80,8 +94,7 @@ sub reason ($self, @args) {
 
     die 'reason accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
-    _validate_reason($args[0]) if defined $args[0];
-    $self->{reason} = $args[0];
+    $self->{reason} = defined($args[0]) ? _validate_reason($args[0]) : undef;
     return $self;
 }
 
@@ -90,77 +103,103 @@ sub version ($self, @args) {
 
     die 'version accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
-    _validate_version($args[0]);
-    $self->{version} = "$args[0]";
+    if (!defined $args[0]) {
+        $self->{version} = undef;
+        return $self;
+    }
+    $self->{version} = _validate_version($args[0]);
     return $self;
 }
 
 sub header ($self, $name, @args) {
-    _validate_name($name);
+    $name = _validate_name($name);
 
     if (!@args) {
+        my $wanted = lc $name;
         for my $pair (@{$self->{headers}}) {
-            return $pair->[1] if lc($pair->[0]) eq lc($name);
+            return $pair->[1] if lc($pair->[0]) eq $wanted;
         }
         return undef;
     }
 
     die 'header setter accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
-    _validate_value($args[0]);
+    my $value = _validate_value($args[0]);
+    my $wanted = lc $name;
+    my @headers;
+    my $inserted = 0;
 
-    my @kept = grep { lc($_->[0]) ne lc($name) } @{$self->{headers}};
-    push @kept, [ "$name", "$args[0]" ];
-    $self->{headers} = \@kept;
+    for my $pair (@{$self->{headers}}) {
+        if (lc($pair->[0]) eq $wanted) {
+            if (!$inserted) {
+                push @headers, [ $name, $value ];
+                $inserted = 1;
+            }
+            next;
+        }
+        push @headers, [ @$pair ];
+    }
+    push @headers, [ $name, $value ] if !$inserted;
+    $self->{headers} = \@headers;
 
     return $self;
 }
 
 sub add_header ($self, $name, $value) {
     $self->_assert_mutable;
-    _validate_name($name);
-    _validate_value($value);
+    $name = _validate_name($name);
+    $value = _validate_value($value);
     $self->{headers} = []
         if refaddr($self->{headers}) == refaddr($EMPTY_HEADERS);
-    push @{$self->{headers}}, [ "$name", "$value" ];
+    push @{$self->{headers}}, [ $name, $value ];
     return $self;
 }
 
 sub remove_header ($self, $name) {
     $self->_assert_mutable;
-    _validate_name($name);
+    $name = _validate_name($name);
     my $wanted = lc $name;
     my @kept = grep { lc($_->[0]) ne $wanted } @{$self->{headers}};
     $self->{headers} = \@kept;
     return $self;
 }
 
-sub header_values ($self, $name) {
-    _validate_name($name);
+sub _header_values_list ($self, $name) {
+    $name = _validate_name($name);
     my $wanted = lc $name;
     return map { $_->[1] }
         grep { lc($_->[0]) eq $wanted }
         @{$self->{headers}};
 }
 
+sub header_values ($self, $name) {
+    return [ $self->_header_values_list($name) ];
+}
+
 sub header_count ($self) {
     return scalar @{$self->{headers}};
 }
 
+sub _validate_header_index ($index) {
+    die 'header index must be a non-negative integer'
+        if !defined($index) || ref($index) || "$index" !~ /\A[0-9]+\z/;
+    return 0 + $index;
+}
+
 sub header_name ($self, $index) {
-    die 'header index out of range'
-        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
+    $index = _validate_header_index($index);
+    return undef if $index >= @{$self->{headers}};
     return $self->{headers}[$index][0];
 }
 
 sub header_value ($self, $index) {
-    die 'header index out of range'
-        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
+    $index = _validate_header_index($index);
+    return undef if $index >= @{$self->{headers}};
     return $self->{headers}[$index][1];
 }
 
 sub content_length ($self) {
-    my @values = $self->header_values('Content-Length');
+    my @values = $self->_header_values_list('Content-Length');
     return undef if !@values;
     die 'response must not contain multiple Content-Length fields' if @values != 1;
     die 'response Content-Length must be a decimal number'
@@ -169,9 +208,10 @@ sub content_length ($self) {
 }
 
 sub _body_bytes ($operation, $body) {
-    die "$operation(): body must be a scalar byte string" if ref($body);
+    die "$operation(): body must be a defined scalar byte string"
+        if !defined($body) || ref($body);
 
-    my $bytes = defined($body) ? "$body" : '';
+    my $bytes = "$body";
     if (utf8::is_utf8($bytes)) {
         die "$operation(): body contains wide characters; encode it to bytes first"
             if !utf8::downgrade($bytes, 1);
@@ -217,7 +257,7 @@ sub _begin_stream_body ($self) {
 }
 
 sub _has_scalar_body ($self) {
-    return ($self->{body_kind} // '') eq 'scalar';
+    return $self->has_buffered_body;
 }
 
 sub _has_incremental_body ($self) {
@@ -248,35 +288,37 @@ sub _mark_incomplete ($self) {
 }
 
 sub _validate_status ($status) {
-    die 'response status must be an integer between 100 and 999'
-        if !defined($status) || "$status" !~ /\A[0-9]{3}\z/
-        || $status < 100 || $status > 999;
+    die 'response status must be an integer between 100 and 599'
+        if !defined($status) || ref($status) || "$status" !~ /\A[0-9]{3}\z/
+        || $status < 100 || $status > 599;
 }
 
 sub _validate_reason ($reason) {
+    my $bytes = _byte_string('reason', $reason);
     die 'response reason phrase contains invalid control characters'
-        if $reason =~ /[\x00-\x08\x0a-\x1f\x7f]/;
+        if $bytes =~ /[\x00-\x08\x0a-\x1f\x7f]/;
+    return $bytes;
 }
 
 sub _validate_version ($version) {
-    die 'HTTP version is required' if !defined($version) || ref($version);
-    die 'invalid HTTP version' if "$version" !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
+    my $bytes = _byte_string('version', $version);
+    die 'invalid HTTP version' if $bytes !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
+    return $bytes;
 }
 
 sub _validate_name ($name) {
-    die 'response header field name is required'
-        if !defined($name) || $name eq '';
-
+    my $bytes = _byte_string('response header field name', $name);
+    die 'response header field name is required' if $bytes eq '';
     die 'invalid response header field name'
-        if $name !~ /\A[!#\$%&'*+\-.^_`|~0-9A-Za-z]+\z/;
+        if $bytes !~ /\A[!#\$%&'*+\-.^_`|~0-9A-Za-z]+\z/;
+    return $bytes;
 }
 
 sub _validate_value ($value) {
-    die 'response header field value must be defined'
-        if !defined $value;
-
+    my $bytes = _byte_string('response header field value', $value);
     die 'response header field value contains invalid control characters'
-        if $value =~ /[\x00-\x08\x0a-\x1f\x7f]/;
+        if $bytes =~ /[\x00-\x08\x0a-\x1f\x7f]/;
+    return $bytes;
 }
 
 1;
@@ -312,6 +354,12 @@ a socket, transaction, connection, or writable transport handle. The same
 message class is used for locally constructed outgoing responses and parsed
 incoming client responses.
 
+Its public message API conforms directly to the C<Uniform::HTTP> 0.02 message
+contract by behavior without inheriting from a Uniform class. Duplicate fields,
+field order, original field-name spelling, buffered-body state, completeness,
+and mutability are reported explicitly while transport and Transaction state
+remain outside the message.
+
 A Response owns status, reason, version, headers, complete scalar-body data, and
 message completion state. It does not retain its peer Request or the Connection
 that happens to carry it. Exchange lifecycle, output progress, cancellation,
@@ -339,20 +387,23 @@ value]> pairs. C<body> is an optional complete scalar byte body.
 
 =head2 status
 
-Gets or sets the response status code before message commit.
+Gets or sets an HTTP response status from 100 through 599 before message commit.
 
 =head2 reason
 
-Gets or sets the optional HTTP/1 reason phrase before message commit.
+Gets or sets the optional HTTP/1 reason phrase before message commit. Passing
+C<undef> clears it; no standard reason phrase is synthesized.
 
 =head2 version
 
-Gets or sets the HTTP version before message commit.
+Gets or sets the HTTP version before message commit. Passing C<undef> clears the
+represented version; an HTTP executor will reject an unset version when needed.
 
 =head2 header
 
 Gets the first matching field value. The setter form replaces all fields of the
-same ASCII case-insensitive name.
+same ASCII case-insensitive name with one field at the position of the first
+occurrence, or appends it when absent.
 
 =head2 add_header
 
@@ -364,12 +415,20 @@ Removes all fields with the supplied ASCII case-insensitive name.
 
 =head2 header_values
 
-Returns all matching values in message order.
+Returns an array reference containing all matching values in message order. An
+absent field returns an empty array reference. Values are never implicitly
+comma-joined.
 
 =head2 header_count, header_name, header_value
 
 Provide exact indexed access to fields in message order while preserving the
-original field names.
+original field names. A non-negative index beyond the end returns C<undef>;
+negative and non-integer indexes are programmer errors.
+
+=head2 headers_are_lossless
+
+Returns true because duplicate occurrences, inter-field order, and original
+field-name spelling are retained.
 
 =head2 content_length
 
@@ -380,11 +439,17 @@ Returns the declared Content-Length as an integer, or undef when absent.
 Gets or sets the complete scalar byte body. Setting it is available only while a
 locally constructed Response is mutable and declares that its message body is
 complete. Incremental output is selected through the owning Transaction rather
-than through the Response message.
+than through the Response message. Passing C<undef> is an error; an explicit
+empty body is C<''>.
 
 For a received client Response, the getter returns the complete body only when
 the client was explicitly asked to buffer it within a bounded limit. Otherwise
 received body bytes remain incremental and C<body> returns undef.
+
+=head2 has_buffered_body
+
+Returns true only when a complete scalar body buffer is locally available,
+including an explicit empty buffer.
 
 =head2 is_complete
 
@@ -392,8 +457,14 @@ Returns whether the complete HTTP message body is known or its final boundary
 has been reached. This is deliberately independent of whether an outgoing
 message has started or finished writing to a transport.
 
+=head2 is_mutable
+
+Returns true until the Response metadata is committed to protocol execution and
+false afterward. Mutators throw once the Response is committed.
+
 =head1 SEE ALSO
 
-L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Transaction>.
+L<Uniform::HTTP>, L<Linux::Event::HTTP::Request>,
+L<Linux::Event::HTTP::Transaction>.
 
 =cut

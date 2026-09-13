@@ -53,8 +53,9 @@ sub _is_native ($self) {
 }
 
 sub _byte_string ($operation, $value) {
-    die "$operation(): value must be a scalar byte string" if ref($value);
-    my $bytes = defined($value) ? "$value" : '';
+    die "$operation(): value must be a defined scalar byte string"
+        if !defined($value) || ref($value);
+    my $bytes = "$value";
     if (utf8::is_utf8($bytes)) {
         die "$operation(): value contains wide characters; encode it to bytes first"
             if !utf8::downgrade($bytes, 1);
@@ -76,8 +77,9 @@ sub _validate_target ($target) {
 }
 
 sub _validate_version ($version) {
-    die 'HTTP version is required' if !defined($version) || ref($version);
-    die 'invalid HTTP version' if "$version" !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
+    die 'invalid HTTP version'
+        if !defined($version) || ref($version)
+        || "$version" !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
 }
 
 sub _validate_name ($name) {
@@ -92,6 +94,12 @@ sub _validate_value ($value) {
     die 'header field value contains invalid control characters'
         if $bytes =~ /[\x00-\x08\x0a-\x1f\x7f]/;
     return $bytes;
+}
+
+sub _validate_header_index ($index) {
+    die 'header index must be a non-negative integer'
+        if !defined($index) || ref($index) || "$index" !~ /\A[0-9]+\z/;
+    return 0 + $index;
 }
 
 sub _assert_mutable ($self) {
@@ -164,6 +172,10 @@ sub target ($self, @args) {
     return $self;
 }
 
+sub target_is_exact ($self) {
+    return 1;
+}
+
 sub version ($self, @args) {
     if (_is_native($self)) {
         die 'received request metadata is read-only' if @args;
@@ -172,6 +184,10 @@ sub version ($self, @args) {
     return $self->{version} if !@args;
     die 'version accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
+    if (!defined $args[0]) {
+        $self->{version} = undef;
+        return $self;
+    }
     _validate_version($args[0]);
     $self->{version} = "$args[0]";
     return $self;
@@ -196,9 +212,20 @@ sub header ($self, $name, @args) {
     $self->_assert_mutable;
     my $value = _validate_value($args[0]);
     my $wanted = lc $name;
-    my @kept = grep { lc($_->[0]) ne $wanted } @{$self->{headers}};
-    push @kept, [ "$name", $value ];
-    $self->{headers} = \@kept;
+    my @headers;
+    my $inserted = 0;
+    for my $pair (@{$self->{headers}}) {
+        if (lc($pair->[0]) eq $wanted) {
+            if (!$inserted) {
+                push @headers, [ "$name", $value ];
+                $inserted = 1;
+            }
+            next;
+        }
+        push @headers, [ @$pair ];
+    }
+    push @headers, [ "$name", $value ] if !$inserted;
+    $self->{headers} = \@headers;
     return $self;
 }
 
@@ -218,7 +245,7 @@ sub remove_header ($self, $name) {
     return $self;
 }
 
-sub header_values ($self, $name) {
+sub _header_values_list ($self, $name) {
     _validate_name($name);
     return $NATIVE_HEADER_VALUES->($self, $name) if _is_native($self);
     my $wanted = lc $name;
@@ -227,23 +254,31 @@ sub header_values ($self, $name) {
         @{$self->{headers}};
 }
 
+sub header_values ($self, $name) {
+    return [ $self->_header_values_list($name) ];
+}
+
 sub header_count ($self) {
     return $NATIVE_HEADER_COUNT->($self) if _is_native($self);
     return scalar @{$self->{headers}};
 }
 
 sub header_name ($self, $index) {
+    $index = _validate_header_index($index);
+    return undef if $index >= $self->header_count;
     return $NATIVE_HEADER_NAME->($self, $index) if _is_native($self);
-    die 'header index out of range'
-        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
     return $self->{headers}[$index][0];
 }
 
 sub header_value ($self, $index) {
+    $index = _validate_header_index($index);
+    return undef if $index >= $self->header_count;
     return $NATIVE_HEADER_VALUE->($self, $index) if _is_native($self);
-    die 'header index out of range'
-        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
     return $self->{headers}[$index][1];
+}
+
+sub headers_are_lossless ($self) {
+    return 1;
 }
 
 sub _parse_content_length_values (@values) {
@@ -266,7 +301,7 @@ sub _parse_content_length_values (@values) {
 
 sub content_length ($self) {
     return $NATIVE_CONTENT_LENGTH->($self) if _is_native($self);
-    return _parse_content_length_values($self->header_values('Content-Length'));
+    return _parse_content_length_values($self->_header_values_list('Content-Length'));
 }
 
 sub body ($self, @args) {
@@ -286,12 +321,22 @@ sub body ($self, @args) {
     return $self;
 }
 
+sub has_buffered_body ($self) {
+    return 0 if _is_native($self);
+    return ($self->{body_kind} // '') eq 'scalar' ? 1 : 0;
+}
+
 sub is_complete ($self) {
     if (_is_native($self)) {
         return $NATIVE_COMPLETE{$self} if exists $NATIVE_COMPLETE{$self};
         return $NATIVE_BODY_MODE->($self) eq 'none' ? 1 : 0;
     }
     return !!$self->{complete};
+}
+
+sub is_mutable ($self) {
+    return 0 if _is_native($self);
+    return $self->{committed} ? 0 : 1;
 }
 
 sub _begin_stream_body ($self) {
@@ -306,8 +351,7 @@ sub _begin_stream_body ($self) {
 }
 
 sub _has_scalar_body ($self) {
-    return 0 if _is_native($self);
-    return ($self->{body_kind} // '') eq 'scalar';
+    return $self->has_buffered_body;
 }
 
 sub _has_incremental_body ($self) {
@@ -384,6 +428,12 @@ them for transmission. Parsed incoming requests expose committed, read-only
 metadata. HTTP/1 parser state remains native and lazy: method, target, and
 header strings are materialized as Perl scalars only when requested.
 
+The public message API conforms directly to the C<Uniform::HTTP> 0.02 message
+contract by behavior; it does not inherit from a Uniform class. Duplicate header
+occurrences, inter-field order, original field-name spelling, and the exact
+request-target are preserved. Connection, Transaction, streaming, retry, and
+protocol-handoff state remain outside the Request.
+
 The Request does not own a socket or a transaction. Incremental body transfer
 belongs to the transaction/connection layer. C<body> is only the convenience
 representation for a complete scalar body; incoming bodies are not implicitly
@@ -408,10 +458,16 @@ message is committed.
 Gets the request target exactly as it appears in the HTTP message. A locally
 constructed request may set it before commit.
 
+=head2 target_is_exact
+
+Returns true. Linux::Event::HTTP preserves the exact Request target rather than
+reconstructing it from decomposed URL or routing state.
+
 =head2 version
 
 Gets the HTTP version, such as C<1.1>. A locally constructed request may set it
-before commit.
+before commit. Passing C<undef> clears the represented version; an HTTP/1
+executor will reject an unset version when transmission is attempted.
 
 =head2 header
 
@@ -419,7 +475,8 @@ before commit.
     $request->header('Accept', 'application/json');
 
 Returns the first matching field value. On a mutable local Request, the setter
-form replaces all fields of the same ASCII case-insensitive name.
+form replaces all fields of the same ASCII case-insensitive name with one field
+at the position of the first occurrence, or appends it when absent.
 
 =head2 add_header
 
@@ -431,12 +488,20 @@ Removes all fields with the supplied ASCII case-insensitive name.
 
 =head2 header_values
 
-Returns all matching values in message order.
+Returns an array reference containing all matching values in message order. An
+absent field returns an empty array reference. Values are never implicitly
+comma-joined.
 
 =head2 header_count, header_name, header_value
 
 Provide exact indexed access to fields in message order while preserving the
-original field names.
+original field names. A non-negative index beyond the end returns C<undef>;
+negative and non-integer indexes are programmer errors.
+
+=head2 headers_are_lossless
+
+Returns true because duplicate occurrences, inter-field order, and original
+field-name spelling are retained.
 
 =head2 content_length
 
@@ -449,6 +514,13 @@ Gets or sets the complete scalar byte body of a locally constructed Request.
 Incremental outgoing bodies are selected through the owning Transaction rather
 than through the Request message. Incoming bodies are delivered incrementally
 by the transaction/connection layer and are not implicitly accumulated here.
+Passing C<undef> as a body is an error; an explicit empty body is C<''>.
+
+=head2 has_buffered_body
+
+Returns true only when a complete scalar body buffer is locally available,
+including an explicit empty buffer. Parsed incoming Request bodies are streamed
+by the surrounding protocol layer and therefore return false.
 
 =head2 is_complete
 
@@ -456,5 +528,10 @@ Returns whether the complete message body boundary has been reached. A locally
 constructed scalar-body request is complete immediately; an outgoing or incoming
 streamed request becomes complete only when the protocol layer reaches its final
 body boundary.
+
+=head2 is_mutable
+
+Returns true only while a locally constructed Request has not been committed for
+transmission. Parsed incoming Requests are read-only and return false.
 
 =cut

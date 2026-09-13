@@ -77,6 +77,7 @@ t/75-client-cookie-jar.t
 t/76-client-auth.t
 t/77-client-connect-auth.t
 t/78-client-auth-stream-replay.t
+t/79-uniform-message-contract.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c

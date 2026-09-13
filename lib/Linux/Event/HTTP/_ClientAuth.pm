@@ -15,20 +15,22 @@ sub validate_manager ($value, $where, $name) {
 
 sub prepare_retry (%arg) {
     my $manager = $arg{manager} or return undef;
-    my @challenge = $arg{response}->header_values($arg{challenge_header});
-    return undef if !@challenge;
+    my $challenge = $arg{response}->header_values($arg{challenge_header});
+    return undef if !@$challenge;
 
+    my $request = $arg{request};
     my %prepare = (
-        challenge_headers => \@challenge,
+        challenge_headers => $challenge,
         origin            => $arg{origin},
-        method            => $arg{method},
-        request_target    => $arg{request_target},
+        request           => $request,
     );
 
-    if (!$arg{has_stream_body}) {
-        $prepare{entity_body} = $arg{has_body}
-            ? (defined($arg{body}) ? $arg{body} : '')
-            : '';
+    # Uniform can read a complete buffered scalar body from the Request itself.
+    # A locally constructed bodyless Request has no body buffer, but its Digest
+    # auth-int entity is still the known empty byte string. Streaming producers
+    # remain deliberately unconsumed and non-replayable.
+    if (!$request->has_buffered_body && !$request->_has_incremental_body) {
+        $prepare{entity_body} = '';
     }
 
     my $result;
@@ -46,7 +48,7 @@ sub prepare_retry (%arg) {
 
     return undef if !$result;
 
-    if ($arg{has_stream_body}) {
+    if ($request->_has_incremental_body) {
         return {
             error => "cannot automatically retry $arg{status} $arg{label} authentication for a streaming Request body because the producer is not replayable",
         };

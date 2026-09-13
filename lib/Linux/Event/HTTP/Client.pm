@@ -339,16 +339,16 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
     return undef if !$REDIRECT_STATUS{$status};
     return undef if $spec->{max_redirects} == 0;
 
-    my @location = $response->header_values('Location');
-    return undef if !@location;
+    my $location = $response->header_values('Location');
+    return undef if !@$location;
     return { error => 'redirect response contains multiple Location fields' }
-        if @location != 1;
+        if @$location != 1;
     return { error => 'maximum redirect count exceeded' }
         if $operation->redirect_count >= $spec->{max_redirects};
 
     my ($next_url, $next_destination);
     my $ok = eval {
-        $next_url = _resolve_redirect_url($spec->{url}, $location[0]);
+        $next_url = _resolve_redirect_url($spec->{url}, $location->[0]);
         $next_destination = _parse_url($next_url);
         1;
     };
@@ -457,11 +457,7 @@ sub _auth_retry_plan (
         response         => $response,
         challenge_header => $challenge_header,
         origin           => $origin,
-        method           => $spec->{method},
-        request_target   => $message->target,
-        has_body         => $spec->{has_body},
-        body             => $spec->{body},
-        has_stream_body  => $spec->{has_stream_body},
+        request          => $message,
         status           => $status,
         label            => $label,
     );
@@ -535,7 +531,7 @@ sub _start_operation_hop ($self, $operation, $spec) {
     $connection_callback{on_response} = sub ($transaction, $response) {
         if (my $jar = $self->{cookie_jar}) {
             $jar->add($cookie_url, $_)
-                for $response->header_values('Set-Cookie');
+                for @{$response->header_values('Set-Cookie')};
         }
 
         $auth_retry = $self->_auth_retry_plan(
@@ -848,11 +844,7 @@ sub _start_connect_tunnel_attempt ($self, $operation, $spec) {
                 response         => $response,
                 challenge_header => 'Proxy-Authenticate',
                 origin           => $destination->{auth_origin},
-                method           => 'CONNECT',
-                request_target   => $spec->{target_authority},
-                has_body         => 0,
-                body             => undef,
-                has_stream_body  => 0,
+                request          => $message,
                 status           => 407,
                 label            => 'proxy',
             );
@@ -1146,8 +1138,9 @@ policy, connection creation, HTTPS transport policy, explicit forward-proxy
 routing, optional cookie-jar integration, and a small bounded reuse policy.
 
 Authentication mechanics are delegated to L<Uniform::HTTP::Auth>. The Client
-only receives 401/407 responses, supplies the exact request context, decides
-whether a Request is replayable, and performs the retry as another Transaction.
+only receives 401/407 responses, supplies the exact Request object and
+protection-space origin, decides whether a Request is replayable, and performs
+the retry as another Transaction.
 
 Client methods return L<Linux::Event::HTTP::Client::Operation>. An operation
 normally contains one L<Linux::Event::HTTP::Transaction>, but redirects and
@@ -1212,10 +1205,11 @@ be different Uniform::HTTP::Auth objects or the same callback-based object.
 Both options can be overridden per ordinary request with another object or
 explicitly disabled for that request with undef.
 
-The Client passes the normalized target or proxy origin, method, and the exact
-HTTP request-target to Uniform::HTTP::Auth. For replayable scalar Requests it
-also supplies the entity body, allowing Uniform to support Digest
-C<qop=auth-int>. The returned value is installed as C<Authorization> or
+The Client passes the normalized target or proxy origin and the actual
+L<Linux::Event::HTTP::Request> to C<Uniform::HTTP::Auth 0.02>. Request implements
+the Uniform message contract directly, so authentication reads its exact method,
+request-target, and buffered scalar body without consuming an incremental body
+producer. The returned value is installed as C<Authorization> or
 C<Proxy-Authorization> on a new Transaction.
 
 Authentication responses are drained to their normal HTTP message boundary
@@ -1226,8 +1220,8 @@ authentication retry preserves the proxy field for that same request-target.
 
 Generated authentication fields are attempt-local. They are not copied across
 redirects because Digest authentication incorporates request-target state and
-Uniform::HTTP::Auth 0.01 intentionally does not provide a preemptive-auth cache.
-A redirected target or proxy can challenge again normally.
+Uniform::HTTP::Auth 0.02 does not provide a preemptive-auth cache. A redirected
+target or proxy can challenge again normally.
 
 Streaming Request producers are not replayed automatically. If a satisfiable
 401/407 challenge is received for a streaming Request, the operation terminates
