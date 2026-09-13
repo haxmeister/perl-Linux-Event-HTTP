@@ -53,45 +53,6 @@ sub _validate_max_redirects ($value, $where) {
     return 0 + $value;
 }
 
-sub new ($class, %option) {
-    my $loop = delete $option{loop}
-        // croak 'new(): loop is required';
-    croak 'new(): loop must be an object implementing add() and watch_fd()'
-        if !blessed($loop) || !$loop->can('add') || !$loop->can('watch_fd');
-
-    my $connection_class = _load_connection_class(
-        delete($option{connection_class})
-            // 'Linux::Event::HTTP::Client::Connection',
-    );
-    my $connect_timeout = delete $option{connect_timeout};
-    my $max_redirects = _validate_max_redirects(
-        exists($option{max_redirects}) ? delete($option{max_redirects}) : 5,
-        'new()',
-    );
-    my $tls = exists($option{tls})
-        ? _validate_tls_options(delete $option{tls})
-        : {};
-
-    croak 'new(): unknown options: ' . join(', ', sort keys %option)
-        if %option;
-
-    return bless {
-        loop             => $loop,
-        connection_class => $connection_class,
-        connect_timeout  => $connect_timeout,
-        max_redirects    => $max_redirects,
-        tls              => $tls,
-        idle             => {},
-        connections      => {},
-        closed           => 0,
-    }, $class;
-}
-
-sub loop             ($self) { $self->{loop} }
-sub connection_class ($self) { $self->{connection_class} }
-sub max_redirects    ($self) { $self->{max_redirects} }
-sub is_closed        ($self) { !!$self->{closed} }
-
 sub _parse_url ($url) {
     croak 'request(): URL must be a scalar' if !defined($url) || ref($url);
 
@@ -134,14 +95,70 @@ sub _parse_url ($url) {
     };
 }
 
-sub _parse_proxy_url ($url) {
-    croak 'request(): proxy must be a non-empty scalar URL'
+sub _parse_proxy_url ($url, $where = 'request()') {
+    croak "$where: proxy must be a non-empty scalar URL"
         if !defined($url) || ref($url) || $url eq '';
-    my $destination = _parse_url($url);
-    croak 'request(): proxy URL must not contain a path or query'
+
+    my $destination;
+    my $ok = eval {
+        $destination = _parse_url($url);
+        1;
+    };
+    if (!$ok) {
+        my $error = "$@";
+        $error =~ s/\Arequest\(\)/$where/;
+        die $error;
+    }
+
+    croak "$where: proxy URL must not contain a path or query"
         if $destination->{target} ne '/';
     return $destination;
 }
+
+sub new ($class, %option) {
+    my $loop = delete $option{loop}
+        // croak 'new(): loop is required';
+    croak 'new(): loop must be an object implementing add() and watch_fd()'
+        if !blessed($loop) || !$loop->can('add') || !$loop->can('watch_fd');
+
+    my $connection_class = _load_connection_class(
+        delete($option{connection_class})
+            // 'Linux::Event::HTTP::Client::Connection',
+    );
+    my $connect_timeout = delete $option{connect_timeout};
+    my $max_redirects = _validate_max_redirects(
+        exists($option{max_redirects}) ? delete($option{max_redirects}) : 5,
+        'new()',
+    );
+    my $tls = exists($option{tls})
+        ? _validate_tls_options(delete $option{tls})
+        : {};
+    my $proxy_url = exists($option{proxy})
+        ? delete($option{proxy})
+        : undef;
+    _parse_proxy_url($proxy_url, 'new()') if defined $proxy_url;
+
+    croak 'new(): unknown options: ' . join(', ', sort keys %option)
+        if %option;
+
+    return bless {
+        loop             => $loop,
+        connection_class => $connection_class,
+        connect_timeout  => $connect_timeout,
+        max_redirects    => $max_redirects,
+        tls              => $tls,
+        proxy_url        => defined($proxy_url) ? "$proxy_url" : undef,
+        idle             => {},
+        connections      => {},
+        closed           => 0,
+    }, $class;
+}
+
+sub loop             ($self) { $self->{loop} }
+sub connection_class ($self) { $self->{connection_class} }
+sub max_redirects    ($self) { $self->{max_redirects} }
+sub proxy            ($self) { $self->{proxy_url} }
+sub is_closed        ($self) { !!$self->{closed} }
 
 sub _copy_headers ($headers) {
     return [] if !defined $headers;
@@ -547,7 +564,7 @@ sub request ($self, $method, $url, %option) {
 
     my $proxy_url = exists($option{proxy})
         ? delete($option{proxy})
-        : undef;
+        : $self->{proxy_url};
     _parse_proxy_url($proxy_url) if defined $proxy_url;
     croak 'request(): proxy cannot be used with CONNECT; use connect_tunnel()'
         if defined($proxy_url) && uc($method) eq 'CONNECT';
@@ -811,6 +828,7 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
     my $client = Linux::Event::HTTP::Client->new(
         loop => $loop,
         max_redirects => 5,
+        proxy => 'http://proxy.example:3128',
     );
 
     my $operation = $client->get(
@@ -826,15 +844,19 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
         },
     );
 
-An ordinary request can explicitly use a forward proxy without changing the
-Request/Response or Operation model:
+An ordinary request can explicitly override the Client proxy without changing
+the Request/Response or Operation model:
 
     my $operation = $client->get(
         'http://origin.example/items?limit=10',
-        proxy => 'http://proxy.example:3128',
-        headers => [
-            [ 'Proxy-Authorization' => $value ],
-        ],
+        proxy => 'http://other-proxy.example:3128',
+    );
+
+A request can explicitly bypass a configured Client proxy:
+
+    my $operation = $client->get(
+        'http://origin.example/items?limit=10',
+        proxy => undef,
     );
 
 =head1 DESCRIPTION
@@ -843,6 +865,11 @@ C<Linux::Event::HTTP::Client> is the high-level outbound HTTP entry point. It
 owns URL parsing, destination selection, redirect policy, connection creation,
 HTTPS transport policy, explicit forward-proxy routing, and a small bounded
 reuse policy.
+
+A Client may configure one default forward proxy. Individual operations may
+override that route or explicitly bypass it with C<proxy =E<gt> undef>. Proxy
+configuration remains high-level Client policy; Client::Connection stays
+proxy-unaware.
 
 Client methods return L<Linux::Event::HTTP::Client::Operation>. A client
 operation normally contains one L<Linux::Event::HTTP::Transaction>, but each
@@ -873,16 +900,20 @@ requests bounded whole-body buffering; there is no implicit unbounded buffering.
 Builds the canonical Request for each hop and starts the operation immediately.
 Only absolute C<http> and C<https> target URLs are accepted.
 
-Without C<proxy>, the Client obtains or creates a connection for the target URL
-origin and sends the path/query in origin-form. With
-C<proxy =E<gt> $proxy_url>, the Client instead connects to the explicit C<http>
-or C<https> proxy endpoint and sends the target URL in HTTP/1 absolute-form. The
-Host field is regenerated from the target URL while the proxy endpoint controls
-only where the connection is made. The proxy URL must not contain a path or
-query. CONNECT is intentionally not expressed through this option; use
-C<connect_tunnel> for tunnel establishment.
+Without a selected proxy, the Client obtains or creates a connection for the
+target URL origin and sends the path/query in origin-form. If the Client was
+constructed with C<proxy =E<gt> $proxy_url>, that route is used by default.
+A per-request C<proxy =E<gt> $other_proxy> overrides the Client default, while
+C<proxy =E<gt> undef> explicitly bypasses it for that operation.
 
-An C<https> target URL used with C<proxy> is still sent to that forward proxy as
+With a selected proxy, the Client connects to the explicit C<http> or C<https>
+proxy endpoint and sends the target URL in HTTP/1 absolute-form. The Host field
+is regenerated from the target URL while the proxy endpoint controls only where
+the connection is made. The proxy URL must not contain a path or query. CONNECT
+is intentionally not expressed through this option; use C<connect_tunnel> for
+tunnel establishment.
+
+An C<https> target URL used with a forward proxy is still sent to that proxy as
 an absolute-form C<https://...> request target. This asks the proxy to service
 the HTTPS URI itself; it is not an end-to-end TLS tunnel to the target. Use
 C<connect_tunnel> when the application needs a CONNECT tunnel and owns the
@@ -921,7 +952,8 @@ Establishes one explicit HTTP/1.1 CONNECT tunnel through the proxy endpoint URL.
 The first argument chooses where the HTTP connection is made; the second is the
 authority-form C<host:port> target sent by CONNECT. The proxy URL may use C<http>
 or C<https> but must not contain a path or query. TLS on an C<https> proxy URL is
-TLS to the proxy itself.
+TLS to the proxy itself. The Client-level default C<proxy> is intentionally not
+consulted because C<connect_tunnel> already names its proxy endpoint explicitly.
 
 The method synthesizes Host from the tunnel target when absent and returns a
 Client::Operation containing the single CONNECT Transaction. Automatic redirect
@@ -965,13 +997,13 @@ request has no body.
 
 Redirect hops regenerate Host and HTTP message-framing fields. Cross-origin
 redirects also remove Authorization and Cookie. On direct requests,
-Proxy-Authorization is not propagated automatically. When C<proxy> is explicit,
-Proxy-Authorization remains associated with that same proxy across redirect
-hops while target-origin Authorization and Cookie still follow cross-origin
-stripping policy. Connection-specific fields are regenerated rather than
-forwarded verbatim. When an operation expects HTTP Upgrade, the next hop
-regenerates C<Connection: Upgrade> and re-advertises the same Upgrade protocol
-fields.
+Proxy-Authorization is not propagated automatically. When a proxy route is
+selected, Proxy-Authorization remains associated with that same proxy across
+redirect hops while target-origin Authorization and Cookie still follow
+cross-origin stripping policy. Connection-specific fields are regenerated
+rather than forwarded verbatim. When an operation expects HTTP Upgrade, the
+next hop regenerates C<Connection: Upgrade> and re-advertises the same Upgrade
+protocol fields.
 
 =head2 request bodies
 
@@ -1042,6 +1074,12 @@ Returns the configured Client::Connection class.
 
 Returns the Client default redirect limit.
 
+=head2 proxy
+
+Returns the configured Client default forward-proxy URL, or undef when there is
+no default proxy. This accessor describes Client configuration only; an
+individual operation may override or bypass the default.
+
 =head2 is_closed
 
 True after C<close>.
@@ -1054,8 +1092,8 @@ requests. Returns the Client.
 =head1 CONNECTION REUSE
 
 At most one idle connection is retained per route origin. For direct requests,
-the route origin is the target origin. For a request using C<proxy>, the route
-origin is the proxy endpoint, so sequential requests for different target
+the route origin is the target origin. For a request using a proxy route, the
+route origin is the proxy endpoint, so sequential requests for different target
 origins can reuse the same persistent proxy connection. A concurrent request may
 open another connection rather than queueing or using HTTP/1 pipelining. When
 multiple connections later become idle for one route origin, one is retained
