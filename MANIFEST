@@ -51,6 +51,7 @@ t/41-tls-server.t
 t/42-upgrade.t
 t/50-final-response.t
 t/60-client-connection.t
+t/61-client-response-framing.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
