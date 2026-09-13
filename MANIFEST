@@ -65,6 +65,7 @@ t/67-client-upgrade.t
 t/68-client-upgrade-high-level.t
 t/69-client-connect.t
 t/70-client-connect-high-level.t
+t/71-client-connect-validation.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
