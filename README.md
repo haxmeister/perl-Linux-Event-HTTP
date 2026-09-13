@@ -66,9 +66,9 @@ $loop->run;
 ```
 
 High-level Client methods return `Linux::Event::HTTP::Client::Operation`.
-An operation normally contains one `Linux::Event::HTTP::Transaction`. Every
-followed redirect creates another Transaction because a Transaction always means
-exactly one Request/Response exchange.
+An operation normally contains one `Linux::Event::HTTP::Transaction`. Followed
+redirects and automatic authentication retries create additional Transactions
+because a Transaction always means exactly one Request/Response exchange.
 
 ```perl
 my $tx  = $operation->transaction;
@@ -171,7 +171,7 @@ my $operation = $client->get(
 );
 ```
 
-Every followed hop is a distinct Transaction retained by the Operation.
+Every followed redirect is a distinct Transaction retained by the Operation.
 301/302 may change POST to GET, 303 uses GET except for HEAD, and 307/308 preserve
 method and body. Complete scalar bodies can be replayed; streaming producers are
 not assumed to be rewindable.
@@ -179,7 +179,8 @@ not assumed to be rewindable.
 Cross-origin redirects remove caller-supplied `Authorization` and `Cookie`.
 Connection-specific fields are regenerated rather than forwarded verbatim.
 When a cookie jar is configured, Cookie is regenerated independently for each
-hop from the new target URL.
+hop from the new target URL. Uniform-managed authentication fields are also
+attempt-local and are regenerated only after a new challenge.
 
 ## Cookies
 
@@ -196,10 +197,10 @@ my $client = Linux::Event::HTTP::Client->new(
 );
 ```
 
-Before each ordinary request hop, Client asks the jar for cookies using the
-target URL. Every `Set-Cookie` field from final and redirect Responses is fed
-back to the jar using that same target URL before redirect or application
-response processing continues.
+Before each ordinary request exchange, Client asks the jar for cookies using the
+target URL. Every `Set-Cookie` field from final, redirect, and authentication
+challenge Responses is fed back to the jar using that same target URL before
+higher-level policy or application response processing continues.
 
 This distinction matters with proxies: the proxy is only the route. It never
 becomes the cookie origin merely because the TCP or TLS connection terminates
@@ -214,6 +215,57 @@ one owner; seed or alter cookies through the jar itself.
 `connect_tunnel()` does not consult the cookie jar because CONNECT is an explicit
 exchange with the named proxy endpoint followed by protocol handoff, not an
 ordinary target-resource request.
+
+## Authentication
+
+HTTP authentication mechanics are provided by `Uniform::HTTP::Auth` rather than
+implemented in Linux::Event::HTTP. It supports Basic, Bearer, and Digest while
+remaining independent of any HTTP client or event loop.
+
+```perl
+use Uniform::HTTP::Auth;
+
+my $auth = Uniform::HTTP::Auth->new(
+    credentials => sub ($context) {
+        return $credential_store->lookup(
+            $context->{origin},
+            $context->{realm},
+            $context->{scheme},
+        );
+    },
+);
+
+my $client = Linux::Event::HTTP::Client->new(
+    loop       => $loop,
+    auth       => $auth,
+    proxy_auth => $auth,
+);
+```
+
+`auth` handles target `401` / `WWW-Authenticate`. `proxy_auth` handles proxy
+`407` / `Proxy-Authenticate`. Linux::Event::HTTP gives Uniform the challenge,
+protection-space origin, method, and exact request-target. Uniform returns the
+complete authentication field value; Linux::Event::HTTP decides whether the
+Request can be replayed and creates another Transaction when it can.
+
+`max_auth_retries` defaults to three and is independent of `max_redirects`.
+`max_auth_retries => 0` disables automatic challenge retry. The Operation keeps
+all Transactions and exposes `auth_retry_count`; authentication retries do not
+increase `redirect_count`.
+
+Complete scalar Request bodies can be replayed and are supplied to Uniform for
+Digest `qop=auth-int`. Streaming Request producers are never automatically
+replayed, even if the producer has already completed, because application stream
+state is not inherently rewindable.
+
+Authentication identity follows the same target/route split as the rest of the
+Client. A target 401 uses the target origin; a proxy 407 uses the selected proxy
+route origin. A request can therefore answer a proxy 407 and then a target 401
+without confusing the two protection spaces.
+
+When `auth` is configured, it owns `Authorization`; when `proxy_auth` is
+configured, it owns `Proxy-Authorization`. Manual fields remain available by
+disabling the corresponding manager for that request.
 
 ## Forward proxies
 
@@ -251,20 +303,19 @@ HTTP/1 requests use absolute-form targets such as
 `http://origin.example/path?x=1`. Host is always derived from the target URL in
 proxy mode.
 
-The target origin remains the redirect, cookie, and origin-credential identity.
-The route origin selects the actual connection and idle-pool entry. Sequential
-requests to different target origins can therefore reuse one persistent proxy
-connection without sharing target cookies.
-Caller-supplied `Proxy-Authorization` stays associated with that selected proxy
-route across redirects while target credentials still obey cross-origin rules.
+The target origin remains the redirect, cookie, and target-authentication
+identity. The route origin selects the actual connection, idle-pool entry, and
+proxy-authentication identity. Sequential requests to different target origins
+can therefore reuse one persistent proxy connection without sharing target
+cookies or target credentials.
 
 Proxy endpoints may use `http` or `https`. TLS to an HTTPS proxy terminates at
 the proxy. An HTTPS target URI used with ordinary `proxy` routing is still sent
 in absolute-form; it is not a hidden CONNECT tunnel and does not create
 end-to-end TLS to that target.
 
-There is no automatic environment-proxy discovery, PAC/NO_PROXY policy, SOCKS,
-or automatic 407 authentication negotiation.
+There is no automatic environment-proxy discovery, PAC/NO_PROXY policy, or
+SOCKS behavior.
 
 ## CONNECT tunnels
 
@@ -275,16 +326,20 @@ my $operation = $client->connect_tunnel(
     'http://proxy.example:3128',
     'target.example:443',
     tunnel_to => 'MyTunnelProtocol',
+    proxy_auth => $auth,
     on_tunnel => sub ($op, $tx, $res, $connection) {
         ...;
     },
 );
 ```
 
-The proxy endpoint and tunnel target are separate. Any successful 2xx response
-ends HTTP framing at the response-head boundary; already-read following bytes
-become tunnel input and the same Linux::Event stream transitions to
-`tunnel_to`. Non-2xx responses remain ordinary HTTP.
+The proxy endpoint and tunnel target are separate. `connect_tunnel()` uses the
+Client's `proxy_auth` by default and can override or disable it per call. A 407
+may therefore be drained and retried before the tunnel is established.
+
+Any successful 2xx response ends HTTP framing at the response-head boundary;
+already-read following bytes become tunnel input and the same Linux::Event
+stream transitions to `tunnel_to`. Non-2xx responses remain ordinary HTTP.
 
 Server CONNECT arrives through the normal request callback and is accepted
 explicitly through Transaction:
@@ -343,8 +398,8 @@ parallel HTTPS hierarchy.
 Server TLS is configured on `Server->new(tls => {...})`. Direct Client HTTPS
 uses the target URL host as the TLS server name and currently advertises only
 `http/1.1` through ALPN. An HTTPS proxy endpoint uses TLS to the proxy itself.
-Secure-cookie selection still uses the target URL supplied to `HTTP::CookieJar`,
-not the proxy transport scheme.
+Cookie and target-authentication origin identity remain the target URL; proxy
+authentication identity remains the route endpoint.
 
 ## Connection reuse
 
@@ -404,8 +459,9 @@ make
 make test
 ```
 
-Linux::Event::HTTP currently requires Linux::Event 0.113 or newer and uses
-`HTTP::CookieJar` for optional high-level cookie policy.
+Linux::Event::HTTP currently requires Linux::Event 0.113 or newer, uses
+`HTTP::CookieJar` for cookie policy, and uses `Uniform::HTTP::Auth` for HTTP
+authentication mechanics.
 
 ## Design documents
 
