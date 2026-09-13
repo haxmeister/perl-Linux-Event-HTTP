@@ -147,7 +147,8 @@ my $start_second = sub {
         'proxied HTTPS target Host identifies target rather than proxy');
 };
 
-my $first = $client->get(
+my $first;
+$first = $client->get(
     'http://one.example/a?x=1#ignored',
     proxy => $proxy_url,
     headers => [
