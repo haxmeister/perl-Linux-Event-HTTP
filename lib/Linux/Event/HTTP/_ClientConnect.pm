@@ -61,10 +61,13 @@ sub prepare_request ($class, $request, $target, $request_state) {
         if $request_state->{streaming};
     croak 'request(): CONNECT Request must not contain a scalar body'
         if $request->_has_scalar_body;
+
+    my @length = $request->header_values('Content-Length');
     croak 'request(): CONNECT Request must not contain Content-Length'
-        if $request->header_values('Content-Length');
+        if @length;
+    my @transfer = $request->header_values('Transfer-Encoding');
     croak 'request(): CONNECT Request must not contain Transfer-Encoding'
-        if $request->header_values('Transfer-Encoding');
+        if @transfer;
 
     my $authority = _authority($request->target);
     my @host = $request->header_values('Host');
