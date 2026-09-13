@@ -52,6 +52,7 @@ sub _init_http_client ($self, $user_on_drain = undef) {
     $self->{_http_client_request_state} = undef;
     $self->{_http_client_response_state} = undef;
     $self->{_http_client_pending_upgrade} = undef;
+    $self->{_http_client_pending_connect} = undef;
     $self->{_http_client_user_on_drain} = $user_on_drain;
     $self->{_http_client_driving} = 0;
     $self->{_http_client_reusable} = 1;
@@ -173,8 +174,6 @@ sub _prepare_request ($request, $streaming = 0) {
     my $version = $request->version;
     croak "request(): HTTP/1 client supports version 1.0 or 1.1, not $version"
         if $version ne '1.0' && $version ne '1.1';
-    croak 'request(): CONNECT tunneling is not implemented yet'
-        if uc($request->method) eq 'CONNECT';
 
     my @host = $request->header_values('Host');
     croak 'request(): HTTP/1.1 requires exactly one Host field'
@@ -263,10 +262,14 @@ sub request ($self, $request, %option) {
     my $upgrade_to = exists($option{upgrade_to})
         ? delete($option{upgrade_to})
         : undef;
+    my $tunnel_to = exists($option{tunnel_to})
+        ? delete($option{tunnel_to})
+        : undef;
 
     my %callback;
     my %known = map { $_ => 1 } qw(
-        on_response on_body on_complete on_error on_informational on_upgrade
+        on_response on_body on_complete on_error on_informational
+        on_upgrade on_tunnel
     );
     my @unknown = grep { !$known{$_} } keys %option;
     croak 'request(): unknown options: ' . join(', ', sort @unknown)
@@ -283,11 +286,31 @@ sub request ($self, $request, %option) {
         if defined($buffer_limit) && $callback{on_body};
     croak 'request(): on_upgrade requires upgrade_to'
         if $callback{on_upgrade} && !defined($upgrade_to);
+    croak 'request(): on_tunnel requires tunnel_to'
+        if $callback{on_tunnel} && !defined($tunnel_to);
+    croak 'request(): upgrade_to and tunnel_to are mutually exclusive'
+        if defined($upgrade_to) && defined($tunnel_to);
     croak 'request(): upgrade_to cannot be combined with buffer_body'
         if defined($upgrade_to) && defined($buffer_limit);
     croak 'request(): upgrade_to cannot be combined with on_body'
         if defined($upgrade_to) && $callback{on_body};
     $callback{buffer_body} = $buffer_limit if defined $buffer_limit;
+
+    my $is_connect = uc($request->method) eq 'CONNECT';
+    croak 'request(): CONNECT requires tunnel_to'
+        if $is_connect && !defined($tunnel_to);
+    croak 'request(): tunnel_to requires CONNECT method'
+        if defined($tunnel_to) && !$is_connect;
+
+    if (defined $tunnel_to) {
+        require Linux::Event::HTTP::_ClientConnect;
+        $tunnel_to = Linux::Event::HTTP::_ClientConnect->prepare_request(
+            $request,
+            $tunnel_to,
+            { streaming => defined($stream_body) ? 1 : 0 },
+        );
+        $callback{tunnel_to} = $tunnel_to;
+    }
 
     my ($head, $body, $request_state) = _prepare_request(
         $request, defined($stream_body) ? 1 : 0,
@@ -317,6 +340,7 @@ sub request ($self, $request, %option) {
     $self->{_http_client_request_state} = $request_state;
     $self->{_http_client_response_state} = undef;
     $self->{_http_client_pending_upgrade} = undef;
+    $self->{_http_client_pending_connect} = undef;
 
     my $wire = $head . $body;
     my ($accepted, $written);
@@ -506,6 +530,7 @@ sub _clear_active_transaction ($self) {
     $self->{_http_client_request_state} = undef;
     $self->{_http_client_response_state} = undef;
     $self->{_http_client_pending_upgrade} = undef;
+    $self->{_http_client_pending_connect} = undef;
     return;
 }
 
@@ -780,6 +805,31 @@ sub _drive_http1 ($self) {
                 last;
             }
 
+            if (uc($transaction->request->method) eq 'CONNECT'
+                && $response->status >= 200
+                && $response->status < 300) {
+                my $target = $self->{_http_client_callbacks}{tunnel_to};
+                if (!defined $target) {
+                    $self->_fail_active_transaction(
+                        'HTTP/1 successful CONNECT requires tunnel_to', 1,
+                    );
+                    last;
+                }
+
+                my $scheduled = eval {
+                    require Linux::Event::HTTP::_ClientConnect;
+                    Linux::Event::HTTP::_ClientConnect->schedule(
+                        $self, $transaction, $response, $target,
+                    );
+                    1;
+                };
+                if (!$scheduled) {
+                    my $error = "$@";
+                    $self->_fail_active_transaction($error, 1);
+                }
+                last;
+            }
+
             my $state;
             my $valid = eval {
                 $state = _response_transfer_mode(
@@ -845,7 +895,8 @@ sub _drive_http1 ($self) {
 sub on_data ($self, $bytes) {
     return if $self->is_closed;
     $self->{_http_client_input} .= $bytes;
-    return if $self->{_http_client_pending_upgrade};
+    return if $self->{_http_client_pending_upgrade}
+        || $self->{_http_client_pending_connect};
     $self->_drive_http1;
     return;
 }
@@ -955,8 +1006,9 @@ implicitly into the Response object. Explicit C<buffer_body> requests bounded
 whole-body accumulation using the same framing/consumption path.
 
 HTTP/1.1 C<101 Switching Protocols> can hand the same live connection to another
-L<Linux::Event::IO::Sock::Stream> subclass with C<upgrade_to>. CONNECT tunnels
-remain a separate later layer.
+L<Linux::Event::IO::Sock::Stream> subclass with C<upgrade_to>. A successful
+CONNECT can similarly hand the same live socket to a tunnel protocol class with
+C<tunnel_to>.
 
 =head1 METHODS
 
@@ -1007,6 +1059,18 @@ preserved as input for the target protocol. C<on_complete> then runs for the
 completed HTTP Transaction. A bare C<101> without C<upgrade_to> is a protocol
 error and closes the HTTP connection.
 
+C<tunnel_to =E<gt> $class> is valid only for an HTTP/1.1 CONNECT Request. The
+request-target must be authority-form C<host:port>, Host must match that
+authority exactly apart from case, and the Request must have no scalar or
+streaming body, Content-Length, or Transfer-Encoding. C<on_tunnel> receives
+C<($tx, $res, $connection)> after any successful 2xx CONNECT response completes
+the HTTP Transaction and the same live stream has transitioned to C<$class>.
+Bytes already read after the response head are tunnel input. Content-Length and
+Transfer-Encoding on a successful CONNECT response are ignored as required by
+HTTP semantics. Non-2xx CONNECT responses remain ordinary HTTP responses and may
+use C<on_body> or C<buffer_body> normally. C<on_complete> runs after a successful
+tunnel handoff or after an ordinary non-2xx response completes.
+
 C<buffer_body =E<gt> $max_bytes> explicitly requests whole-body buffering with a
 positive byte limit. It cannot be combined with C<on_body>. The limit counts the
 same body bytes that C<on_body> would receive: HTTP/1 chunk framing has already
@@ -1044,6 +1108,11 @@ make the connection non-reusable.
 
 =item * a validated 101 response terminates HTTP framing and transitions the
 same live stream to the explicitly requested target protocol class.
+
+=item * any successful 2xx CONNECT response terminates HTTP framing immediately
+after its header section and transitions the same live stream into tunnel mode;
+Content-Length and Transfer-Encoding fields on that successful response are
+ignored.
 
 =back
 
