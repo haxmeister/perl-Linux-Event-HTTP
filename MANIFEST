@@ -24,6 +24,7 @@ lib/Linux/Event/HTTP.pm
 lib/Linux/Event/HTTP/Body/Stream.pm
 lib/Linux/Event/HTTP/Client.pm
 lib/Linux/Event/HTTP/Client/Connection.pm
+lib/Linux/Event/HTTP/Client/Operation.pm
 lib/Linux/Event/HTTP/Request.pm
 lib/Linux/Event/HTTP/Response.pm
 lib/Linux/Event/HTTP/Transaction.pm
@@ -57,6 +58,7 @@ t/62-client.t
 t/63-client-tls.t
 t/64-client-buffered-response.t
 t/65-client-request-stream.t
+t/66-client-redirects.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c

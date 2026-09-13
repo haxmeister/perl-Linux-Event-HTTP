@@ -7,6 +7,7 @@ use Test::More;
 use_ok('Linux::Event::HTTP');
 use_ok('Linux::Event::HTTP::Client');
 use_ok('Linux::Event::HTTP::Client::Connection');
+use_ok('Linux::Event::HTTP::Client::Operation');
 use_ok('Linux::Event::HTTP::Server');
 use_ok('Linux::Event::HTTP::Server::Connection');
 use_ok('Linux::Event::HTTP::Request');
@@ -60,6 +61,12 @@ ok(Linux::Event::HTTP::Transaction->can('is_upgrading'),
     'Transaction exposes Upgrade lifecycle state');
 ok(Linux::Event::HTTP::Transaction->can('cancel'),
     'Transaction exposes cancellation');
+ok(Linux::Event::HTTP::Client::Operation->can('transaction'),
+    'Client Operation exposes current/final Transaction');
+ok(Linux::Event::HTTP::Client::Operation->can('transactions'),
+    'Client Operation exposes redirect Transaction history');
+ok(Linux::Event::HTTP::Client::Operation->can('cancel'),
+    'Client Operation owns high-level cancellation');
 ok(Linux::Event::HTTP::Server::Connection->can('transaction'),
     'server Connection exposes its active Transaction');
 ok(Linux::Event::HTTP::Client::Connection->can('request'),
