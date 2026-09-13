@@ -33,6 +33,7 @@ lib/Linux/Event/HTTP/Server/Connection.pm
 lib/Linux/Event/HTTP/_ClientConnect.pm
 lib/Linux/Event/HTTP/_ClientUpgrade.pm
 lib/Linux/Event/HTTP/_HTTP1.pm
+lib/Linux/Event/HTTP/_ServerConnect.pm
 lib/Linux/Event/HTTP/_Upgrade.pm
 t/00-load.t
 t/10-pico-parser.t
@@ -66,6 +67,7 @@ t/68-client-upgrade-high-level.t
 t/69-client-connect.t
 t/70-client-connect-high-level.t
 t/71-client-connect-validation.t
+t/72-server-connect.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
