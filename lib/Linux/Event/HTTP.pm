@@ -52,7 +52,10 @@ native chunked decoder is shared by client and server.
 
 Incoming bodies are incremental-first and are not implicitly accumulated into
 unbounded whole-body scalars. Complete scalar message bodies remain available as
-a convenience when the application already owns all bytes.
+a convenience when the application already owns all bytes. Outgoing incremental
+Client Request and Server Response bodies use Transaction-owned
+L<Linux::Event::HTTP::Body::Stream> producers and Linux::Event's existing
+ordered-byte backpressure machinery rather than a second HTTP output queue.
 
 =head1 DESIGN
 
