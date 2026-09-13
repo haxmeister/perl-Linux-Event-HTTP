@@ -120,16 +120,27 @@ sub _parse_url ($url) {
     my $authority_host = $host =~ /:/ ? "[$host]" : $host;
     my $host_header = $authority_host;
     $host_header .= ":$port" if $port != $default_port;
+    my $absolute_target = "$scheme://$host_header$target";
 
     my $origin = join("\0", $scheme, lc($host), $port);
     return {
-        scheme      => $scheme,
-        host        => $host,
-        port        => 0 + $port,
-        target      => "$target",
-        host_header => $host_header,
-        origin      => $origin,
+        scheme          => $scheme,
+        host            => $host,
+        port            => 0 + $port,
+        target          => "$target",
+        absolute_target => $absolute_target,
+        host_header     => $host_header,
+        origin          => $origin,
     };
+}
+
+sub _parse_proxy_url ($url) {
+    croak 'request(): proxy must be a non-empty scalar URL'
+        if !defined($url) || ref($url) || $url eq '';
+    my $destination = _parse_url($url);
+    croak 'request(): proxy URL must not contain a path or query'
+        if $destination->{target} ne '/';
+    return $destination;
 }
 
 sub _copy_headers ($headers) {
@@ -232,7 +243,7 @@ sub _resolve_redirect_url ($current_url, $location) {
     return $next->as_string;
 }
 
-sub _redirect_headers ($headers, $drop_body, $cross_origin) {
+sub _redirect_headers ($headers, $drop_body, $cross_origin, $through_proxy = 0) {
     my @next;
 
     for my $pair (@$headers) {
@@ -243,7 +254,7 @@ sub _redirect_headers ($headers, $drop_body, $cross_origin) {
         next if $lower eq 'connection';
         next if $lower eq 'keep-alive';
         next if $lower eq 'proxy-connection';
-        next if $lower eq 'proxy-authorization';
+        next if $lower eq 'proxy-authorization' && !$through_proxy;
         next if $lower eq 'te';
         next if $lower eq 'trailer';
         next if $lower eq 'transfer-encoding';
@@ -317,6 +328,7 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
         $spec->{headers},
         $drop_body,
         $destination->{origin} ne $next_destination->{origin},
+        defined($spec->{proxy_url}) ? 1 : 0,
     );
 
     if (defined $spec->{upgrade_to}) {
@@ -330,6 +342,7 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
 
     my %next = (
         url             => $next_url,
+        proxy_url       => $spec->{proxy_url},
         method          => $method,
         headers         => $headers,
         version         => $spec->{version},
@@ -360,23 +373,36 @@ sub _start_operation_hop ($self, $operation, $spec) {
         if $operation->is_terminal;
 
     my $destination = _parse_url($spec->{url});
+    my $proxy = defined($spec->{proxy_url})
+        ? _parse_proxy_url($spec->{proxy_url})
+        : undef;
+    my $route = $proxy // $destination;
     my $headers = _copy_headers($spec->{headers});
 
-    my @host = grep {
-        defined($_->[0]) && !ref($_->[0]) && lc($_->[0]) eq 'host'
-    } @$headers;
-    push @$headers, [ Host => $destination->{host_header} ] if !@host;
+    if ($proxy) {
+        @$headers = grep {
+            !defined($_->[0]) || ref($_->[0]) || lc($_->[0]) ne 'host'
+        } @$headers;
+        push @$headers, [ Host => $destination->{host_header} ];
+    } else {
+        my @host = grep {
+            defined($_->[0]) && !ref($_->[0]) && lc($_->[0]) eq 'host'
+        } @$headers;
+        push @$headers, [ Host => $destination->{host_header} ] if !@host;
+    }
 
     my %request = (
         method  => $spec->{method},
-        target  => $destination->{target},
+        target  => $proxy
+            ? $destination->{absolute_target}
+            : $destination->{target},
         version => $spec->{version},
         headers => $headers,
     );
     $request{body} = $spec->{body} if $spec->{has_body};
     my $message = Linux::Event::HTTP::Request->new(%request);
 
-    my $connection = $self->_connection_for($destination);
+    my $connection = $self->_connection_for($route);
     my $callback = $spec->{callback};
     my $redirect;
     my $upgraded = 0;
@@ -442,7 +468,7 @@ sub _start_operation_hop ($self, $operation, $spec) {
         }
 
         $self->_release_connection(
-            $destination->{origin}, $connection,
+            $route->{origin}, $connection,
         );
 
         if ($redirect) {
@@ -503,7 +529,7 @@ sub _start_operation_hop ($self, $operation, $spec) {
     if (!$ok) {
         my $error = $@;
         $self->_release_connection(
-            $destination->{origin}, $connection,
+            $route->{origin}, $connection,
         ) if !$connection->is_closed && !defined($connection->transaction);
         die $error;
     }
@@ -518,6 +544,13 @@ sub request ($self, $method, $url, %option) {
         if !defined($method) || ref($method) || $method eq '';
 
     _parse_url($url);
+
+    my $proxy_url = exists($option{proxy})
+        ? delete($option{proxy})
+        : undef;
+    _parse_proxy_url($proxy_url) if defined $proxy_url;
+    croak 'request(): proxy cannot be used with CONNECT; use connect_tunnel()'
+        if defined($proxy_url) && uc($method) eq 'CONNECT';
 
     my $headers = _copy_headers(delete $option{headers});
     my $version = delete($option{version}) // '1.1';
@@ -573,6 +606,7 @@ sub request ($self, $method, $url, %option) {
 
     my $spec = {
         url             => "$url",
+        proxy_url       => defined($proxy_url) ? "$proxy_url" : undef,
         method          => $method,
         headers         => $headers,
         version         => $version,
@@ -792,11 +826,23 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
         },
     );
 
+An ordinary request can explicitly use a forward proxy without changing the
+Request/Response or Operation model:
+
+    my $operation = $client->get(
+        'http://origin.example/items?limit=10',
+        proxy => 'http://proxy.example:3128',
+        headers => [
+            [ 'Proxy-Authorization' => $value ],
+        ],
+    );
+
 =head1 DESCRIPTION
 
 C<Linux::Event::HTTP::Client> is the high-level outbound HTTP entry point. It
 owns URL parsing, destination selection, redirect policy, connection creation,
-HTTPS transport policy, and a small bounded reuse policy.
+HTTPS transport policy, explicit forward-proxy routing, and a small bounded
+reuse policy.
 
 Client methods return L<Linux::Event::HTTP::Client::Operation>. A client
 operation normally contains one L<Linux::Event::HTTP::Transaction>, but each
@@ -824,10 +870,23 @@ requests bounded whole-body buffering; there is no implicit unbounded buffering.
         on_error => sub ($tx, $error) { ... },
     );
 
-Builds the canonical Request for each hop, obtains or creates a connection for
-the corresponding URL origin, and starts the operation immediately. Only
-absolute C<http> and C<https> URLs are accepted. The URL path/query becomes the
-Request target and Host is synthesized when absent.
+Builds the canonical Request for each hop and starts the operation immediately.
+Only absolute C<http> and C<https> target URLs are accepted.
+
+Without C<proxy>, the Client obtains or creates a connection for the target URL
+origin and sends the path/query in origin-form. With
+C<proxy =E<gt> $proxy_url>, the Client instead connects to the explicit C<http>
+or C<https> proxy endpoint and sends the target URL in HTTP/1 absolute-form. The
+Host field is regenerated from the target URL while the proxy endpoint controls
+only where the connection is made. The proxy URL must not contain a path or
+query. CONNECT is intentionally not expressed through this option; use
+C<connect_tunnel> for tunnel establishment.
+
+An C<https> target URL used with C<proxy> is still sent to that forward proxy as
+an absolute-form C<https://...> request target. This asks the proxy to service
+the HTTPS URI itself; it is not an end-to-end TLS tunnel to the target. Use
+C<connect_tunnel> when the application needs a CONNECT tunnel and owns the
+protocol run inside it.
 
 Callbacks C<on_response>, C<on_body>, and C<on_complete> describe the final
 response. Intermediate redirect response bodies are consumed according to the
@@ -905,11 +964,14 @@ error. Redirects that change POST to GET can proceed because the subsequent
 request has no body.
 
 Redirect hops regenerate Host and HTTP message-framing fields. Cross-origin
-redirects also remove Authorization and Cookie. Proxy-Authorization and
-connection-specific fields are never propagated automatically. When an
-operation expects HTTP Upgrade, the next hop regenerates C<Connection: Upgrade>
-and re-advertises the same Upgrade protocol fields rather than forwarding the
-previous hop's connection-specific fields verbatim.
+redirects also remove Authorization and Cookie. On direct requests,
+Proxy-Authorization is not propagated automatically. When C<proxy> is explicit,
+Proxy-Authorization remains associated with that same proxy across redirect
+hops while target-origin Authorization and Cookie still follow cross-origin
+stripping policy. Connection-specific fields are regenerated rather than
+forwarded verbatim. When an operation expects HTTP Upgrade, the next hop
+regenerates C<Connection: Upgrade> and re-advertises the same Upgrade protocol
+fields.
 
 =head2 request bodies
 
@@ -991,20 +1053,27 @@ requests. Returns the Client.
 
 =head1 CONNECTION REUSE
 
-At most one idle connection is retained per origin. A concurrent request may
+At most one idle connection is retained per route origin. For direct requests,
+the route origin is the target origin. For a request using C<proxy>, the route
+origin is the proxy endpoint, so sequential requests for different target
+origins can reuse the same persistent proxy connection. A concurrent request may
 open another connection rather than queueing or using HTTP/1 pipelining. When
-multiple connections later become idle, one is retained and extras are closed.
+multiple connections later become idle for one route origin, one is retained
+and extras are closed.
 
-Each redirect hop independently selects a connection for its target origin.
-A connection that successfully leaves HTTP through Upgrade or CONNECT is never
-returned to the HTTP idle pool. A non-2xx CONNECT response remains HTTP and may
-leave a reusable proxy connection when its normal response framing permits it.
+Redirect security decisions remain based on target origins even when the route
+stays on one proxy connection. A connection that successfully leaves HTTP
+through Upgrade or CONNECT is never returned to the HTTP idle pool. A non-2xx
+CONNECT response remains HTTP and may leave a reusable proxy connection when its
+normal response framing permits it.
 
 =head1 HTTPS
 
-HTTPS uses the same Client::Connection class with a Linux::Event TLS transport,
-the URL host as the TLS server name, and C<http/1.1> as the offered ALPN
-protocol. C<connect_tunnel> may also use an C<https> proxy endpoint; that TLS
+HTTPS uses the same Client::Connection class with a Linux::Event TLS transport.
+For a direct HTTPS request, TLS is established to the target URL host. For an
+C<https> forward-proxy endpoint, TLS is established to the proxy and the target
+URI is then sent in absolute-form. That is distinct from end-to-end TLS through
+CONNECT. C<connect_tunnel> may also use an C<https> proxy endpoint; that TLS
 session terminates at the proxy before CONNECT establishes the byte tunnel.
 
 =head1 SEE ALSO
