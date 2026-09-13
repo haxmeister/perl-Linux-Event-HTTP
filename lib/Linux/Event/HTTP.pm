@@ -41,10 +41,11 @@ Transactions when redirects are followed.
 =item * L<Linux::Event::HTTP::Server> and
 L<Linux::Event::HTTP::Server::Connection> execute inbound HTTP.
 
-=item * L<Linux::Event::HTTP::Client> owns outbound URL, redirect, TLS,
-connection-selection, explicit CONNECT establishment, and protocol-handoff
-policy, while L<Linux::Event::HTTP::Client::Connection> executes one HTTP
-Transaction on one client connection.
+=item * L<Linux::Event::HTTP::Client> owns outbound target URL, redirect, TLS,
+connection/route selection, explicit forward-proxy routing, explicit CONNECT
+establishment, and protocol-handoff policy, while
+L<Linux::Event::HTTP::Client::Connection> executes one HTTP Transaction on one
+client connection.
 
 =back
 
@@ -68,7 +69,21 @@ ordered-byte backpressure machinery rather than a second HTTP output queue.
 High-level Client redirect handling preserves the Transaction invariant: every
 redirect hop is a separate Transaction retained by the Client::Operation.
 Method/body replay is explicit and conservative, and sensitive caller-supplied
-credentials are not propagated across origins automatically.
+origin credentials are not propagated across target origins automatically.
+
+Ordinary client requests can explicitly select a forward proxy with
+C<proxy =E<gt> $proxy_url>. The target URL remains the HTTP/Operation identity;
+the proxy URL selects the route connection. Proxied HTTP/1 requests use
+absolute-form request targets while Host identifies the target authority. The
+idle pool is keyed by route origin, so sequential requests for different target
+origins can reuse one persistent proxy connection. Redirect credential policy
+still follows target origins. Proxy selection remains high-level Perl policy;
+Client::Connection has no separate proxy mode or output queue.
+
+An HTTPS forward-proxy endpoint means TLS to the proxy. An HTTPS target sent with
+C<proxy> remains an absolute-form URI handled by that proxy; it is not silently
+converted into end-to-end target TLS or CONNECT. Explicit tunnel establishment
+continues to use C<connect_tunnel()>.
 
 HTTP/1.1 Upgrade is supported in both directions without introducing a second
 transport object. After a validated C<101 Switching Protocols>, the HTTP
@@ -77,26 +92,18 @@ stream object, including already-read post-HTTP bytes, to the selected protocol
 class. WebSocket framing and other upgraded protocols remain separate
 protocol-layer distributions.
 
-CONNECT follows the same ownership boundary with CONNECT-specific HTTP
-semantics. On the client, C<connect_tunnel()> separates the proxy endpoint URL
-from the authority-form tunnel target. Any successful 2xx CONNECT response
-completes the HTTP Transaction at the response-head boundary and transitions the
-same live stream to the caller-selected tunnel class; a non-2xx response remains
-ordinary HTTP and can expose its body normally.
-
-On the server, CONNECT arrives through the ordinary request callback. A valid
-bodyless HTTP/1.1 CONNECT can be accepted with
-C<< $conn->transaction->tunnel($class) >>. The successful Response and
-Transaction complete before Linux::Event hands the same accepted stream, plus
-any already-read post-head bytes, to the target class. The HTTP layer does not
-open the requested upstream endpoint, authorize destinations, or own a proxy
-relay; those are application or higher protocol-layer responsibilities.
+Client CONNECT uses the same live-stream handoff principle with CONNECT-specific
+HTTP semantics. C<connect_tunnel()> separates the proxy endpoint URL from the
+authority-form tunnel target. Any successful 2xx CONNECT response completes the
+HTTP Transaction at the response-head boundary and transitions the same live
+stream to the caller-selected tunnel class; a non-2xx response remains ordinary
+HTTP and can expose its body normally.
 
 =head1 DESIGN
 
 See F<README.md> for ordinary Client and Server examples and
-F<docs/ARCHITECTURE.md> for ownership, lifecycle, framing, redirect, pooling,
-Upgrade, CONNECT, and native-boundary details.
+F<docs/ARCHITECTURE.md> for ownership, lifecycle, framing, redirects,
+forward-proxy routing, pooling, Upgrade, CONNECT, and native-boundary details.
 F<docs/PICOHTTPPARSER-EXPERIMENT.md> records server parser provenance,
 correctness policy, and representation benchmarks.
 
@@ -105,9 +112,9 @@ correctness policy, and representation benchmarks.
 The distribution includes picohttpparser by Kazuho Oku and contributors. The
 vendored source and upstream license are under F<vendor/picohttpparser/>.
 
-The high-level Client uses the established L<URI> distribution for URL parsing
-and redirect-reference resolution; full URLs remain Client policy rather than
-Request message state.
+The high-level Client uses the established L<URI> distribution for target and
+proxy URL parsing and redirect-reference resolution; full URLs remain Client
+policy rather than Request message state.
 
 =head1 SECURITY
 

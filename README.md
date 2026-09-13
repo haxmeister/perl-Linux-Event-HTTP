@@ -116,9 +116,9 @@ classes are used on both sides. A locally constructed message is mutable until
 protocol commit. Received message metadata is committed/read-only.
 
 A Request contains an HTTP request-target, not a full URL. The high-level Client
-owns URL parsing, redirects, destination selection, Host synthesis, TLS policy,
-and connection reuse. This keeps Request protocol-correct and usable in either
-direction.
+owns URL parsing, redirects, destination and proxy-route selection, Host
+synthesis, TLS policy, and connection reuse. This keeps Request protocol-correct
+and usable in either direction.
 
 ## Redirects
 
@@ -151,8 +151,8 @@ my @transactions = $operation->transactions;
 my @urls         = $operation->urls;
 ```
 
-Relative Location values are resolved against the current absolute URL. URL
-fragments remain client-side URL state and are never sent in the HTTP
+Relative Location values are resolved against the current absolute target URL.
+URL fragments remain client-side URL state and are never sent in the HTTP
 request-target.
 
 Redirect method/body policy is intentionally conservative and familiar:
@@ -165,9 +165,12 @@ Redirect method/body policy is intentionally conservative and familiar:
   method-preserving redirect for a streamed body fails clearly rather than
   replaying unsafe or incomplete data.
 
-Redirect hops regenerate Host and HTTP framing fields. Cross-origin redirects
-also remove `Authorization` and `Cookie`. `Proxy-Authorization` and
-connection-specific fields are never propagated automatically.
+Redirect hops regenerate Host and HTTP framing fields. Cross-origin target
+redirects remove `Authorization` and `Cookie`. On direct requests,
+`Proxy-Authorization` is not propagated automatically. When the request uses an
+explicit `proxy`, caller-supplied `Proxy-Authorization` remains associated with
+that same proxy across redirect hops while target-origin credentials still obey
+the cross-origin stripping rule.
 
 `on_response`, `on_body`, and `on_complete` describe the final response.
 Intermediate redirect bodies are still consumed according to HTTP framing so
@@ -287,20 +290,26 @@ delete
 connect_tunnel
 ```
 
-`request($method, $url, ...)` accepts absolute `http` and `https` URLs and builds
-a canonical Request for each hop. `headers` is an array reference of `[name,
-value]` pairs. `body` supplies a complete scalar Request body; `stream_body`
-selects a Transaction-owned producer instead.
+`request($method, $url, ...)` accepts absolute `http` and `https` target URLs and
+builds a canonical Request for each hop. `headers` is an array reference of
+`[name, value]` pairs. `body` supplies a complete scalar Request body;
+`stream_body` selects a Transaction-owned producer instead. Ordinary requests
+may also opt into an explicit forward proxy with `proxy => $proxy_url`.
 
 The initial connection reuse policy is intentionally simple and bounded:
 
 - one in-flight Transaction per HTTP/1 connection;
 - no HTTP/1 pipelining;
 - sequential keep-alive reuse;
-- at most one idle connection retained per origin;
-- concurrent same-origin requests may use additional connections;
+- at most one idle connection retained per route origin;
+- for direct requests, the route origin is the target origin;
+- for proxied requests, the route origin is the explicit proxy origin;
+- sequential requests for different targets may therefore reuse one proxy
+  connection;
+- concurrent requests may use additional connections;
 - extra connections close when they later become idle;
-- each redirect hop independently selects a connection for its target origin;
+- redirect security remains based on target origins even when the proxy route
+  stays the same;
 - a connection that leaves HTTP through Upgrade or successful CONNECT is never
   returned to the HTTP idle pool.
 
@@ -314,8 +323,55 @@ Cancelling a Client::Operation cancels the active Transaction. Cancelling an
 HTTP/1 client Transaction closes its connection rather than trying to reuse a
 socket that may still contain an unfinished response.
 
-Automatic forward-proxy policy, automatic authentication helpers, a cookie jar,
-and richer pool policy remain later features.
+Automatic proxy discovery, automatic proxy authentication, a cookie jar, and
+richer pool policy remain later features.
+
+## Forward proxies
+
+An ordinary Client request can explicitly use an HTTP or HTTPS forward proxy:
+
+```perl
+my $operation = $client->get(
+    'http://origin.example/items?limit=10',
+    proxy => 'http://proxy.example:3128',
+    headers => [
+        [ 'Proxy-Authorization' => $value ],
+    ],
+);
+```
+
+This option is deliberately route policy, not a new message type. The target URL
+continues to define the Request/Operation identity, target Host, redirects, and
+origin credential policy. The proxy URL defines where the Client opens or reuses
+the HTTP/TLS connection.
+
+For direct requests, the Request target remains origin-form such as
+`/items?limit=10`. For a proxied ordinary request, the target becomes HTTP/1
+absolute-form such as:
+
+```text
+http://origin.example/items?limit=10
+```
+
+Host is regenerated from the target URL in proxy mode. A caller Host override is
+not allowed to make the absolute-form target and Host disagree.
+
+The proxy URL must be an absolute `http` or `https` URL without a path or query.
+An HTTPS proxy means TLS is established to the proxy itself. An HTTPS target URL
+used with `proxy` is still sent to the proxy as an absolute-form `https://...`
+request target; this does not establish end-to-end TLS to that target and is not
+a hidden CONNECT operation. Use `connect_tunnel()` when tunnel semantics are
+required.
+
+The idle pool is keyed by the route origin. Sequential requests for different
+target origins can therefore reuse one persistent proxy connection. Redirect
+security still compares target origins: `Authorization` and `Cookie` are removed
+on a cross-origin redirect, while caller-supplied `Proxy-Authorization` remains
+available for the unchanged explicit proxy.
+
+There is no environment proxy discovery, automatic 407 retry/authentication
+policy, PAC/NO_PROXY policy, SOCKS support, or constructor-wide default proxy in
+this initial capability.
 
 ## HTTPS
 
@@ -354,15 +410,16 @@ my $client = Linux::Event::HTTP::Client->new(
 $client->get('https://example.com/');
 ```
 
-The Client uses the URL host as the TLS server name and currently offers only
-`http/1.1` through ALPN. `connect_tunnel` also accepts an `https` proxy endpoint;
-that TLS session terminates at the proxy before CONNECT establishes the byte
+For a direct HTTPS URL, the Client uses the target URL host as the TLS server
+name and currently offers only `http/1.1` through ALPN. For an HTTPS forward
+proxy endpoint, TLS terminates at the proxy and the target URI is then sent in
+absolute-form. `connect_tunnel` also accepts an HTTPS proxy endpoint; that TLS
+session likewise terminates at the proxy before CONNECT establishes the byte
 tunnel.
 
 ## CONNECT tunnels
 
-The high-level Client can explicitly establish a CONNECT tunnel without turning
-ordinary requests into implicit proxy traffic:
+The high-level Client can explicitly establish a CONNECT tunnel:
 
 ```perl
 my $operation = $client->connect_tunnel(
@@ -396,43 +453,6 @@ Low-level callers can construct the CONNECT Request directly and use
 `Client::Connection->request(..., tunnel_to => $class, on_tunnel => ...)`.
 CONNECT Requests are HTTP/1.1, authority-form, bodyless, and contain neither
 Content-Length nor Transfer-Encoding.
-
-The server receives CONNECT through the same ordinary `on_request` callback as
-any other HTTP request. Accepting the tunnel is a Transaction lifecycle action:
-
-```perl
-on_request => sub ($conn, $req, $res) {
-    if ($req->method eq 'CONNECT') {
-        authorize_target($req->target) or do {
-            $res->status(403);
-            $res->body('forbidden');
-            return;
-        };
-
-        $res->header('X-Proxy', 'accepted');
-        $conn->transaction->tunnel('MyTunnelProtocol');
-        return;
-    }
-
-    ...;
-},
-```
-
-`Transaction->tunnel()` accepts a valid bodyless HTTP/1.1 CONNECT request with
-an authority-form `host:port` target and matching Host field. The successful
-Response may use any 2xx status and application headers, but it cannot carry an
-HTTP body, Content-Length, Transfer-Encoding, or `Connection: close`. The
-Response and Transaction complete before `transition_to()` hands the same live
-accepted stream to the target class; bytes already read after the CONNECT head
-are preserved as target-protocol input.
-
-`tunnel()` only accepts the HTTP handshake and transfers ownership of that
-accepted stream. Linux::Event::HTTP does not open the requested upstream target,
-relay bytes between two sockets, authorize destinations, or implement proxy
-authentication policy. Those are application or higher protocol-bridge
-responsibilities. Rejecting a CONNECT needs no special API: return an ordinary
-non-2xx Response, which may carry a body and may remain persistent like any
-other HTTP response.
 
 ## Upgrade
 
@@ -535,9 +555,9 @@ make test
 ```
 
 The distribution includes server/client, TLS, persistence, pipelining, Upgrade,
-CONNECT tunneling, request-body, streaming-upload, redirects, response-body,
-framing-error, bounded-buffer, Transaction/Operation lifecycle, and
-distribution-integrity coverage.
+CONNECT tunneling, explicit forward-proxy routing, request-body,
+streaming-upload, redirects, response-body, framing-error, bounded-buffer,
+Transaction/Operation lifecycle, and distribution-integrity coverage.
 
 See `docs/ARCHITECTURE.md` for detailed ownership and lifecycle rules and
 `docs/BENCHMARKING.md` for benchmark discipline.
@@ -545,7 +565,6 @@ See `docs/ARCHITECTURE.md` for detailed ownership and lifecycle rules and
 ## Scope
 
 Linux::Event::HTTP is an HTTP communications layer. It does not include routing,
-middleware, sessions, templates, PSGI, PAGI, proxy authorization/routing,
-upstream relay ownership, or general web-framework responsibilities. Reusable
-low-level socket, buffering, backpressure, and transport performance work
-belongs in Linux::Event core.
+middleware, sessions, templates, PSGI, PAGI, or general web-framework
+responsibilities. Reusable low-level socket, buffering, backpressure, and
+transport performance work belongs in Linux::Event core.

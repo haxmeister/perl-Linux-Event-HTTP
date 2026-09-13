@@ -68,6 +68,7 @@ t/69-client-connect.t
 t/70-client-connect-high-level.t
 t/71-client-connect-validation.t
 t/72-server-connect.t
+t/73-client-forward-proxy.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
