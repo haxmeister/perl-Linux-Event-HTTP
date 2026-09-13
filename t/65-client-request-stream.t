@@ -119,7 +119,7 @@ my $complete = 0;
 my $drain_calls = 0;
 my $known_cancel = 0;
 my $early_cancel = 0;
-my ($known_tx, $chunked_tx, $early_tx);
+my ($known_tx, $chunked_tx, $early_tx, $early_body);
 
 my $done = sub {
     return if ++$complete < 3;
@@ -206,15 +206,16 @@ $early_tx = $client->post(
             'early Response body is still handled normally');
         ok(!$tx->request->is_complete,
             'early final Response does not falsely complete unfinished Request');
-        ok($tx->request_body->is_cancelled,
-            'early final Response cancels unfinished Request producer');
+        ok($early_body->is_cancelled,
+            'early final Response cancels retained unfinished Request producer');
         $done->();
     },
     on_error => sub ($tx, $error) {
         die "early-response streaming request failed: $error\n";
     },
 );
-$early_tx->request_body->write('partial');
+$early_body = $early_tx->request_body;
+$early_body->write('partial');
 
 $loop->run;
 
