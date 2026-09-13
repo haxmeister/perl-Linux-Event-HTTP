@@ -260,7 +260,9 @@ subtest 'invalid CONNECT configurations fail before protocol execution' => sub {
         loop => $loop,
         host => '127.0.0.1',
         port => 0,
-        stream => {},
+        stream => {
+            on_data => sub ($stream, $bytes) { return; },
+        },
     );
     my $client = Linux::Event::HTTP::Client::Connection->connect(
         loop => $loop,
