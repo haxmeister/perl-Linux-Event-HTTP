@@ -6,15 +6,13 @@ Updated: 2026-09-13 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Main baseline for current work: `7e56fc0dc9e56330d1a7e92835142fa3358bc7d3`
-- Active branch: `feature/client-cookie-jar`
-- Draft PR: #28, `Integrate HTTP::CookieJar with Client`
-- Do not merge PR #28 without explicit user authorization.
+- Current main baseline: `d66a353b9fa1c90d1b43e2e136349be6a1a65e40`
+- No active feature PR is awaiting merge.
 - Linux::Event minimum: `0.113`
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
 
-PR #27, Client default forward proxy, was explicitly approved by the user and
-merged to main as `7e56fc0dc9e56330d1a7e92835142fa3358bc7d3`.
+PR #28, `Integrate HTTP::CookieJar with Client`, was explicitly approved by the
+user and merged to main as `d66a353b9fa1c90d1b43e2e136349be6a1a65e40`.
 
 ## Settled object model
 
@@ -37,29 +35,22 @@ Do not move URL, redirect-chain, proxy-route, pool, socket, cookie storage, or
 endpoint-role lifecycle into Request/Response. Do not redefine Transaction to
 span redirects.
 
-## Current client route policy
+## Current client policy baseline
 
-Ordinary Client requests support:
+Ordinary Client requests support direct routing, explicit per-request forward
+proxy routing, a Client default proxy, per-request proxy override, and
+`proxy => undef` direct-route bypass.
 
-- direct routing;
-- explicit per-request `proxy => $url`;
-- Client default `proxy => $url`;
-- per-request proxy override;
-- `proxy => undef` explicit direct-route bypass.
-
-Target origin controls Host, redirects, target credentials, cookies, and
-Operation URLs. Route origin controls connection acquisition and idle reuse.
+Target URL controls Host, redirects, target credentials, cookies, and Operation
+URLs. Route URL controls connection acquisition, TLS-to-proxy, and idle reuse.
 Client::Connection remains proxy-unaware.
 
 Client CONNECT remains explicit through `connect_tunnel()` and server CONNECT
 remains explicit through `Transaction->tunnel()`.
 
-## PR #28 - HTTP::CookieJar integration
+## HTTP::CookieJar integration
 
-Cookie standards work is delegated to `HTTP::CookieJar 0.014` rather than
-implemented in Linux::Event::HTTP.
-
-API:
+Cookie standards work is delegated to `HTTP::CookieJar 0.014`.
 
 ```perl
 use HTTP::CookieJar;
@@ -73,65 +64,62 @@ my $client = Linux::Event::HTTP::Client->new(
 
 Settled behavior:
 
-- the jar is explicitly injected; Client never silently creates cookie state;
+- cookie state is explicitly injected; Client never creates a hidden jar;
 - `Client->cookie_jar` returns the configured jar or undef;
-- before every ordinary request hop Client calls
+- before each ordinary request hop, Client calls
   `cookie_header($target_url)` and synthesizes Cookie only when non-empty;
-- every Set-Cookie field from ordinary final or redirect Responses is passed to
-  `add($target_url,$value)` before redirect planning or application response
-  callbacks;
+- every Set-Cookie field from final and redirect Responses is passed to
+  `add($target_url,$value)` before redirect planning or application callbacks;
 - redirect hops recompute Cookie from the new target URL;
-- target URL, never proxy route URL, is the cookie identity;
-- HTTP::CookieJar owns domain, path, expiry, Secure handling, and cookie ordering;
+- proxy route identity never becomes cookie origin identity;
+- domain, path, expiry, Secure behavior, and cookie ordering remain entirely in
+  `HTTP::CookieJar`;
 - caller Cookie fields are rejected while `cookie_jar` is configured so cookie
   selection has one owner;
-- applications seed or modify cookie state through the jar;
+- applications seed, share, persist, or otherwise manage the jar themselves;
 - `connect_tunnel()` does not consult the cookie jar;
-- Request, Response, Transaction, Client::Connection, output queues, and native
-  code are unchanged.
+- Request, Response, Transaction, Client::Connection, transport queues, and
+  native code are unchanged.
 
 Focused test: `t/75-client-cookie-jar.t` covers injected jar validation, seeded
-cookies, redirect Set-Cookie processing, final-response Set-Cookie processing,
-same-origin regeneration, cross-origin isolation, proxy-route isolation, and
-caller Cookie ownership.
+cookies, redirect/final Set-Cookie handling, same-origin regeneration,
+cross-origin isolation, proxy-route isolation, and caller Cookie ownership.
 
 ## Validation
 
-Initial cookie implementation head `d11f5523ed486b2f20131b5c37324e306a76ec16`
-ran CI #403 / run `34761459148`. Dependency installation and all existing tests
-passed; the only failure was a focused test assumption that `cookie_header()`
-returns undef for no matches. `HTTP::CookieJar` returns an empty string instead.
+Cookie implementation validation:
 
-Corrected executable head `b271f2282a2eeb6204014eee223bafd96d7575db`
-passed CI #404 / run `34761523124` across Perl 5.36, latest, and latest threaded;
-latest also passed end-to-end smoke and distribution integrity.
+- executable head `b271f2282a2eeb6204014eee223bafd96d7575db` passed CI #404 / run `34761523124`;
+- documentation/release-note head `07c9fd9cf23ffcb8b37b8a3d961748b9856c0f3d` passed CI #407 / run `34761690321`;
+- exact pre-merge head `4d71d75d41a704e3d3328bd03d926fdf74e20abc` passed CI #408 / run `34761744293`.
 
-Documentation/release-note head `07c9fd9cf23ffcb8b37b8a3d961748b9856c0f3d`
-passed CI #407 / run `34761690321` across Perl 5.36, latest, and latest threaded;
-latest also passed end-to-end smoke and distribution integrity.
+All three passed Perl 5.36, latest Perl, and latest threaded Perl; latest also
+passed end-to-end smoke and `disttest`.
 
 README, Client POD, `docs/CLIENT-POLICY.md`, `Changes`, `Makefile.PL`, MANIFEST,
 and focused tests are aligned. This handoff file is excluded from MANIFEST.
 
-## Next work after PR #28
+## Next useful work
 
-Do not merge #28 without explicit authorization.
+The strongest next step is a release-readiness review for the initial 0.001
+release rather than automatically adding another policy subsystem. Review:
 
-After cookie support is accepted, automatic proxy 407 challenge negotiation
-remains deliberately deferred. Caller-supplied Proxy-Authorization already works;
-automatic challenge handling would need scheme selection, credential lookup,
-retry policy, and safe body replay semantics.
+- public API coherence across Client, Server, Request, Response, Transaction,
+  Operation, CONNECT, Upgrade, bodies, redirects, proxies, and cookies;
+- README/POD/docs consistency;
+- dependency surface and metadata;
+- MANIFEST and `disttest` integrity;
+- unreleased/experimental wording that should be removed before CPAN;
+- whether any missing correctness tests should block release.
 
-Also keep environment proxy discovery, NO_PROXY, PAC, SOCKS, richer pool policy,
-and client response parser XS separate and need/measurement driven.
-
-A useful next review after merging cookie support is release-readiness for the
-0.001 distribution: public API coherence, docs/POD consistency, dependency
-surface, MANIFEST/disttest, and whether any remaining unreleased experimental
-language should be removed.
+Automatic proxy 407 challenge negotiation remains deliberately deferred because
+it requires scheme selection, credential lookup, retry policy, and safe Request
+body replay semantics. Environment proxy discovery, NO_PROXY, PAC, SOCKS,
+richer pool policy, and client response parser XS also remain need/measurement
+driven.
 
 ## Branch policy
 
 The user dislikes stale branches. Delete merged feature branches when available
-tooling permits it. The current connector can close superseded PRs but does not
-expose branch-ref deletion. Do not reuse merged feature branches for new work.
+tooling permits it. The current connector does not expose branch-ref deletion.
+Do not reuse merged feature branches for new work.
