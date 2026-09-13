@@ -6,6 +6,7 @@ use warnings;
 use Carp qw(croak);
 use Scalar::Util qw(blessed refaddr weaken);
 use URI ();
+use HTTP::CookieJar 0.014 ();
 
 use Linux::Event::HTTP::Client::Connection;
 use Linux::Event::HTTP::Client::Operation;
@@ -138,6 +139,13 @@ sub new ($class, %option) {
         : undef;
     _parse_proxy_url($proxy_url, 'new()') if defined $proxy_url;
 
+    my $cookie_jar = exists($option{cookie_jar})
+        ? delete($option{cookie_jar})
+        : undef;
+    croak 'new(): cookie_jar must be an HTTP::CookieJar object'
+        if defined($cookie_jar)
+        && (!blessed($cookie_jar) || !$cookie_jar->isa('HTTP::CookieJar'));
+
     croak 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -148,6 +156,7 @@ sub new ($class, %option) {
         max_redirects    => $max_redirects,
         tls              => $tls,
         proxy_url        => defined($proxy_url) ? "$proxy_url" : undef,
+        cookie_jar       => $cookie_jar,
         idle             => {},
         connections      => {},
         closed           => 0,
@@ -158,6 +167,7 @@ sub loop             ($self) { $self->{loop} }
 sub connection_class ($self) { $self->{connection_class} }
 sub max_redirects    ($self) { $self->{max_redirects} }
 sub proxy            ($self) { $self->{proxy_url} }
+sub cookie_jar       ($self) { $self->{cookie_jar} }
 sub is_closed        ($self) { !!$self->{closed} }
 
 sub _copy_headers ($headers) {
@@ -395,6 +405,13 @@ sub _start_operation_hop ($self, $operation, $spec) {
         : undef;
     my $route = $proxy // $destination;
     my $headers = _copy_headers($spec->{headers});
+    my $cookie_url = $destination->{absolute_target};
+
+    if (my $jar = $self->{cookie_jar}) {
+        my $cookie = $jar->cookie_header($cookie_url);
+        push @$headers, [ Cookie => $cookie ]
+            if defined($cookie) && length($cookie);
+    }
 
     if ($proxy) {
         @$headers = grep {
@@ -426,6 +443,11 @@ sub _start_operation_hop ($self, $operation, $spec) {
 
     my %connection_callback;
     $connection_callback{on_response} = sub ($transaction, $response) {
+        if (my $jar = $self->{cookie_jar}) {
+            $jar->add($cookie_url, $_)
+                for $response->header_values('Set-Cookie');
+        }
+
         $redirect = $self->_redirect_plan(
             $operation, $spec, $destination, $response,
         );
@@ -570,6 +592,14 @@ sub request ($self, $method, $url, %option) {
         if defined($proxy_url) && uc($method) eq 'CONNECT';
 
     my $headers = _copy_headers(delete $option{headers});
+    if ($self->{cookie_jar}) {
+        for my $pair (@$headers) {
+            next if !defined($pair->[0]) || ref($pair->[0]);
+            croak 'request(): Cookie header is managed by cookie_jar; add cookies to the jar instead'
+                if lc($pair->[0]) eq 'cookie';
+        }
+    }
+
     my $version = delete($option{version}) // '1.1';
     my $has_body = exists $option{body};
     my $body = delete $option{body};
@@ -825,10 +855,15 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
 
 =head1 SYNOPSIS
 
+    use HTTP::CookieJar;
+
+    my $jar = HTTP::CookieJar->new;
+
     my $client = Linux::Event::HTTP::Client->new(
         loop => $loop,
         max_redirects => 5,
         proxy => 'http://proxy.example:3128',
+        cookie_jar => $jar,
     );
 
     my $operation = $client->get(
@@ -844,32 +879,12 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
         },
     );
 
-An ordinary request can explicitly override the Client proxy without changing
-the Request/Response or Operation model:
-
-    my $operation = $client->get(
-        'http://origin.example/items?limit=10',
-        proxy => 'http://other-proxy.example:3128',
-    );
-
-A request can explicitly bypass a configured Client proxy:
-
-    my $operation = $client->get(
-        'http://origin.example/items?limit=10',
-        proxy => undef,
-    );
-
 =head1 DESCRIPTION
 
 C<Linux::Event::HTTP::Client> is the high-level outbound HTTP entry point. It
 owns URL parsing, destination selection, redirect policy, connection creation,
-HTTPS transport policy, explicit forward-proxy routing, and a small bounded
-reuse policy.
-
-A Client may configure one default forward proxy. Individual operations may
-override that route or explicitly bypass it with C<proxy =E<gt> undef>. Proxy
-configuration remains high-level Client policy; Client::Connection stays
-proxy-unaware.
+HTTPS transport policy, explicit forward-proxy routing, optional cookie-jar
+integration, and a small bounded reuse policy.
 
 Client methods return L<Linux::Event::HTTP::Client::Operation>. A client
 operation normally contains one L<Linux::Event::HTTP::Transaction>, but each
@@ -891,7 +906,6 @@ requests bounded whole-body buffering; there is no implicit unbounded buffering.
         'https://example.com/api/items',
         body => $bytes,
         max_redirects => 5,
-        on_redirect => sub ($op, $tx, $res, $next_url) { ... },
         on_response => sub ($tx, $res) { ... },
         on_complete => sub ($tx) { ... },
         on_error => sub ($tx, $error) { ... },
@@ -907,122 +921,77 @@ A per-request C<proxy =E<gt> $other_proxy> overrides the Client default, while
 C<proxy =E<gt> undef> explicitly bypasses it for that operation.
 
 With a selected proxy, the Client connects to the explicit C<http> or C<https>
-proxy endpoint and sends the target URL in HTTP/1 absolute-form. The Host field
-is regenerated from the target URL while the proxy endpoint controls only where
-the connection is made. The proxy URL must not contain a path or query. CONNECT
-is intentionally not expressed through this option; use C<connect_tunnel> for
-tunnel establishment.
-
-An C<https> target URL used with a forward proxy is still sent to that proxy as
-an absolute-form C<https://...> request target. This asks the proxy to service
-the HTTPS URI itself; it is not an end-to-end TLS tunnel to the target. Use
-C<connect_tunnel> when the application needs a CONNECT tunnel and owns the
-protocol run inside it.
+proxy endpoint and sends the target URL in HTTP/1 absolute-form. Host remains
+the target Host. Target identity and route identity remain separate.
 
 Callbacks C<on_response>, C<on_body>, and C<on_complete> describe the final
 response. Intermediate redirect response bodies are consumed according to the
 normal HTTP framing rules but are not delivered through C<on_body>.
 C<on_redirect> runs after an intermediate redirect Transaction completes and
-before the next hop starts:
+before the next hop starts.
 
-    on_redirect => sub ($operation, $tx, $res, $next_url) {
-        ...
-    }
+=head2 cookie_jar
 
-C<on_informational> remains per-Transaction and can therefore run on any hop.
+    my $jar = HTTP::CookieJar->new;
+    my $client = Linux::Event::HTTP::Client->new(
+        loop => $loop,
+        cookie_jar => $jar,
+    );
+
+C<cookie_jar> is an optional injected L<HTTP::CookieJar>. The Client does not
+create a jar implicitly. This keeps cookie storage lifetime, sharing, loading,
+and persistence under application control.
+
+Before each ordinary Request hop, the Client asks the jar for
+C<cookie_header($target_url)> and synthesizes the Cookie field when one is
+returned. Every Set-Cookie field on an ordinary final or redirect Response is
+fed to C<add($target_url, $set_cookie)> before redirect policy or application
+response callbacks run.
+
+Cookie URL identity is always the target URL. A selected forward proxy never
+becomes the cookie origin merely because the transport connection is made to
+the proxy. Redirect hops ask the jar again for the new target URL, leaving
+HTTP::CookieJar to enforce domain, path, expiry, and Secure rules.
+
+When C<cookie_jar> is configured, caller-supplied Cookie fields are rejected so
+there is a single owner of cookie selection. Seed or override cookie state
+through the jar itself. C<connect_tunnel> does not consult the jar because its
+HTTP exchange is with the explicitly named proxy endpoint rather than an
+ordinary target resource request.
+
+The C<cookie_jar> accessor returns the configured jar object or undef.
 
 =head2 connect_tunnel
 
-    my $operation = $client->connect_tunnel(
-        'http://proxy.example:3128',
-        'target.example:443',
-        tunnel_to => 'MyTunnelProtocol',
-        headers => [
-            [ 'Proxy-Authorization' => $value ],
-        ],
-        on_tunnel => sub ($operation, $tx, $res, $connection) {
-            ...;
-        },
-        on_error => sub ($tx, $error) {
-            ...;
-        },
-    );
-
-Establishes one explicit HTTP/1.1 CONNECT tunnel through the proxy endpoint URL.
-The first argument chooses where the HTTP connection is made; the second is the
-authority-form C<host:port> target sent by CONNECT. The proxy URL may use C<http>
-or C<https> but must not contain a path or query. TLS on an C<https> proxy URL is
-TLS to the proxy itself. The Client-level default C<proxy> is intentionally not
-consulted because C<connect_tunnel> already names its proxy endpoint explicitly.
-
-The method synthesizes Host from the tunnel target when absent and returns a
-Client::Operation containing the single CONNECT Transaction. Automatic redirect
-following is deliberately not applied to proxy CONNECT establishment.
-
-C<tunnel_to> is required and names the Linux::Event stream class that takes over
-the live socket after any successful 2xx response. C<on_tunnel> receives
-C<($operation,$tx,$res,$connection)> after the Response and Transaction are
-complete and after the same socket has transitioned to that class. Bytes already
-read after the successful response head become tunnel input. The transitioned
-socket is never returned to the HTTP idle pool.
-
-A non-2xx response remains ordinary HTTP. C<on_response>, C<on_body>, and
-C<buffer_body> may therefore inspect a proxy error such as 407, and a persistent
-failed CONNECT connection may return to the proxy-origin idle pool after its
-response body completes. C<buffer_body> and C<on_body> remain mutually exclusive.
-Caller-supplied C<Proxy-Authorization> is passed through as an ordinary header;
-automatic proxy authentication policy is outside this method.
+C<connect_tunnel($proxy_url, $target_authority, ...)> establishes one explicit
+HTTP/1.1 CONNECT tunnel through the named proxy endpoint. The Client-level
+default proxy and cookie jar are not consulted for tunnel routing or cookies.
+A successful 2xx response transitions the same live Linux::Event stream to the
+required C<tunnel_to> class. Non-2xx responses remain ordinary HTTP.
 
 =head2 redirect policy
 
 C<max_redirects> is a non-negative integer and defaults to 5. It can be set on
 the Client or overridden per request. Zero disables automatic redirect
-following and exposes a 3xx response as the final response without interpreting
-its Location fields as redirect instructions.
+following. Automatic redirects recognize 301, 302, 303, 307, and 308 when
+exactly one Location field is present.
 
-Automatic redirects recognize 301, 302, 303, 307, and 308 when exactly one
-Location field is present. Relative Location values are resolved against the
-current absolute URL.
+301 and 302 change POST to GET and discard the body. 303 uses GET, or HEAD when
+the original method was HEAD, and discards the body. 307 and 308 preserve the
+method and body. Complete scalar bodies can be replayed for method-preserving
+redirects; streaming bodies are not replayed automatically.
 
-For compatibility with prevailing HTTP user-agent behavior, 301 and 302 change
-POST to GET and discard the body. 303 uses GET, or HEAD when the original method
-was HEAD, and discards the body. 307 and 308 preserve the method and body.
-
-A complete scalar Request body can be replayed for a method-preserving
-redirect. A streaming Request body is intentionally not replayed automatically
-because a producer is not inherently rewindable. A method-preserving redirect
-for a streaming Request therefore terminates the Client operation with a clear
-error. Redirects that change POST to GET can proceed because the subsequent
-request has no body.
-
-Redirect hops regenerate Host and HTTP message-framing fields. Cross-origin
-redirects also remove Authorization and Cookie. On direct requests,
-Proxy-Authorization is not propagated automatically. When a proxy route is
-selected, Proxy-Authorization remains associated with that same proxy across
-redirect hops while target-origin Authorization and Cookie still follow
-cross-origin stripping policy. Connection-specific fields are regenerated
-rather than forwarded verbatim. When an operation expects HTTP Upgrade, the
-next hop regenerates C<Connection: Upgrade> and re-advertises the same Upgrade
-protocol fields.
+Authorization and caller-managed Cookie fields are stripped on cross-origin
+redirects. With C<cookie_jar>, Cookie is regenerated independently for every
+hop from the new target URL, so cookie domain/path/security policy belongs to
+HTTP::CookieJar rather than redirect-header copying.
 
 =head2 request bodies
 
 C<body> supplies a complete scalar Request body. C<stream_body =E<gt> { ... }>
 selects incremental body production instead; the two are mutually exclusive.
-The producer remains owned by the current Transaction and is conveniently
-available from the returned operation:
-
-    my $operation = $client->post(
-        $url,
-        stream_body => {
-            on_drain  => sub ($body) { ... },
-            on_cancel => sub ($body) { ... },
-        },
-    );
-
-    my $body = $operation->request_body;
-    $body->write($bytes);
-    $body->complete;
+The producer belongs to the current Transaction and is available through the
+returned operation.
 
 A supplied Content-Length is enforced exactly; otherwise HTTP/1.1 uses chunked
 transfer coding automatically. HTTP/1.0 streaming requires Content-Length.
@@ -1030,33 +999,14 @@ transfer coding automatically. HTTP/1.0 streaming requires Content-Length.
 =head2 client Upgrade
 
 C<upgrade_to =E<gt> $class> requests a live HTTP/1.1 protocol handoff through
-the low-level Client::Connection. The outgoing Request must be bodyless and
-must advertise C<Connection: Upgrade> plus the offered C<Upgrade> protocol.
-
-On a validated C<101 Switching Protocols>, the HTTP Transaction completes and
-the same live stream object transitions to C<$class>. Any bytes already read
-after the 101 head are delivered to the target class. The optional callback:
-
-    on_upgrade => sub ($operation, $tx, $res, $connection) {
-        ...;
-    }
-
-runs after transition. The Client operation is already complete at that point.
-C<on_complete> subsequently runs for the completed HTTP Transaction. The
-transitioned connection is not returned to the HTTP idle pool. Redirect hops
-may precede the successful 101; Upgrade handshake fields are regenerated for
-each hop.
+the low-level Client::Connection. On a validated 101 response, the HTTP
+Transaction completes and the same live stream transitions to C<$class>.
 
 =head2 buffer_body
 
-C<buffer_body =E<gt> $max_bytes> must be a positive integer byte limit and
-cannot be combined with C<on_body>. The limit counts the same body bytes that
-C<on_body> would receive after HTTP/1 chunk framing has been removed. On
-redirect hops the same bound applies while the intermediate response is drained;
-the final completed body is available through C<< $operation->response->body >>.
-
-A limit failure is a terminal Client operation error and closes the affected
-HTTP/1 connection.
+C<buffer_body =E<gt> $max_bytes> requests bounded whole-response buffering and
+cannot be combined with C<on_body>. The limit applies after HTTP transfer
+framing has been removed and also applies while redirect bodies are consumed.
 
 =head2 get, head, post, put, delete
 
@@ -1077,8 +1027,7 @@ Returns the Client default redirect limit.
 =head2 proxy
 
 Returns the configured Client default forward-proxy URL, or undef when there is
-no default proxy. This accessor describes Client configuration only; an
-individual operation may override or bypass the default.
+no default proxy. An individual operation may override or bypass the default.
 
 =head2 is_closed
 
@@ -1094,29 +1043,24 @@ requests. Returns the Client.
 At most one idle connection is retained per route origin. For direct requests,
 the route origin is the target origin. For a request using a proxy route, the
 route origin is the proxy endpoint, so sequential requests for different target
-origins can reuse the same persistent proxy connection. A concurrent request may
-open another connection rather than queueing or using HTTP/1 pipelining. When
-multiple connections later become idle for one route origin, one is retained
-and extras are closed.
+origins can reuse the same persistent proxy connection. Cookie selection does
+not use route origin.
 
-Redirect security decisions remain based on target origins even when the route
-stays on one proxy connection. A connection that successfully leaves HTTP
-through Upgrade or CONNECT is never returned to the HTTP idle pool. A non-2xx
-CONNECT response remains HTTP and may leave a reusable proxy connection when its
-normal response framing permits it.
+A connection that successfully leaves HTTP through Upgrade or CONNECT is never
+returned to the HTTP idle pool. A non-2xx CONNECT response remains HTTP and may
+leave a reusable proxy connection when its normal response framing permits it.
 
 =head1 HTTPS
 
 HTTPS uses the same Client::Connection class with a Linux::Event TLS transport.
 For a direct HTTPS request, TLS is established to the target URL host. For an
 C<https> forward-proxy endpoint, TLS is established to the proxy and the target
-URI is then sent in absolute-form. That is distinct from end-to-end TLS through
-CONNECT. C<connect_tunnel> may also use an C<https> proxy endpoint; that TLS
-session terminates at the proxy before CONNECT establishes the byte tunnel.
+URI is then sent in absolute-form. Secure-cookie selection still uses the target
+URL supplied to HTTP::CookieJar, not the proxy transport scheme.
 
 =head1 SEE ALSO
 
-L<Linux::Event::HTTP::Client::Operation>,
+L<HTTP::CookieJar>, L<Linux::Event::HTTP::Client::Operation>,
 L<Linux::Event::HTTP::Client::Connection>, L<Linux::Event::HTTP::Request>,
 L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Transaction>,
 L<Linux::Event::HTTP::Body::Stream>.
