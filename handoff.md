@@ -6,14 +6,25 @@ Updated: 2026-09-13 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Current main before this handoff refresh: `eee485823c3ba1cff4ba508aa4094a18e861002c`
+- Main baseline for current work: `5e3809aaf60073da2f4ed5b6f93b724780ca3861`
+- Active branch: `feature/client-default-proxy`
+- Draft PR: #27, `Add Client default forward proxy`
+- Do not merge PR #27 without explicit user authorization.
 - Linux::Event minimum: `0.113`
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
-- Client CONNECT PR #23 merged as `bb44d15bb51d51a8d4ea0ddfa531532adc801963`.
-- Server CONNECT PR #24 merged as `cb57f65c622d483bc77d2a8669ccb0e4494949bd`.
-- Conflicted forward-proxy PR #25 was closed as superseded.
-- Clean integration PR #26 merged server CONNECT plus forward-proxy Client work as `a57863cdeb568f8bafcf31ed2d7bb2bbc34ee0f8`.
-- Combined CONNECT documentation was then added on main as `eee485823c3ba1cff4ba508aa4094a18e861002c`.
+
+Merged baseline includes:
+
+- client CONNECT via `connect_tunnel()`;
+- server CONNECT via `Transaction->tunnel()`;
+- explicit per-request forward-proxy routing;
+- combined CONNECT documentation in `docs/CONNECT.md`;
+- client-policy roadmap in `docs/CLIENT-POLICY.md`.
+
+The combined server-CONNECT + forward-proxy integration head
+`2c75feab9432788241d251e2c2e49e4c103f0285` passed CI #394 / run
+`34745011679` across Perl 5.36, latest, and latest threaded; latest also passed
+end-to-end smoke and distribution integrity.
 
 ## Settled object model
 
@@ -32,79 +43,92 @@ Client::Connection / Server::Connection
     HTTP/1 protocol executors on Linux::Event stream transports
 ```
 
-Do not move URL, redirect-chain, proxy-route, pool, socket, or endpoint-role lifecycle into Request/Response. Do not redefine Transaction to span redirects.
+Do not move URL, redirect-chain, proxy-route, pool, socket, or endpoint-role
+lifecycle into Request/Response. Do not redefine Transaction to span redirects.
 
-## CONNECT support
+## PR #27 - Client default forward proxy
 
-Client CONNECT is explicit:
-
-```perl
-$client->connect_tunnel(
-    'http://proxy.example:3128',
-    'target.example:443',
-    tunnel_to => 'MyTunnelProtocol',
-);
-```
-
-Any successful 2xx response ends HTTP framing at the response-head boundary and transitions the same live stream. Non-2xx responses remain ordinary HTTP and may leave a reusable proxy connection.
-
-Server CONNECT is explicit through the active Transaction:
+The active branch adds configuration convenience on top of the already-correct
+per-request proxy route.
 
 ```perl
-if ($req->method eq 'CONNECT') {
-    $conn->transaction->tunnel('MyTunnelProtocol');
-}
-```
-
-Server tunnel acceptance validates HTTP/1.1 authority-form CONNECT, matching Host, absent request framing/body, and a bodyless 2xx response. The HTTP Transaction completes before Linux::Event `transition_to()` hands the same accepted stream to the target class. Destination authorization, upstream connection creation, and byte relaying remain outside Linux::Event::HTTP.
-
-Detailed combined behavior is documented in `docs/CONNECT.md`.
-
-## Explicit forward proxy routing
-
-Ordinary high-level Client requests may explicitly select a route:
-
-```perl
-$client->get(
-    'http://origin.example/path',
+my $client = Linux::Event::HTTP::Client->new(
+    loop  => $loop,
     proxy => 'http://proxy.example:3128',
 );
+
+# Uses the Client default.
+$client->get('http://origin.example/path');
+
+# Overrides the Client default for this operation.
+$client->get(
+    'http://origin.example/path',
+    proxy => 'http://other-proxy.example:3128',
+);
+
+# Explicitly bypasses the Client default.
+$client->get(
+    'http://origin.example/path',
+    proxy => undef,
+);
 ```
 
-Rules:
+A new read-only `Client->proxy` accessor returns the configured default proxy URL
+or undef.
 
-- direct requests keep origin-form request targets;
-- proxied ordinary requests use HTTP/1 absolute-form request targets;
-- Host is regenerated from the target URL in proxy mode;
-- target origin remains the redirect/security identity;
-- route origin selects the actual connection and idle-pool entry;
-- one persistent proxy connection may serve sequential requests for different target origins;
-- cross-origin redirects strip Authorization and Cookie;
-- caller-supplied Proxy-Authorization remains associated with the same explicit proxy route;
-- HTTP and HTTPS proxy endpoints are allowed;
-- an HTTPS target used with `proxy` is still forwarded in absolute-form and is not an implicit CONNECT tunnel;
-- CONNECT through ordinary `proxy` is rejected in favor of `connect_tunnel()`;
+Semantics remain unchanged beneath the high-level Client:
+
+- target origin controls Host, redirects, target credentials, and Operation URL;
+- route origin controls actual connection acquisition and idle reuse;
+- redirect hops retain the route selected for the operation;
 - Client::Connection remains proxy-unaware;
-- no automatic environment proxy discovery, proxy authentication, PAC/NO_PROXY policy, SOCKS policy, constructor-wide proxy default, extra output queue, or proxy-specific XS is introduced.
+- `connect_tunnel()` keeps its own explicit proxy endpoint and does not consult
+  the Client default;
+- ordinary CONNECT routed through a selected default proxy is rejected in favor
+  of `connect_tunnel()`;
+- no environment proxy discovery, PAC/NO_PROXY, SOCKS, automatic proxy auth,
+  extra output queue, proxy object, or proxy-specific XS is added.
 
-Focused coverage: `t/73-client-forward-proxy.t`.
+Focused test: `t/74-client-default-proxy.t` covers constructor validation,
+default routing, per-request override, explicit bypass, correct absolute/origin
+request-target forms, Host identity, and ordinary CONNECT rejection.
 
-## Validation history
+Executable head `8d93edaefa5cdfd51e9286cb1908ce4bf2df21c5` passed CI #399 / run
+`34745480988` across Perl 5.36, latest, and latest threaded; latest also passed
+end-to-end smoke and `disttest`.
 
-- Server CONNECT exact head `c7fa07f5ae50873d2acebeda768c1201aa37fcdc` passed CI #383 / run `34740746617` across Perl 5.36, latest, and latest threaded; latest also passed smoke and `disttest`.
-- Forward-proxy exact pre-integration head `5b19a6a70d98bc5ae801a8ebef43c8f9e69142af` passed CI #392 / run `34742787560` across the same matrix, including latest smoke and `disttest`.
-- Combined integration head `2c75feab9432788241d251e2c2e49e4c103f0285` passed CI #394 / run `34745011679` across Perl 5.36, latest, and latest threaded; latest also passed end-to-end smoke and distribution integrity.
+Documentation-complete head `df35f43f98f13b1db9fceb6c98ef2b198582e2da`
+passed CI #400 / run `34745650383` across Perl 5.36, latest, and latest threaded;
+latest also passed end-to-end smoke and distribution integrity. README, Client
+POD, `docs/CLIENT-POLICY.md`, MANIFEST, and the focused test are aligned.
 
-## Next work
+The commit after that checkpoint only refreshes this handoff and is excluded
+from MANIFEST.
 
-Evaluate the next client-policy layer from main. The leading candidates are:
+## Client policy after PR #27
 
-1. Client-level default proxy with explicit per-request override, building only on the already-correct per-request proxy mechanics.
-2. Proxy-authentication convenience/policy, while avoiding automatic credential guessing or a large challenge framework.
-3. Cookie handling, preferably by reusing a mature CPAN implementation rather than reimplementing cookie RFC behavior.
+The strongest next policy candidate is injected cookie-jar support using
+`HTTP::CookieJar`, which is attractive because it does not require
+HTTP::Request/HTTP::Response objects and therefore fits this distribution's
+message model. Cookie origin must remain the target URL, never the proxy route.
 
-Keep automatic environment proxy discovery, PAC/NO_PROXY policy, SOCKS, richer pool behavior, and parser XS separate and measurement/need driven.
+Automatic proxy 407 challenge negotiation remains deferred. Caller-supplied
+`Proxy-Authorization` already works; challenge negotiation introduces scheme,
+credential, retry, and streamed-body replay policy that should be driven by a
+concrete need.
+
+Environment proxy discovery, NO_PROXY, PAC, SOCKS, richer pool behavior, and
+client parser XS remain separate/deferred.
+
+## Release-note cleanup
+
+`Changes` should receive consolidated bullets for explicit forward-proxy routing
+and Client default proxy behavior before the eventual 0.001 release. Do not lose
+the existing detailed unreleased history when doing that cleanup.
 
 ## Branch policy
 
-The user dislikes stale branches. Delete merged feature branches when the available GitHub tooling permits it. The current connector can close superseded PRs but does not expose branch-ref deletion. Do not reuse old merged feature branches for new work.
+The user dislikes stale branches. Delete merged feature branches when the
+available GitHub tooling permits it. The current connector can close superseded
+PRs but does not expose branch-ref deletion. Do not reuse old merged feature
+branches for new work.
