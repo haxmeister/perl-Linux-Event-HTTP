@@ -326,9 +326,9 @@ terminal transport observation independent of application read pause.
 
 ## CI / tests
 
-After moving all remaining server lifecycle state off Response and migrating
-Upgrade/deferred output to Transaction, CI run `34728237116` (PR run #297)
-passed:
+Code checkpoint CI run `34728237116` (PR run #297), after moving all remaining
+server lifecycle state off Response and migrating Upgrade/deferred output to
+Transaction, passed:
 
 - Perl 5.36;
 - latest Perl;
@@ -336,6 +336,12 @@ passed:
 - full test suite;
 - end-to-end benchmark smoke;
 - `make disttest` / distribution integrity.
+
+The subsequent full branch validation run `34728398800` (PR run #302), after the
+README, architecture, Changes, handoff, and public Server POD were aligned with
+that model, also passed the same test matrix. A later documentation-only
+benchmarking clarification does not alter executable code or the validated
+message/Transaction boundary.
 
 Important focused tests include:
 
