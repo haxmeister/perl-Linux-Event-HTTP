@@ -269,13 +269,13 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
     my $status = $response->status;
     return undef if !$REDIRECT_STATUS{$status};
 
+    return undef if $spec->{max_redirects} == 0;
+
     my @location = $response->header_values('Location');
     return undef if !@location;
     return {
         error => 'redirect response contains multiple Location fields',
     } if @location != 1;
-
-    return undef if $spec->{max_redirects} == 0;
     return {
         error => 'maximum redirect count exceeded',
     } if $operation->redirect_count >= $spec->{max_redirects};
@@ -664,7 +664,8 @@ C<on_informational> remains per-Transaction and can therefore run on any hop.
 
 C<max_redirects> is a non-negative integer and defaults to 5. It can be set on
 the Client or overridden per request. Zero disables automatic redirect
-following and exposes a 3xx response as the final response.
+following and exposes a 3xx response as the final response without interpreting
+its Location fields as redirect instructions.
 
 Automatic redirects recognize 301, 302, 303, 307, and 308 when exactly one
 Location field is present. Relative Location values are resolved against the
