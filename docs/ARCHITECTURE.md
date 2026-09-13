@@ -15,8 +15,8 @@ The design has four distinct responsibilities:
 - **Messages** - Request and Response represent HTTP messages independent of
   whether they were created or received by a client or server.
 - **Exchange lifecycle** - Transaction represents exactly one Request/Response
-  exchange and owns lifecycle operations such as cancellation and outgoing
-  incremental body producers.
+  exchange and owns cancellation, response-output progress, protocol handoff,
+  and outgoing incremental body producers.
 
 `Body::Stream` is the writable producer used by Transaction for an outgoing
 incremental body. It is not a message and does not own a second transport queue.
@@ -94,6 +94,10 @@ is_complete                     is_complete
 request-target, while URL resolution, scheme, authority, destination host, and
 redirect resolution are Client concerns.
 
+Request and Response deliberately do not retain their peer message, carrying
+Connection, output writer, or protocol-transition state. Those relationships and
+operations belong to Transaction and the protocol executor.
+
 HTTP/1-only parser decisions such as transfer-body framing and persistence are
 private protocol-execution state rather than generic Request message methods.
 
@@ -108,16 +112,20 @@ Transaction
     lifecycle state
     cancellation
     error
+    response-output progress
     outgoing body producer(s)
+    protocol handoff state
 ```
 
 A redirect is another HTTP exchange and therefore another Transaction. A
 Transaction does not own a socket, parser, connection pool, or transport queue.
 Its current Client/Connection controller performs the protocol work.
 
-The coarse public lifecycle is intentionally small: Request, Response, state,
-cancellation, completion, and error. Protocol implementations may track finer
-wire phases privately.
+The public lifecycle intentionally stays smaller than protocol-internal wire
+state. In addition to Request, Response, state, cancellation, completion, and
+error, Transaction exposes operations that genuinely belong to an exchange:
+`response_body`, `send_response`, `upgrade`, `is_response_started`, and
+`is_upgrading`.
 
 ## Server transaction model
 
@@ -171,17 +179,26 @@ $res->header('Content-Type', 'text/plain');
 $res->body("hello\n");
 ```
 
-`body(...)` is a complete-body declaration, not an immediate transport write.
-While an HTTP callback is running, the Response remains mutable until that
-callback returns:
+`body(...)` is a complete-body declaration, not a transport write. While an HTTP
+callback is running, the Response remains mutable until that callback returns:
 
 ```perl
 $res->body("hello\n");
 $res->header('X-After-Body', 'yes');
 ```
 
-When `body(...)` is called later from an asynchronous event callback while a
-Response is waiting, it commits the complete response immediately.
+The server automatically sends that scalar Response after callback return when
+the Transaction can advance.
+
+If application work completes the Response later from another event, the
+message remains transport-independent. Retain its Transaction and explicitly
+send the configured scalar message:
+
+```perl
+my $tx = $conn->transaction;
+$tx->response->body("later\n");
+$tx->send_response;
+```
 
 Incremental server response production is explicit through the active
 Transaction:
@@ -206,6 +223,21 @@ Response deliberately has no public `write`, `complete`, `stream_body`, or
 `end` method. Public message completion introspection remains
 `Response->is_complete`; whole-exchange completion is
 `Transaction->is_complete`.
+
+## Commit and completion state
+
+Message completion and protocol commit are intentionally different.
+
+- `Response->body($bytes)` means the complete message body is known, so
+  `Response->is_complete` is true immediately.
+- The Response remains mutable until the protocol commits it for output.
+- Once committed, Response metadata cannot change.
+- `Transaction->is_response_started` reports that response output has committed
+  and begun.
+- `Transaction->is_complete` means the complete HTTP exchange has succeeded.
+
+This distinction keeps Request and Response useful as messages while allowing
+Transaction to model asynchronous execution correctly.
 
 ## Backpressure
 
@@ -290,7 +322,8 @@ when application code asks for them.
 
 The scalar-response builder is a private optimization behind eligible ordinary
 `Response->body(...)` calls. Applications do not select a special performance
-callback or alternate Transaction API.
+callback or alternate Transaction API. The optimized path updates the same
+Transaction output/completion state as the general serializer.
 
 ## HTTP/1 request validation
 
@@ -341,24 +374,27 @@ HTTPS class hierarchy.
 
 ## Upgrade
 
-HTTP Upgrade is a transaction boundary, not a second transport acquisition.
-Upgrade still currently enters through the server Response:
+HTTP Upgrade is a Transaction lifecycle operation, not a Response method and not
+a second transport acquisition:
 
 ```perl
 $res->header('Upgrade', 'my-protocol');
-$res->upgrade('MyProtocolConnection');
+$conn->transaction->upgrade('MyProtocolConnection');
 ```
 
-HTTP validates the HTTP/1.1 Upgrade request and response, queues the 101
-response, then Linux::Event `transition_to()` hands the same live stream object
-to the target protocol class.
+The Response contains the HTTP switching-message metadata. The Transaction owns
+the decision and pending lifecycle state. Calling `upgrade()` validates the
+request/response pair, target class, body state, and HTTP/1.1 requirements before
+freezing Response metadata.
+
+The handoff queues the 101 response, marks the HTTP Transaction complete, then
+Linux::Event `transition_to()` hands the same live stream object to the target
+protocol class. `Transaction->is_upgrading` is true while that handoff is
+pending.
 
 Socket identity, TLS state, queued output, backpressure, deadlines, watcher
 state, application data, and bytes already read beyond the HTTP request head are
 preserved.
-
-Upgrade lifecycle ownership is a remaining server-specific concern that can be
-moved toward Transaction independently of the message/body model.
 
 WebSocket handshake/frame semantics belong in a separate
 `Linux::Event::WebSocket` distribution. Linux::Event::HTTP owns only the HTTP
@@ -388,20 +424,21 @@ questions. See `docs/BENCHMARKING.md` for the measurement contract.
 
 The current server/client-ready foundation includes:
 
-1. Direction-neutral Request and Response message types.
+1. Direction-neutral Request and Response message types with no server binding.
 2. Locally constructible messages plus lazy native parsed Request state.
 3. A Transaction object representing exactly one Request/Response exchange.
-4. HTTP/1 request-head parsing, validation, and persistence policy.
-5. Incremental Content-Length and chunked request-body delivery.
-6. Expect: 100-continue handling.
-7. Complete scalar Response bodies and Transaction-owned incremental response production.
-8. Ordered persistent/pipelined request processing.
-9. Deferred asynchronous scalar Response bodies.
-10. Linux::Event backpressure propagation for incremental response producers.
-11. TLS transport integration.
-12. Atomic HTTP/1.1 Upgrade handoff.
-13. One consolidated private `_HTTP1` native extension.
-14. One canonical server callback API, with `$conn->transaction` available when lifecycle operations are needed.
+4. Transaction-owned response-output state, cancellation, deferred send, and Upgrade.
+5. HTTP/1 request-head parsing, validation, and persistence policy.
+6. Incremental Content-Length and chunked request-body delivery.
+7. Expect: 100-continue handling.
+8. Complete scalar Response bodies and Transaction-owned incremental response production.
+9. Ordered persistent/pipelined request processing.
+10. Deferred asynchronous scalar Responses through explicit `Transaction->send_response`.
+11. Linux::Event backpressure propagation for incremental response producers.
+12. TLS transport integration.
+13. Atomic Transaction-owned HTTP/1.1 Upgrade handoff.
+14. One consolidated private `_HTTP1` native extension.
+15. One canonical server callback API, with `$conn->transaction` available when lifecycle operations are needed.
 
 The next major protocol layer is the native HTTP Client and Client::Connection.
 HTTP/2 is future protocol work. WebSocket remains a separate protocol
