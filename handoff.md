@@ -6,15 +6,15 @@ Updated: 2026-09-12 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Active branch: `feature/client-redirects`
-- Draft PR: #21, `Add high-level client redirect handling`
-- Do not merge PR #21 without explicit user authorization.
-- PR #20, `Add streaming client Request bodies`, was merged to `main` as
-  `8642f43c4742b8daa37d87a274096c15f1508bb9`.
+- Active branch: `feature/client-upgrade`
+- Draft PR: #22, client HTTP/1.1 Upgrade handoff.
+- Do not merge PR #22 without explicit user authorization.
+- PR #21, high-level redirect handling, was merged to `main` as
+  `b036186d8c6bfec231360bef1dd9d06b20dfd865`.
 - Linux::Event minimum prerequisite: `0.113`.
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
 
-The core object identities are settled:
+The core object identities remain settled:
 
 ```text
 Request / Response
@@ -28,7 +28,7 @@ Client::Operation
     one or more Transactions when redirects are followed
 
 Client::Connection / Server::Connection
-    protocol executors on Linux::Event stream transports
+    HTTP protocol executors on Linux::Event stream transports
 ```
 
 Do not move URL, redirect-chain, pool, socket, or endpoint-role lifecycle into
@@ -36,140 +36,144 @@ Request/Response. Do not redefine Transaction to span redirects.
 
 ## Merged client baseline
 
-The merged Client supports:
+Main now includes:
 
-- absolute `http` / `https` URL parsing through URI;
-- Host synthesis and HTTP/HTTPS destination acquisition;
-- one active Transaction per HTTP/1 client connection;
-- bounded same-origin idle connection reuse with no HTTP/1 pipelining;
-- scalar Request bodies with Content-Length;
-- Transaction-owned streaming Request bodies with exact known length or
-  automatic HTTP/1.1 chunked framing;
-- Linux::Event backpressure and `on_drain` without a second HTTP queue;
-- strict client Response-head parsing in Perl;
-- Content-Length, chunked, bodyless, and close-delimited Response framing;
-- incremental Response delivery and drain/discard by default;
-- explicit bounded `buffer_body` whole-response accumulation;
-- HTTPS through Linux::Event TLS using the same Client::Connection class.
+- HTTP/HTTPS high-level Client and low-level Client::Connection;
+- scalar and streaming Request bodies;
+- Linux::Event backpressure with no second HTTP output queue;
+- incremental Response delivery plus explicit bounded `buffer_body`;
+- strict Perl client response-head parsing and shared native chunked decoding;
+- one active Transaction per HTTP/1 connection, sequential keep-alive reuse,
+  and at most one retained idle connection per origin;
+- Client::Operation as the high-level handle;
+- bounded 301/302/303/307/308 redirect following with distinct Transactions;
+- redirect method/body policy, relative Location resolution, and cross-origin
+  credential stripping.
 
 Keep the client response-head parser in Perl unless measurement justifies XS.
 
-## PR #21 - high-level redirect operations
+## PR #22 - client HTTP Upgrade
 
-Initial redirect implementation commit:
+The active branch adds client-side `101 Switching Protocols` handoff using the
+same Linux::Event `transition_to()` mechanism already used by server Upgrade.
+There is no new transport object, parser, XS extension, or output queue.
 
-`ad4fc134e589b50c600228aabf5e0d870568df45`
-
-The important architectural change is the addition of
-`Linux::Event::HTTP::Client::Operation`. High-level Client methods now return an
-Operation. Low-level `Client::Connection->request()` still returns exactly one
-Transaction.
-
-A non-redirected Operation normally contains one Transaction. Each followed
-redirect appends another Transaction. Operation exposes:
-
-```text
-transaction
-transactions
-transaction_count
-initial_url
-url
-urls
-redirect_count
-max_redirects
-request
-response
-request_body
-cancel
-state
-error
-is_complete
-is_cancelled
-is_terminal
-```
-
-`request`, `response`, `request_body`, and cancellation are convenient delegates
-to the current/final Transaction; body producer ownership remains on
-Transaction.
-
-## Redirect policy on the branch
-
-- Client default `max_redirects` is 5; it may be overridden per operation.
-- `max_redirects => 0` disables redirect interpretation completely. A 3xx is a
-  normal final Response; duplicate Location fields remain ordinary metadata.
-- Automatically recognized statuses: 301, 302, 303, 307, 308.
-- Relative Location values resolve against the current absolute URL.
-- When Location omits a fragment, the current fragment is inherited for client
-  URL processing. Fragments never enter the HTTP request-target.
-- 301/302 change POST to GET and discard the body.
-- 303 uses GET, except HEAD remains HEAD, and discards the body.
-- 307/308 preserve method and body.
-- Complete scalar bodies are replayable for method-preserving redirects.
-- Streaming Request producers are not assumed rewindable. A method-preserving
-  redirect for one fails the Operation clearly instead of replaying unsafe data.
-- Redirects that change streamed POST to GET may proceed because the next hop has
-  no body.
-- Host and HTTP framing/connection-specific fields are regenerated/removed for
-  every hop.
-- Cross-origin redirects remove caller-supplied Authorization and Cookie.
-- Proxy-Authorization is never propagated automatically.
-- Each redirect hop independently selects a connection for its target origin.
-
-High-level callback behavior:
+Low-level API:
 
 ```perl
-on_redirect => sub ($operation, $tx, $res, $next_url) { ... }
+my $tx = $connection->request(
+    $request,
+    upgrade_to => 'MyProtocolConnection',
+    on_upgrade => sub ($tx, $res, $connection) { ... },
+);
 ```
 
-runs after an intermediate redirect Transaction completes and before the next
-hop begins.
+High-level API:
 
-`on_response`, `on_body`, and `on_complete` describe the final response only.
-`on_informational` remains per-Transaction and can run on any hop. Intermediate
-redirect bodies are still consumed through correct HTTP framing but are not
-emitted through the final `on_body` callback.
+```perl
+my $operation = $client->get(
+    $url,
+    headers => [
+        [ Connection => 'Upgrade' ],
+        [ Upgrade    => 'my-protocol' ],
+    ],
+    upgrade_to => 'MyProtocolConnection',
+    on_upgrade => sub ($operation, $tx, $res, $connection) { ... },
+);
+```
 
-## Redirect tests and validation
+### Request requirements
 
-Focused test:
+- HTTP/1.1 only.
+- Request body must be empty.
+- Streaming Request bodies are not supported for Upgrade.
+- Transfer-Encoding is not allowed.
+- Content-Length may be absent or zero only.
+- Request must advertise `Connection: Upgrade`.
+- Request must contain at least one valid `Upgrade` protocol value.
+- `upgrade_to` must name a `Linux::Event::IO::Sock::Stream` subclass.
+- Invalid Upgrade requests fail before wire output.
 
-`t/66-client-redirects.t`
+### 101 response requirements
 
-Coverage includes:
+- HTTP/1.1 response.
+- `Connection: Upgrade` required; `Connection: close` is not accepted.
+- No Content-Length or Transfer-Encoding.
+- Response must select a protocol offered by the Request.
+- A bare/unexpected 101 without `upgrade_to` is a protocol error and closes the
+  HTTP connection.
 
-- Client returns Client::Operation;
-- relative Location resolution and inherited fragments;
-- distinct Transaction history for redirect hops;
-- final-only `on_response` / `on_body`;
-- 302 POST-to-GET;
-- 303 POST-to-GET;
-- 307 scalar method/body replay;
-- cross-origin Authorization/Cookie stripping and Host regeneration;
-- redirect-count failure;
-- `max_redirects => 0` final 3xx handling, including duplicate Location fields;
-- safe refusal to replay a non-rewindable streaming body.
+### Handoff lifecycle
 
-First implementation CI #341 / run `34733086338` passed on commit
-`ad4fc134e589b50c600228aabf5e0d870568df45` across Perl 5.36, latest Perl, and
-latest threaded Perl.
+On a valid 101:
 
-Documentation-complete redirect head `9873b5acb3759962913f20bf7145224446730503`
-passed final CI #348 / run `34733424818` across:
+1. The 101 Response is attached to the Transaction and `on_response` runs.
+2. The Response and Transaction are marked complete.
+3. The HTTP parser stops owning subsequent input.
+4. Linux::Event `transition_to($target, input => $already_read_bytes)` reblesses
+   the same live stream object into the target protocol class.
+5. Any bytes already read after the 101 head become target-protocol input.
+6. Low-level `on_upgrade($tx,$res,$connection)` runs after transition.
+7. Low-level `on_complete($tx)` then runs.
+8. At high level, Client::Operation is complete before
+   `on_upgrade($operation,$tx,$res,$connection)` runs.
+9. A transitioned connection is never returned to the HTTP idle pool.
 
-- Perl 5.36;
-- latest Perl;
-- latest threaded Perl;
-- full test suite;
-- end-to-end server smoke on latest Perl;
-- distribution integrity on latest Perl.
+Target-protocol `on_data` may run inside `transition_to()` before the user
+`on_upgrade` callback if post-101 bytes were already buffered. This is correct:
+HTTP is complete and target-protocol ownership has already begun.
 
-A final lifecycle review also confirmed that an early final Response during a
-streaming upload marks the old Client::Connection non-reusable and closes it
-before the high-level redirect controller attempts to release the connection.
-An interrupted upload therefore cannot be returned to the idle pool.
+### Redirect plus Upgrade
 
-The only change after CI #348 is this handoff validation note. PR #21 should
-remain draft/unmerged until explicit authorization.
+Redirects may precede the successful 101. Each redirect remains a separate
+Transaction in Client::Operation history.
+
+Because Connection and Upgrade are hop-by-hop handshake fields, redirect logic
+removes the previous connection-specific headers and then explicitly regenerates
+`Connection: Upgrade` plus the originally offered `Upgrade` values for the next
+hop. Cross-origin Authorization/Cookie stripping remains unchanged.
+
+## Implementation files
+
+New private helper:
+
+`lib/Linux/Event/HTTP/_ClientUpgrade.pm`
+
+It owns request/101 validation and the deferred live transition. It is private
+because this is HTTP execution machinery, not a public protocol object.
+
+Updated:
+
+- `lib/Linux/Event/HTTP/Client/Connection.pm`
+- `lib/Linux/Event/HTTP/Client.pm`
+- `MANIFEST`
+- README / top-level POD / architecture / Changes
+
+Focused tests:
+
+- `t/67-client-upgrade.t` - low-level Client::Connection handoff, same-read
+  post-101 bytes, object identity, bare 101 failure, invalid protocol selection,
+  and invalid request rejection before wire output.
+- `t/68-client-upgrade-high-level.t` - high-level Client::Operation handoff,
+  redirect-to-Upgrade regeneration, final callback lifecycle, same-read target
+  input, and proof that a later ordinary request uses a different HTTP
+  connection rather than the transitioned stream.
+
+## Validation checkpoints
+
+Low-level/high-level foundation head
+`f861a1e3627f493faf00038a9e39f691cbaa5ff5` passed CI #352 / run
+`34735999742` across Perl 5.36, latest Perl, and latest threaded Perl; latest
+Perl also passed end-to-end smoke and distribution integrity.
+
+The stronger high-level behavioral head
+`b451352681b94d426bbe577f2bbcd03adb0f797d` passed CI #354 / run
+`34736098458` across Perl 5.36, latest Perl, and latest threaded Perl; latest
+Perl also passed end-to-end smoke and distribution integrity.
+
+Commits after that checkpoint are documentation/handoff alignment only. Run a
+final branch-head CI after this handoff update before presenting PR #22 as ready
+for review.
 
 ## Server baseline remains unchanged
 
@@ -190,8 +194,9 @@ $body->write($bytes);
 $body->complete;
 ```
 
-Deferred scalar Response uses `$tx->send_response`; server Upgrade remains
-Transaction lifecycle.
+Deferred scalar Response uses `$tx->send_response`. Server Upgrade remains
+`$tx->upgrade($target_class)` and transitions the same live stream object after
+validated 101 output.
 
 ## Native boundary
 
@@ -199,19 +204,19 @@ Keep one private `_HTTP1` extension. It owns pico server request parsing/lazy
 Request accessors, shared chunked decoding, server response serialization, and
 the narrow server scalar-response fast path.
 
-Redirect handling is high-level Client policy and adds no native code or output
-queue.
+Client Upgrade policy/validation is Perl-side control flow around Linux::Event's
+existing transition primitive. It does not justify another XS extension.
 
-## Next work after PR #21
+## Next work after PR #22
 
-Do not mix another client subsystem into PR #21. After redirect approval/merge,
-choose one clean layer separately. Candidates are:
+Do not mix another subsystem into PR #22. After explicit approval/merge, reassess
+which actual protocol capability is still important. Candidates include:
 
-- richer connection-pool policy;
+- CONNECT tunneling;
 - proxy support;
 - authentication helpers;
 - cookie policy/jar;
-- CONNECT and client-side Upgrade.
+- richer connection-pool policy only when a real workload justifies it.
 
 Client parser XS remains measurement-driven, not a default next step.
 
@@ -226,6 +231,6 @@ second HTTP output queue.
 The user dislikes stale branches. The GitHub connector currently exposes branch
 creation/update but not branch deletion. Merged feature refs such as
 `feature/message-objects`, `feature/http-client-foundation`,
-`feature/client-buffered-response`, and `feature/client-streaming-request-body`
-may still require GitHub's normal `Delete branch` control. Do not reuse them for
-new work.
+`feature/client-buffered-response`, `feature/client-streaming-request-body`, and
+`feature/client-redirects` may still require GitHub's normal `Delete branch`
+control. Do not reuse them for new work.
