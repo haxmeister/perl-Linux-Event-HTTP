@@ -141,7 +141,10 @@ sub _validate_buffer_body ($value) {
 sub _validate_stream_body ($value) {
     croak 'request(): stream_body must be a hash reference'
         if ref($value) ne 'HASH';
-    return { %$value };
+    my $copy = { %$value };
+    require Linux::Event::HTTP::Body::Stream;
+    Linux::Event::HTTP::Body::Stream->_validate_options('request', %$copy);
+    return $copy;
 }
 
 sub _track_connection ($self, $connection) {
