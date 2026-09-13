@@ -6,15 +6,15 @@ Updated: 2026-09-12 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Active branch: `feature/client-upgrade`
-- Draft PR: #22, client HTTP/1.1 Upgrade handoff.
-- Do not merge PR #22 without explicit user authorization.
-- PR #21, high-level redirect handling, was merged to `main` as
+- No active development branch after the client Upgrade merge.
+- PR #22, client HTTP/1.1 Upgrade handoff, was merged to `main` as
+  `f430a779ee9f9855a291fd6fc10059d2727cbfaf`.
+- PR #21, high-level redirect handling, was merged as
   `b036186d8c6bfec231360bef1dd9d06b20dfd865`.
 - Linux::Event minimum prerequisite: `0.113`.
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
 
-The core object identities remain settled:
+Core object identities are settled:
 
 ```text
 Request / Response
@@ -48,15 +48,13 @@ Main now includes:
 - Client::Operation as the high-level handle;
 - bounded 301/302/303/307/308 redirect following with distinct Transactions;
 - redirect method/body policy, relative Location resolution, and cross-origin
-  credential stripping.
+  credential stripping;
+- client-side HTTP/1.1 `101 Switching Protocols` handoff using the same live
+  Linux::Event stream object and `transition_to()` mechanism as server Upgrade.
 
 Keep the client response-head parser in Perl unless measurement justifies XS.
 
-## PR #22 - client HTTP Upgrade
-
-The active branch adds client-side `101 Switching Protocols` handoff using the
-same Linux::Event `transition_to()` mechanism already used by server Upgrade.
-There is no new transport object, parser, XS extension, or output queue.
+## Client Upgrade baseline
 
 Low-level API:
 
@@ -82,100 +80,56 @@ my $operation = $client->get(
 );
 ```
 
-### Request requirements
+Rules:
 
 - HTTP/1.1 only.
 - Request body must be empty.
-- Streaming Request bodies are not supported for Upgrade.
+- Streaming Request bodies are rejected for Upgrade.
 - Transfer-Encoding is not allowed.
 - Content-Length may be absent or zero only.
-- Request must advertise `Connection: Upgrade`.
-- Request must contain at least one valid `Upgrade` protocol value.
-- `upgrade_to` must name a `Linux::Event::IO::Sock::Stream` subclass.
+- Request must advertise `Connection: Upgrade` and at least one Upgrade token.
 - Invalid Upgrade requests fail before wire output.
+- A valid 101 must be HTTP/1.1, contain `Connection: Upgrade`, omit
+  Content-Length/Transfer-Encoding, and select a protocol offered by the Request.
+- A bare/unexpected 101 without `upgrade_to` is a terminal protocol error.
+- The Response and Transaction complete before protocol handoff callbacks.
+- Bytes already read after the 101 head are preserved and become target-protocol
+  input during `transition_to()`.
+- Stream object identity is retained across the handoff.
+- A transitioned connection is never returned to the HTTP idle pool.
+- Redirects may precede the 101; each redirect remains a separate Transaction.
+  Redirect logic regenerates the hop-by-hop Upgrade handshake for each hop.
 
-### 101 response requirements
-
-- HTTP/1.1 response.
-- `Connection: Upgrade` required; `Connection: close` is not accepted.
-- No Content-Length or Transfer-Encoding.
-- Response must select a protocol offered by the Request.
-- A bare/unexpected 101 without `upgrade_to` is a protocol error and closes the
-  HTTP connection.
-
-### Handoff lifecycle
-
-On a valid 101:
-
-1. The 101 Response is attached to the Transaction and `on_response` runs.
-2. The Response and Transaction are marked complete.
-3. The HTTP parser stops owning subsequent input.
-4. Linux::Event `transition_to($target, input => $already_read_bytes)` reblesses
-   the same live stream object into the target protocol class.
-5. Any bytes already read after the 101 head become target-protocol input.
-6. Low-level `on_upgrade($tx,$res,$connection)` runs after transition.
-7. Low-level `on_complete($tx)` then runs.
-8. At high level, Client::Operation is complete before
-   `on_upgrade($operation,$tx,$res,$connection)` runs.
-9. A transitioned connection is never returned to the HTTP idle pool.
-
-Target-protocol `on_data` may run inside `transition_to()` before the user
-`on_upgrade` callback if post-101 bytes were already buffered. This is correct:
-HTTP is complete and target-protocol ownership has already begun.
-
-### Redirect plus Upgrade
-
-Redirects may precede the successful 101. Each redirect remains a separate
-Transaction in Client::Operation history.
-
-Because Connection and Upgrade are hop-by-hop handshake fields, redirect logic
-removes the previous connection-specific headers and then explicitly regenerates
-`Connection: Upgrade` plus the originally offered `Upgrade` values for the next
-hop. Cross-origin Authorization/Cookie stripping remains unchanged.
-
-## Implementation files
-
-New private helper:
+Private helper:
 
 `lib/Linux/Event/HTTP/_ClientUpgrade.pm`
 
-It owns request/101 validation and the deferred live transition. It is private
-because this is HTTP execution machinery, not a public protocol object.
-
-Updated:
-
-- `lib/Linux/Event/HTTP/Client/Connection.pm`
-- `lib/Linux/Event/HTTP/Client.pm`
-- `MANIFEST`
-- README / top-level POD / architecture / Changes
-
 Focused tests:
 
-- `t/67-client-upgrade.t` - low-level Client::Connection handoff, same-read
-  post-101 bytes, object identity, bare 101 failure, invalid protocol selection,
-  and invalid request rejection before wire output.
-- `t/68-client-upgrade-high-level.t` - high-level Client::Operation handoff,
-  redirect-to-Upgrade regeneration, final callback lifecycle, same-read target
+- `t/67-client-upgrade.t` - low-level handoff, same-read bytes, object identity,
+  bare 101 failure, protocol-selection validation, and request validation.
+- `t/68-client-upgrade-high-level.t` - Client::Operation integration,
+  redirect-to-Upgrade regeneration, high-level lifecycle, same-read target
   input, and proof that a later ordinary request uses a different HTTP
   connection rather than the transitioned stream.
 
-## Validation checkpoints
+## Client Upgrade validation
 
-Low-level/high-level foundation head
-`f861a1e3627f493faf00038a9e39f691cbaa5ff5` passed CI #352 / run
-`34735999742` across Perl 5.36, latest Perl, and latest threaded Perl; latest
+Foundation head `f861a1e3627f493faf00038a9e39f691cbaa5ff5` passed CI #352 / run
+`34735999742` across Perl 5.36, latest Perl, and latest threaded Perl.
+
+Behavioral head `b451352681b94d426bbe577f2bbcd03adb0f797d` passed CI #354 / run
+`34736098458`, including redirect-to-Upgrade and HTTP-pool isolation coverage.
+
+Final documentation-complete head
+`fdd49af712cb7ea24e875e5d9a022557f00b75cf` passed CI #359 / run
+`34736289765` across Perl 5.36, latest Perl, and latest threaded Perl; latest
 Perl also passed end-to-end smoke and distribution integrity.
 
-The stronger high-level behavioral head
-`b451352681b94d426bbe577f2bbcd03adb0f797d` passed CI #354 / run
-`34736098458` across Perl 5.36, latest Perl, and latest threaded Perl; latest
-Perl also passed end-to-end smoke and distribution integrity.
+PR #22 then merged to main as
+`f430a779ee9f9855a291fd6fc10059d2727cbfaf`.
 
-Commits after that checkpoint are documentation/handoff alignment only. Run a
-final branch-head CI after this handoff update before presenting PR #22 as ready
-for review.
-
-## Server baseline remains unchanged
+## Server baseline
 
 Scalar Response:
 
@@ -207,16 +161,17 @@ the narrow server scalar-response fast path.
 Client Upgrade policy/validation is Perl-side control flow around Linux::Event's
 existing transition primitive. It does not justify another XS extension.
 
-## Next work after PR #22
+## Next work
 
-Do not mix another subsystem into PR #22. After explicit approval/merge, reassess
-which actual protocol capability is still important. Candidates include:
+The next substantive HTTP protocol capability to evaluate is CONNECT tunneling.
+Do not jump to sophisticated pool policy unless a real workload demonstrates a
+need. Other later layers include proxy support, authentication helpers, and
+cookie policy/jar.
 
-- CONNECT tunneling;
-- proxy support;
-- authentication helpers;
-- cookie policy/jar;
-- richer connection-pool policy only when a real workload justifies it.
+CONNECT design should preserve the same ownership rules used by Upgrade:
+HTTP owns the CONNECT request/response exchange, then a successful tunnel hands
+the same live Linux::Event transport to the caller/next protocol without adding
+a second queue or duplicate transport object.
 
 Client parser XS remains measurement-driven, not a default next step.
 
@@ -228,9 +183,9 @@ second HTTP output queue.
 
 ## Branch cleanup limitation
 
-The user dislikes stale branches. The GitHub connector currently exposes branch
-creation/update but not branch deletion. Merged feature refs such as
-`feature/message-objects`, `feature/http-client-foundation`,
-`feature/client-buffered-response`, `feature/client-streaming-request-body`, and
-`feature/client-redirects` may still require GitHub's normal `Delete branch`
+The user dislikes stale branches. The GitHub connector currently does not expose
+branch deletion. Merged feature refs such as `feature/message-objects`,
+`feature/http-client-foundation`, `feature/client-buffered-response`,
+`feature/client-streaming-request-body`, `feature/client-redirects`, and
+`feature/client-upgrade` may still require GitHub's normal `Delete branch`
 control. Do not reuse them for new work.
