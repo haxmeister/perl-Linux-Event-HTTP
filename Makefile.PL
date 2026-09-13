@@ -9,6 +9,7 @@ if ($^O ne 'linux') {
 
 my @public_modules = qw(
     Linux::Event::HTTP
+    Linux::Event::HTTP::Client
     Linux::Event::HTTP::Client::Connection
     Linux::Event::HTTP::Server::Connection
     Linux::Event::HTTP::Request
@@ -43,6 +44,7 @@ WriteMakefile(
     },
     PREREQ_PM => {
         'Linux::Event' => '0.113',
+        'URI'          => 0,
     },
     META_MERGE => {
         'meta-spec' => {
