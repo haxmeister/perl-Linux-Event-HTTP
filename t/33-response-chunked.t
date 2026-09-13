@@ -19,7 +19,7 @@ use Linux::Event::HTTP::Server::Connection;
         $res->header('Content-Type', 'text/plain');
 
         if ($req->target eq '/stream') {
-            my $body = $res->stream_body;
+            my $body = $self->transaction->response_body;
             push @{$self->data->{write_status}}, $body->write("one\n");
             push @{$self->data->{write_status}}, $body->write('');
             push @{$self->data->{write_status}}, $body->write("two\n");
@@ -91,17 +91,17 @@ $loop->run;
 is_deeply(
     $state->{targets},
     [ '/stream', '/done' ],
-    'pipelined request after chunked response dispatches in order',
+    'pipelined request after incremental response dispatches in order',
 );
-ok($state->{write_status}[0], 'first stream body write exposes Stream backpressure status');
-ok($state->{write_status}[1], 'empty stream body write is accepted without completing response');
-ok($state->{write_status}[2], 'later stream body write exposes Stream backpressure status');
+ok($state->{write_status}[0], 'first response body write exposes Stream backpressure status');
+ok($state->{write_status}[1], 'empty response body write is accepted without completing response');
+ok($state->{write_status}[2], 'later response body write exposes Stream backpressure status');
 
 my $wire = $state->{wire};
 like(
     $wire,
     qr/\AHTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nTransfer-Encoding: chunked\r\n\r\n4\r\none\n\r\n4\r\ntwo\n\r\n6\r\nthree\n\r\n0\r\n\r\nHTTP\/1\.1 200 OK\r\n/s,
-    'HTTP/1.1 stream body without Content-Length uses chunked transfer coding',
+    'HTTP/1.1 incremental body without Content-Length uses chunked transfer coding',
 );
 unlike(
     $wire,
@@ -120,7 +120,7 @@ like(
 
     sub on_request ($self, $req, $res) {
         $res->header('Content-Type', 'text/plain');
-        my $body = $res->stream_body;
+        my $body = $self->transaction->response_body;
         $self->data->{write_status} = $body->write('old ');
         $body->complete("school\n");
         return;
@@ -180,18 +180,18 @@ $client = Linux::Event::IO::Sock::Stream->connect(
 
 $loop->run;
 
-ok($legacy->{write_status}, 'HTTP/1.0 stream body write exposes backpressure status');
-ok($legacy->{eof}, 'HTTP/1.0 unknown-length streaming closes to delimit the body');
+ok($legacy->{write_status}, 'HTTP/1.0 response body write exposes backpressure status');
+ok($legacy->{eof}, 'HTTP/1.0 unknown-length incremental body closes to delimit the body');
 unlike($legacy->{wire}, qr/Transfer-Encoding:/i,
-    'HTTP/1.0 streaming never emits Transfer-Encoding');
+    'HTTP/1.0 incremental body never emits Transfer-Encoding');
 unlike($legacy->{wire}, qr/Content-Length:/i,
-    'HTTP/1.0 unknown-length streaming does not invent Content-Length');
+    'HTTP/1.0 unknown-length incremental body does not invent Content-Length');
 unlike($legacy->{wire}, qr/Connection: keep-alive/i,
     'HTTP/1.0 close-delimited response does not advertise persistence');
 like(
     $legacy->{wire},
     qr/\AHTTP\/1\.0 200 OK\r\nContent-Type: text\/plain\r\n\r\nold school\n\z/s,
-    'HTTP/1.0 streaming body is close-delimited without chunk framing',
+    'HTTP/1.0 incremental body is close-delimited without chunk framing',
 );
 
 done_testing;
