@@ -77,12 +77,20 @@ stream object, including already-read post-HTTP bytes, to the selected protocol
 class. WebSocket framing and other upgraded protocols remain separate
 protocol-layer distributions.
 
-Client CONNECT uses the same live-stream handoff principle with CONNECT-specific
-HTTP semantics. C<connect_tunnel()> separates the proxy endpoint URL from the
-authority-form tunnel target. Any successful 2xx CONNECT response completes the
-HTTP Transaction at the response-head boundary and transitions the same live
-stream to the caller-selected tunnel class; a non-2xx response remains ordinary
-HTTP and can expose its body normally.
+CONNECT follows the same ownership boundary with CONNECT-specific HTTP
+semantics. On the client, C<connect_tunnel()> separates the proxy endpoint URL
+from the authority-form tunnel target. Any successful 2xx CONNECT response
+completes the HTTP Transaction at the response-head boundary and transitions the
+same live stream to the caller-selected tunnel class; a non-2xx response remains
+ordinary HTTP and can expose its body normally.
+
+On the server, CONNECT arrives through the ordinary request callback. A valid
+bodyless HTTP/1.1 CONNECT can be accepted with
+C<< $conn->transaction->tunnel($class) >>. The successful Response and
+Transaction complete before Linux::Event hands the same accepted stream, plus
+any already-read post-head bytes, to the target class. The HTTP layer does not
+open the requested upstream endpoint, authorize destinations, or own a proxy
+relay; those are application or higher protocol-layer responsibilities.
 
 =head1 DESIGN
 
