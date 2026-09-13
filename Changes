@@ -126,6 +126,25 @@ Revision history for Linux-Event-HTTP
       reused when framing permits it.
     - Keep successfully tunneled connections permanently outside the HTTP idle pool while
       allowing an explicit HTTP or HTTPS proxy endpoint to be reused after failed CONNECT.
+    - Add explicit per-request forward-proxy routing with proxy => $proxy_url for ordinary
+      high-level Client requests without making proxy use automatic or environmental.
+    - Send proxied ordinary HTTP/1 requests in absolute-form while regenerating Host from
+      the target URL; direct requests retain their existing origin-form behavior.
+    - Keep target origin and route origin distinct: redirects and origin credentials use
+      the target origin while connection acquisition and idle reuse use the proxy origin.
+    - Reuse one persistent proxy route across sequential requests to different target
+      origins while retaining the existing one-active-Transaction-per-connection policy.
+    - Preserve caller-supplied Proxy-Authorization across redirects that remain on the
+      same explicit proxy, while still stripping Authorization and Cookie when the target
+      origin changes; direct redirects continue not to propagate Proxy-Authorization.
+    - Allow HTTP or HTTPS proxy endpoints; TLS to an HTTPS proxy terminates at the proxy,
+      and an HTTPS target URI remains an absolute-form proxy request rather than becoming
+      an implicit CONNECT tunnel.
+    - Reject CONNECT through the ordinary proxy option and keep connect_tunnel() as the
+      explicit high-level tunnel API.
+    - Keep forward-proxy routing in the high-level Client; Client::Connection remains
+      proxy-unaware and no proxy-specific native code, transport object, or output queue is
+      introduced.
     - Keep one in-flight Transaction per HTTP/1 client connection and support sequential
       persistent reuse without enabling HTTP/1 pipelining.
     - Make client Transaction cancellation close the HTTP/1 connection rather than risk
@@ -136,7 +155,7 @@ Revision history for Linux-Event-HTTP
       keep Transaction defined as exactly one HTTP exchange while an Operation can retain
       the ordered Transaction history for a redirect chain.
     - Use URI for URL parsing while keeping full URLs out of Request; synthesize Host and
-      use path/query as the canonical request-target.
+      use path/query as the canonical direct request-target.
     - Add bounded automatic redirect following for 301, 302, 303, 307, and 308 with a
       default max_redirects of five and a per-request override.
     - Resolve relative Location values against the current absolute URL and preserve
@@ -147,16 +166,17 @@ Revision history for Linux-Event-HTTP
     - Replay complete scalar bodies on method-preserving redirects but reject automatic
       replay of streaming Request producers because they are not inherently rewindable.
     - Regenerate Host and HTTP framing fields for every redirect hop; strip Authorization
-      and Cookie on cross-origin redirects and never forward Proxy-Authorization or
-      connection-specific fields automatically.
+      and Cookie on cross-origin redirects, and retain Proxy-Authorization only when it
+      belongs to the same explicitly selected proxy route.
     - Keep on_response/on_body/on_complete focused on the final response; expose
       on_redirect($operation,$tx,$res,$next_url) for completed intermediate hops while
       retaining each intermediate Transaction in Operation history.
     - Make max_redirects => 0 disable redirect interpretation completely so a 3xx,
       including duplicate Location fields, is delivered as an ordinary final response.
     - Add a bounded initial reuse policy that retains at most one idle connection per
-      origin while allowing concurrent same-origin requests to use separate connections.
-    - Let each redirect hop independently select/reuse a connection for its target origin.
+      route origin while allowing concurrent requests to use separate connections.
+    - Let each redirect hop independently evaluate its target origin while reusing the
+      selected route connection when eligible.
     - Integrate HTTPS through Linux::Event TLS transport policy with the same Client and
       Client::Connection classes and HTTP/1.1-only ALPN advertisement.
     - Add explicit buffer_body => $max_bytes client response buffering on top of the
@@ -175,8 +195,9 @@ Revision history for Linux-Event-HTTP
       redirect chains, relative Location resolution, method/body transformation,
       cross-origin credential stripping, redirect limits, disabled redirect policy,
       client Upgrade validation, same-read protocol handoff, redirected Upgrade,
-      CONNECT validation, successful same-read tunnel handoff, non-2xx proxy response
-      handling, and HTTP-pool isolation/reuse across protocol transitions.
+      CONNECT validation, successful same-read tunnel handoff, non-2xx proxy response,
+      explicit forward-proxy absolute-form targets, proxy-route reuse across target
+      origins, and HTTP-pool isolation/reuse across protocol transitions.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.
