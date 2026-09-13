@@ -9,6 +9,7 @@ if ($^O ne 'linux') {
 
 my @public_modules = qw(
     Linux::Event::HTTP
+    Linux::Event::HTTP::Client::Connection
     Linux::Event::HTTP::Server::Connection
     Linux::Event::HTTP::Request
     Linux::Event::HTTP::Response
