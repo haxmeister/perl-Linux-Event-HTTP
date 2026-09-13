@@ -14,6 +14,7 @@ my $response = $class->new(status => 200);
 is($response->status, 200, 'status getter returns initial status');
 ok(!defined $response->reason, 'reason is optional');
 is($response->version, '1.1', 'response defaults to HTTP version 1.1');
+ok(!$response->is_complete, 'response without a selected body is not yet complete');
 $response->version('1.0');
 is($response->version, '1.0', 'response version is mutable before commit');
 $response->version('1.1');
@@ -124,6 +125,11 @@ like($@, qr/204.*Content-Length/, '204 Content-Length rejection is clear');
 
 my $body_response = $class->new(body => "hello\n");
 is($body_response->body, "hello\n", 'constructor accepts a complete scalar body');
+ok($body_response->is_complete,
+    'complete scalar body makes the Response message complete immediately');
+$body_response->header('X-After-Body', 'yes');
+is($body_response->header('X-After-Body'), 'yes',
+    'message completion does not commit mutable response metadata');
 
 my $ok = eval { $class->new(status => 99); 1 };
 ok(!$ok, 'invalid status is rejected');
@@ -186,6 +192,8 @@ ok(!$ok, 'native serializer revalidates tampered field values');
 
 my $unbound = $class->new;
 my $unbound_stream = $unbound->stream_body;
+ok(!$unbound->is_complete,
+    'selecting a streaming body does not complete the Response message');
 $ok = eval { $unbound_stream->write("x"); 1 };
 ok(!$ok, 'unbound Response cannot emit application output');
 like($@, qr/not bound/, 'unbound output rejection is clear');
