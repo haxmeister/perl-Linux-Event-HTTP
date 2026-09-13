@@ -138,10 +138,16 @@ like($@, qr/cancelled/, 'cancelled producer completion rejection is clear');
 $ok = eval { $transaction->response_body(on_drain => 'no'); 1 };
 ok(!$ok, 'non-coderef on_drain is rejected');
 like($@, qr/on_drain must be a coderef/, 'on_drain validation is clear');
+$response->body('still scalar');
+is($response->body, 'still scalar',
+    'rejected producer callback does not select incremental body mode');
 
 ($transaction, $request, $response, $controller) = new_transaction();
 $ok = eval { $transaction->response_body(unknown => 1); 1 };
 ok(!$ok, 'unknown response_body option is rejected');
 like($@, qr/unknown option/, 'unknown response_body option error is clear');
+$response->body('still scalar');
+is($response->body, 'still scalar',
+    'rejected producer option does not select incremental body mode');
 
 done_testing;
