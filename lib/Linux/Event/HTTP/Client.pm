@@ -15,7 +15,7 @@ our $VERSION = '0.001';
 
 my %CALLBACK = map { $_ => 1 } qw(
     on_response on_body on_complete on_error on_informational on_redirect
-    on_upgrade
+    on_upgrade on_tunnel
 );
 
 my %REDIRECT_STATUS = map { $_ => 1 } qw(301 302 303 307 308);
@@ -561,6 +561,8 @@ sub request ($self, $method, $url, %option) {
         if defined($upgrade_to) && $has_buffer_body;
     croak 'request(): upgrade_to cannot be combined with on_body'
         if defined($upgrade_to) && $callback{on_body};
+    croak 'request(): on_tunnel is only valid with connect_tunnel()'
+        if $callback{on_tunnel};
     croak 'request(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -586,6 +588,142 @@ sub request ($self, $method, $url, %option) {
     };
 
     $self->_start_operation_hop($operation, $spec);
+    return $operation;
+}
+
+sub connect_tunnel ($self, $proxy_url, $target_authority, %option) {
+    croak 'connect_tunnel(): Client is closed' if $self->{closed};
+    croak 'connect_tunnel(): target authority is required'
+        if !defined($target_authority) || ref($target_authority)
+        || $target_authority eq '';
+
+    my $destination = _parse_url($proxy_url);
+    croak 'connect_tunnel(): proxy URL must not contain a path or query'
+        if $destination->{target} ne '/';
+
+    my $headers = _copy_headers(delete $option{headers});
+    my @host = grep {
+        defined($_->[0]) && !ref($_->[0]) && lc($_->[0]) eq 'host'
+    } @$headers;
+    push @$headers, [ Host => "$target_authority" ] if !@host;
+
+    my $tunnel_to = delete($option{tunnel_to})
+        // croak 'connect_tunnel(): tunnel_to is required';
+    my $has_buffer_body = exists $option{buffer_body};
+    my $buffer_body = $has_buffer_body
+        ? _validate_buffer_body(delete $option{buffer_body})
+        : undef;
+
+    my %callback;
+    my %known_callback = map { $_ => 1 } qw(
+        on_response on_body on_complete on_error on_informational on_tunnel
+    );
+    for my $name (keys %known_callback) {
+        next if !exists $option{$name};
+        my $value = delete $option{$name};
+        croak "connect_tunnel(): $name must be a coderef"
+            if defined($value) && ref($value) ne 'CODE';
+        $callback{$name} = $value if defined $value;
+    }
+
+    croak 'connect_tunnel(): buffer_body cannot be combined with on_body'
+        if $has_buffer_body && $callback{on_body};
+    croak 'connect_tunnel(): unknown options: ' . join(', ', sort keys %option)
+        if %option;
+
+    my $operation = Linux::Event::HTTP::Client::Operation->_new(
+        initial_url   => "$proxy_url",
+        max_redirects => 0,
+    );
+    my $message = Linux::Event::HTTP::Request->new(
+        method  => 'CONNECT',
+        target  => "$target_authority",
+        version => '1.1',
+        headers => $headers,
+    );
+    my $connection = $self->_connection_for($destination);
+    my $tunneled = 0;
+
+    my %connection_callback = (
+        tunnel_to => $tunnel_to,
+    );
+    $connection_callback{buffer_body} = $buffer_body
+        if $has_buffer_body;
+
+    $connection_callback{on_response} = sub ($transaction, $response) {
+        if ($callback{on_response}) {
+            $callback{on_response}->($transaction, $response);
+            $operation->_mark_cancelled
+                if $transaction->is_cancelled && !$operation->is_terminal;
+        }
+        return;
+    };
+
+    if ($callback{on_body}) {
+        $connection_callback{on_body} = sub ($transaction, $response, $bytes) {
+            $callback{on_body}->($transaction, $response, $bytes);
+            $operation->_mark_cancelled
+                if $transaction->is_cancelled && !$operation->is_terminal;
+            return;
+        };
+    }
+
+    if ($callback{on_informational}) {
+        $connection_callback{on_informational} = sub ($transaction, $response) {
+            $callback{on_informational}->($transaction, $response);
+            $operation->_mark_cancelled
+                if $transaction->is_cancelled && !$operation->is_terminal;
+            return;
+        };
+    }
+
+    $connection_callback{on_tunnel} = sub ($transaction, $response, $tunnel_connection) {
+        $tunneled = 1;
+        $operation->_mark_complete if !$operation->is_terminal;
+        $callback{on_tunnel}->(
+            $operation,
+            $transaction,
+            $response,
+            $tunnel_connection,
+        ) if $callback{on_tunnel};
+        return;
+    };
+
+    $connection_callback{on_complete} = sub ($transaction) {
+        if (!$tunneled) {
+            $self->_release_connection(
+                $destination->{origin}, $connection,
+            );
+            $operation->_mark_complete if !$operation->is_terminal;
+        }
+        $callback{on_complete}->($transaction)
+            if $callback{on_complete};
+        return;
+    };
+
+    $connection_callback{on_error} = sub ($transaction, $error) {
+        $operation->_fail($error) if !$operation->is_terminal;
+        $callback{on_error}->($transaction, $error)
+            if $callback{on_error};
+        return;
+    };
+
+    my $transaction;
+    my $ok = eval {
+        $transaction = $connection->request(
+            $message, %connection_callback,
+        );
+        1;
+    };
+    if (!$ok) {
+        my $error = $@;
+        $self->_release_connection(
+            $destination->{origin}, $connection,
+        ) if !$connection->is_closed && !defined($connection->transaction);
+        die $error;
+    }
+
+    $operation->_append_transaction($transaction, "$proxy_url");
     return $operation;
 }
 
@@ -703,6 +841,47 @@ before the next hop starts:
 
 C<on_informational> remains per-Transaction and can therefore run on any hop.
 
+=head2 connect_tunnel
+
+    my $operation = $client->connect_tunnel(
+        'http://proxy.example:3128',
+        'target.example:443',
+        tunnel_to => 'MyTunnelProtocol',
+        headers => [
+            [ 'Proxy-Authorization' => $value ],
+        ],
+        on_tunnel => sub ($operation, $tx, $res, $connection) {
+            ...;
+        },
+        on_error => sub ($tx, $error) {
+            ...;
+        },
+    );
+
+Establishes one explicit HTTP/1.1 CONNECT tunnel through the proxy endpoint URL.
+The first argument chooses where the HTTP connection is made; the second is the
+authority-form C<host:port> target sent by CONNECT. The proxy URL may use C<http>
+or C<https> but must not contain a path or query. TLS on an C<https> proxy URL is
+TLS to the proxy itself.
+
+The method synthesizes Host from the tunnel target when absent and returns a
+Client::Operation containing the single CONNECT Transaction. Automatic redirect
+following is deliberately not applied to proxy CONNECT establishment.
+
+C<tunnel_to> is required and names the Linux::Event stream class that takes over
+the live socket after any successful 2xx response. C<on_tunnel> receives
+C<($operation,$tx,$res,$connection)> after the Response and Transaction are
+complete and after the same socket has transitioned to that class. Bytes already
+read after the successful response head become tunnel input. The transitioned
+socket is never returned to the HTTP idle pool.
+
+A non-2xx response remains ordinary HTTP. C<on_response>, C<on_body>, and
+C<buffer_body> may therefore inspect a proxy error such as 407, and a persistent
+failed CONNECT connection may return to the proxy-origin idle pool after its
+response body completes. C<buffer_body> and C<on_body> remain mutually exclusive.
+Caller-supplied C<Proxy-Authorization> is passed through as an ordinary header;
+automatic proxy authentication policy is outside this method.
+
 =head2 redirect policy
 
 C<max_redirects> is a non-negative integer and defaults to 5. It can be set on
@@ -715,9 +894,8 @@ Location field is present. Relative Location values are resolved against the
 current absolute URL.
 
 For compatibility with prevailing HTTP user-agent behavior, 301 and 302 change
-POST to GET and discard the request body. 303 uses GET, or HEAD when the
-original method was HEAD, and discards the body. 307 and 308 preserve the
-method and body.
+POST to GET and discard the body. 303 uses GET, or HEAD when the original method
+was HEAD, and discards the body. 307 and 308 preserve the method and body.
 
 A complete scalar Request body can be replayed for a method-preserving
 redirect. A streaming Request body is intentionally not replayed automatically
@@ -818,14 +996,16 @@ open another connection rather than queueing or using HTTP/1 pipelining. When
 multiple connections later become idle, one is retained and extras are closed.
 
 Each redirect hop independently selects a connection for its target origin.
-A connection that successfully leaves HTTP through Upgrade is never returned
-to the HTTP idle pool.
+A connection that successfully leaves HTTP through Upgrade or CONNECT is never
+returned to the HTTP idle pool. A non-2xx CONNECT response remains HTTP and may
+leave a reusable proxy connection when its normal response framing permits it.
 
 =head1 HTTPS
 
 HTTPS uses the same Client::Connection class with a Linux::Event TLS transport,
 the URL host as the TLS server name, and C<http/1.1> as the offered ALPN
-protocol.
+protocol. C<connect_tunnel> may also use an C<https> proxy endpoint; that TLS
+session terminates at the proxy before CONNECT establishes the byte tunnel.
 
 =head1 SEE ALSO
 
