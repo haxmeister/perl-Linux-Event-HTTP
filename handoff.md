@@ -5,163 +5,183 @@ Updated: 2026-09-12 (America/Chicago)
 ## Start here next session
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
-- Canonical release branch: `main`
-- Active branch: `feature/client-streaming-request-body`
-- Draft PR: #20, `Add streaming client Request bodies`
-- Do not merge PR #20 without explicit user authorization.
-- PR #19, `Add bounded buffered client responses`, was merged to `main` as
-  `77da070a038f547d09cfe99efce55b1149bad4da`.
-- Linux::Event minimum prerequisite is `0.113`.
+- Canonical branch: `main`
+- Active branch: `feature/client-redirects`
+- Draft PR: #21, `Add high-level client redirect handling`
+- Do not merge PR #21 without explicit user authorization.
+- PR #20, `Add streaming client Request bodies`, was merged to `main` as
+  `8642f43c4742b8daa37d87a274096c15f1508bb9`.
+- Linux::Event minimum prerequisite: `0.113`.
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
 
-Request, Response, and Transaction identity are settled. Do not move URL, pool,
-socket, or endpoint-role lifecycle into Request/Response for convenience.
-
-## Settled client baseline
-
-`Linux::Event::HTTP::Client` owns URL/origin/TLS/pool policy and returns one
-Transaction per HTTP exchange. `Linux::Event::HTTP::Client::Connection` is one
-HTTP/1 Linux::Event stream socket and executes one Transaction at a time. Client
-pipelining is disabled. At most one idle connection is retained per origin.
-
-Incoming Response bodies remain incremental-first:
-
-```perl
-$client->get(
-    $url,
-    on_response => sub ($tx, $res) { ... },
-    on_body     => sub ($tx, $res, $bytes) { ... },
-    on_complete => sub ($tx) { ... },
-    on_error    => sub ($tx, $error) { ... },
-);
-```
-
-Absent `on_body`, bytes are drained/discarded. Explicit bounded buffering is
-mainline from PR #19:
-
-```perl
-$client->get(
-    $url,
-    buffer_body => 1_048_576,
-    on_complete => sub ($tx) {
-        my $bytes = $tx->response->body;
-        ...;
-    },
-);
-```
-
-`buffer_body` is bounded, mutually exclusive with `on_body`, counts body bytes
-after HTTP/1 transfer framing is removed, and closes the HTTP/1 connection on
-limit failure. There is no implicit unbounded response buffer.
-
-## PR #20 - streaming outgoing Request bodies
-
-Public high-level form:
-
-```perl
-my $tx = $client->post(
-    $url,
-    stream_body => {
-        on_drain  => sub ($body) { ... },
-        on_cancel => sub ($body) { ... },
-    },
-    on_response => sub ($tx, $res) { ... },
-    on_complete => sub ($tx) { ... },
-    on_error    => sub ($tx, $error) { ... },
-);
-
-my $body = $tx->request_body;
-$body->write($bytes);
-$body->complete;
-```
-
-Settled semantics on the branch:
-
-1. Request remains the HTTP message; Transaction owns the writable producer.
-2. `body` and `stream_body` are mutually exclusive.
-3. `$tx->request_body` returns the stable `Body::Stream` producer while the
-   exchange is active.
-4. Request `is_complete` is false while production is unfinished and becomes
-   true only after successful producer completion.
-5. A supplied Content-Length is enforced exactly. Too many bytes or a final
-   byte count that does not match are rejected without falsely completing the
-   Request.
-6. With no Content-Length, HTTP/1.1 automatically uses
-   `Transfer-Encoding: chunked`.
-7. HTTP/1.0 streaming requires Content-Length. Request bodies are never
-   close-delimited.
-8. `Body::Stream->write` writes directly through Linux::Event's normal ordered
-   output queue. Its boolean return is the Linux::Event backpressure result.
-9. False means bytes were accepted; producer pauses until `on_drain`.
-10. Initial request-head output can itself put the producer into blocked state;
-    the later Linux::Event low-watermark transition resumes it.
-11. Client::Connection transport drain bookkeeping composes with a subclass or
-    constructor `on_drain` rather than replacing it.
-12. If a final Response arrives before the Request producer completes, the
-    producer is cancelled and the HTTP/1 connection is made non-reusable. The
-    Request remains incomplete while the Response/Transaction may complete.
-13. Transaction cancellation/error also cancels an unfinished Request producer.
-14. No second HTTP output queue and no new XS/C were added.
-
-`Body::Stream` is now generic to outgoing Request or Response production.
-Server-side Response production remains unchanged:
-
-```perl
-my $body = $conn->transaction->response_body(
-    on_drain  => sub ($body) { ... },
-    on_cancel => sub ($body) { ... },
-);
-```
-
-## Important implementation details
-
-- `Request` now privately tracks scalar vs incremental outgoing body mode and
-  message completion state.
-- `Transaction` owns `request_body` in addition to existing `response_body`.
-- `Client::Connection` owns HTTP/1 Request framing:
-  - exact Content-Length stream;
-  - automatic chunked stream for unknown HTTP/1.1 length;
-  - rejection of unknown-length HTTP/1.0 stream;
-  - only plain `chunked` Transfer-Encoding is currently supported.
-- Transport `on_drain` is internally intercepted only to wake a blocked Request
-  producer, then composed with user/subclass drain behavior.
-- High-level Client validates `stream_body` producer callbacks before Request
-  creation.
-- `Expect: 100-continue` is not automatic policy. Applications may set the
-  header and choose to wait for `on_informational` before producing bytes.
-
-## Validation
-
-Initial PR #20 CI #329 exposed a test-only error: the early-response test called
-`$tx->request_body` after the Transaction was terminal. The test was corrected
-to retain the producer handle before completion.
-
-CI #330 / run `34731728358` passed the implementation checkpoint across Perl
-5.36, latest Perl, latest threaded Perl, the full suite, server smoke, and
-disttest.
-
-Final documentation-complete CI #338 / run `34732032612` passed the same matrix
-on branch head `4d429d340143082f2283ca08cacbff2506ac0bf5`.
-
-Focused streaming upload test:
+The core object identities are settled:
 
 ```text
-t/65-client-request-stream.t
+Request / Response
+    direction-neutral HTTP messages
+
+Transaction
+    exactly one Request/Response HTTP exchange
+
+Client::Operation
+    one high-level client action
+    one or more Transactions when redirects are followed
+
+Client::Connection / Server::Connection
+    protocol executors on Linux::Event stream transports
 ```
 
-Coverage includes scalar/stream conflict, invalid producer callback validation,
-HTTP/1.0 unknown-length rejection, Content-Length underflow/overflow,
-known-length streaming, automatic chunked streaming, Request completion state,
-actual high/low-watermark producer drain, subclass `on_drain` composition,
-early final Response cancellation, and server receipt of decoded body bytes.
+Do not move URL, redirect-chain, pool, socket, or endpoint-role lifecycle into
+Request/Response. Do not redefine Transaction to span redirects.
 
-## Server baseline
+## Merged client baseline
 
-Server APIs are unchanged:
+The merged Client supports:
+
+- absolute `http` / `https` URL parsing through URI;
+- Host synthesis and HTTP/HTTPS destination acquisition;
+- one active Transaction per HTTP/1 client connection;
+- bounded same-origin idle connection reuse with no HTTP/1 pipelining;
+- scalar Request bodies with Content-Length;
+- Transaction-owned streaming Request bodies with exact known length or
+  automatic HTTP/1.1 chunked framing;
+- Linux::Event backpressure and `on_drain` without a second HTTP queue;
+- strict client Response-head parsing in Perl;
+- Content-Length, chunked, bodyless, and close-delimited Response framing;
+- incremental Response delivery and drain/discard by default;
+- explicit bounded `buffer_body` whole-response accumulation;
+- HTTPS through Linux::Event TLS using the same Client::Connection class.
+
+Keep the client response-head parser in Perl unless measurement justifies XS.
+
+## PR #21 - high-level redirect operations
+
+Initial redirect implementation commit:
+
+`ad4fc134e589b50c600228aabf5e0d870568df45`
+
+The important architectural change is the addition of
+`Linux::Event::HTTP::Client::Operation`. High-level Client methods now return an
+Operation. Low-level `Client::Connection->request()` still returns exactly one
+Transaction.
+
+A non-redirected Operation normally contains one Transaction. Each followed
+redirect appends another Transaction. Operation exposes:
+
+```text
+transaction
+transactions
+transaction_count
+initial_url
+url
+urls
+redirect_count
+max_redirects
+request
+response
+request_body
+cancel
+state
+error
+is_complete
+is_cancelled
+is_terminal
+```
+
+`request`, `response`, `request_body`, and cancellation are convenient delegates
+to the current/final Transaction; body producer ownership remains on
+Transaction.
+
+## Redirect policy on the branch
+
+- Client default `max_redirects` is 5; it may be overridden per operation.
+- `max_redirects => 0` disables redirect interpretation completely. A 3xx is a
+  normal final Response; duplicate Location fields remain ordinary metadata.
+- Automatically recognized statuses: 301, 302, 303, 307, 308.
+- Relative Location values resolve against the current absolute URL.
+- When Location omits a fragment, the current fragment is inherited for client
+  URL processing. Fragments never enter the HTTP request-target.
+- 301/302 change POST to GET and discard the body.
+- 303 uses GET, except HEAD remains HEAD, and discards the body.
+- 307/308 preserve method and body.
+- Complete scalar bodies are replayable for method-preserving redirects.
+- Streaming Request producers are not assumed rewindable. A method-preserving
+  redirect for one fails the Operation clearly instead of replaying unsafe data.
+- Redirects that change streamed POST to GET may proceed because the next hop has
+  no body.
+- Host and HTTP framing/connection-specific fields are regenerated/removed for
+  every hop.
+- Cross-origin redirects remove caller-supplied Authorization and Cookie.
+- Proxy-Authorization is never propagated automatically.
+- Each redirect hop independently selects a connection for its target origin.
+
+High-level callback behavior:
+
+```perl
+on_redirect => sub ($operation, $tx, $res, $next_url) { ... }
+```
+
+runs after an intermediate redirect Transaction completes and before the next
+hop begins.
+
+`on_response`, `on_body`, and `on_complete` describe the final response only.
+`on_informational` remains per-Transaction and can run on any hop. Intermediate
+redirect bodies are still consumed through correct HTTP framing but are not
+emitted through the final `on_body` callback.
+
+## Redirect tests and validation
+
+Focused test:
+
+`t/66-client-redirects.t`
+
+Coverage includes:
+
+- Client returns Client::Operation;
+- relative Location resolution and inherited fragments;
+- distinct Transaction history for redirect hops;
+- final-only `on_response` / `on_body`;
+- 302 POST-to-GET;
+- 303 POST-to-GET;
+- 307 scalar method/body replay;
+- cross-origin Authorization/Cookie stripping and Host regeneration;
+- redirect-count failure;
+- `max_redirects => 0` final 3xx handling, including duplicate Location fields;
+- safe refusal to replay a non-rewindable streaming body.
+
+First implementation CI #341 / run `34733086338` passed on commit
+`ad4fc134e589b50c600228aabf5e0d870568df45` across Perl 5.36, latest Perl, and
+latest threaded Perl.
+
+Documentation-complete redirect head `9873b5acb3759962913f20bf7145224446730503`
+passed final CI #348 / run `34733424818` across:
+
+- Perl 5.36;
+- latest Perl;
+- latest threaded Perl;
+- full test suite;
+- end-to-end server smoke on latest Perl;
+- distribution integrity on latest Perl.
+
+A final lifecycle review also confirmed that an early final Response during a
+streaming upload marks the old Client::Connection non-reusable and closes it
+before the high-level redirect controller attempts to release the connection.
+An interrupted upload therefore cannot be returned to the idle pool.
+
+The only change after CI #348 is this handoff validation note. PR #21 should
+remain draft/unmerged until explicit authorization.
+
+## Server baseline remains unchanged
+
+Scalar Response:
 
 ```perl
 $res->body($bytes);
+```
 
+Incremental Response:
+
+```perl
 my $body = $conn->transaction->response_body(
     on_drain  => sub ($body) { ... },
     on_cancel => sub ($body) { ... },
@@ -177,31 +197,35 @@ Transaction lifecycle.
 
 Keep one private `_HTTP1` extension. It owns pico server request parsing/lazy
 Request accessors, shared chunked decoding, server response serialization, and
-the narrow server scalar-response fast path. Streaming Request output adds no
-new native extension or transport queue.
+the narrow server scalar-response fast path.
 
-The client response-head parser remains strict Perl. Benchmark before considering
-client parser XS.
+Redirect handling is high-level Client policy and adds no native code or output
+queue.
 
-## Next work after PR #20
+## Next work after PR #21
 
-Keep PR #20 focused on streaming outgoing Request bodies. The next clean client
-layer is redirects, modeled as a chain of distinct Transactions rather than one
-Transaction silently replacing its Request/Response.
+Do not mix another client subsystem into PR #21. After redirect approval/merge,
+choose one clean layer separately. Candidates are:
 
-Richer pool policy, proxy/auth/cookies, CONNECT/client Upgrade, and parser
-optimization remain later work.
+- richer connection-pool policy;
+- proxy support;
+- authentication helpers;
+- cookie policy/jar;
+- CONNECT and client-side Upgrade.
 
-## Parked core question
+Client parser XS remains measurement-driven, not a default next step.
 
-Do not reopen the Linux::Event paused-read / EPOLLRDHUP question absent a
-concrete demonstrated protocol requirement. Do not add polling, duplicate
-transport buffers, or a second HTTP output queue.
+## Parked Linux::Event core question
+
+Do not reopen the paused-read / EPOLLRDHUP question absent a demonstrated HTTP
+protocol requirement. Do not add polling, duplicate transport buffers, or a
+second HTTP output queue.
 
 ## Branch cleanup limitation
 
-The user dislikes stale branches. The available GitHub connector does not expose
-branch deletion and GitHub has not auto-deleted merged feature refs. Merged
-`feature/message-objects`, `feature/http-client-foundation`, and
-`feature/client-buffered-response` may still need GitHub's normal manual
-`Delete branch` action. Do not reuse them for new work.
+The user dislikes stale branches. The GitHub connector currently exposes branch
+creation/update but not branch deletion. Merged feature refs such as
+`feature/message-objects`, `feature/http-client-foundation`,
+`feature/client-buffered-response`, and `feature/client-streaming-request-body`
+may still require GitHub's normal `Delete branch` control. Do not reuse them for
+new work.

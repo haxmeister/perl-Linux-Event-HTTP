@@ -2,10 +2,10 @@ Revision history for Linux-Event-HTTP
 
 0.001  UNRELEASED
     - Initial distribution scaffold.
-    - Establish HTTP protocol, transport, message, and transaction-layer boundaries.
+    - Establish HTTP protocol, transport, message, transaction, and high-level
+      client-operation boundaries.
     - Use the flat Linux::Event::HTTP namespace and make the server-side transport
-      class Linux::Event::HTTP::Server::Connection, with native Client support as
-      the next major protocol layer.
+      class Linux::Event::HTTP::Server::Connection.
     - Require Linux::Event 0.113 for the Listener, tuning, TLS, and stream APIs used
       by this distribution.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
@@ -100,14 +100,35 @@ Revision history for Linux-Event-HTTP
       101/CONNECT client handoff outside the first client foundation.
     - Keep one in-flight Transaction per HTTP/1 client connection and support sequential
       persistent reuse without enabling HTTP/1 pipelining.
-    - Make client cancellation close the HTTP/1 connection rather than risk reusing a
-      socket with an unfinished response on the wire.
+    - Make client Transaction cancellation close the HTTP/1 connection rather than risk
+      reusing a socket with an unfinished response on the wire.
     - Add Linux::Event::HTTP::Client as the ordinary URL-oriented client entry point with
-      request/get/head/post/put/delete methods returning Transaction objects.
+      request/get/head/post/put/delete methods returning Client::Operation objects.
+    - Add Linux::Event::HTTP::Client::Operation as the high-level client lifecycle object;
+      keep Transaction defined as exactly one HTTP exchange while an Operation can retain
+      the ordered Transaction history for a redirect chain.
     - Use URI for URL parsing while keeping full URLs out of Request; synthesize Host and
       use path/query as the canonical request-target.
+    - Add bounded automatic redirect following for 301, 302, 303, 307, and 308 with a
+      default max_redirects of five and a per-request override.
+    - Resolve relative Location values against the current absolute URL and preserve
+      inherited fragment state for redirect processing without transmitting fragments in
+      HTTP request-targets.
+    - Apply familiar redirect method semantics: 301/302 POST to GET, 303 to GET except
+      HEAD remains HEAD, and 307/308 preserve method and body.
+    - Replay complete scalar bodies on method-preserving redirects but reject automatic
+      replay of streaming Request producers because they are not inherently rewindable.
+    - Regenerate Host and HTTP framing fields for every redirect hop; strip Authorization
+      and Cookie on cross-origin redirects and never forward Proxy-Authorization or
+      connection-specific fields automatically.
+    - Keep on_response/on_body/on_complete focused on the final response; expose
+      on_redirect($operation,$tx,$res,$next_url) for completed intermediate hops while
+      retaining each intermediate Transaction in Operation history.
+    - Make max_redirects => 0 disable redirect interpretation completely so a 3xx,
+      including duplicate Location fields, is delivered as an ordinary final response.
     - Add a bounded initial reuse policy that retains at most one idle connection per
       origin while allowing concurrent same-origin requests to use separate connections.
+    - Let each redirect hop independently select/reuse a connection for its target origin.
     - Integrate HTTPS through Linux::Event TLS transport policy with the same Client and
       Client::Connection classes and HTTP/1.1-only ALPN advertisement.
     - Add explicit buffer_body => $max_bytes client response buffering on top of the
@@ -115,13 +136,16 @@ Revision history for Linux-Event-HTTP
     - Count the buffer limit against delivered body bytes after HTTP/1 transfer framing;
       reject known oversized Content-Length bodies before accumulation and unknown-size
       bodies when decoded accumulation would cross the configured bound.
+    - Apply the same response-buffer bound while intermediate redirect bodies are consumed.
     - Keep buffered response metadata committed/read-only, expose the completed scalar
       through Response->body only after the final message boundary, and close the HTTP/1
       connection on buffer-limit failure so unread response bytes cannot be reused.
     - Add client tests for scalar and streaming request bodies, fixed/chunked/
       close-delimited responses, informational responses, ambiguous framing rejection,
       cancellation, URL handling, connection reuse, concurrency, HTTPS, bounded
-      whole-response buffering, producer backpressure, and early upload cancellation.
+      whole-response buffering, producer backpressure, early upload cancellation,
+      redirect chains, relative Location resolution, method/body transformation,
+      cross-origin credential stripping, redirect limits, and disabled redirect policy.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.

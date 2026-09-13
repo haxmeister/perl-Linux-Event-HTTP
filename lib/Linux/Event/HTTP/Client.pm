@@ -8,13 +8,16 @@ use Scalar::Util qw(blessed refaddr weaken);
 use URI ();
 
 use Linux::Event::HTTP::Client::Connection;
+use Linux::Event::HTTP::Client::Operation;
 use Linux::Event::HTTP::Request;
 
 our $VERSION = '0.001';
 
 my %CALLBACK = map { $_ => 1 } qw(
-    on_response on_body on_complete on_error on_informational
+    on_response on_body on_complete on_error on_informational on_redirect
 );
+
+my %REDIRECT_STATUS = map { $_ => 1 } qw(301 302 303 307 308);
 
 sub _load_connection_class ($class) {
     croak 'new(): connection_class must be a package name'
@@ -43,6 +46,12 @@ sub _validate_tls_options ($option) {
     return { %$option };
 }
 
+sub _validate_max_redirects ($value, $where) {
+    croak "$where: max_redirects must be a non-negative integer"
+        if !defined($value) || ref($value) || "$value" !~ /\A[0-9]+\z/;
+    return 0 + $value;
+}
+
 sub new ($class, %option) {
     my $loop = delete $option{loop}
         // croak 'new(): loop is required';
@@ -54,6 +63,10 @@ sub new ($class, %option) {
             // 'Linux::Event::HTTP::Client::Connection',
     );
     my $connect_timeout = delete $option{connect_timeout};
+    my $max_redirects = _validate_max_redirects(
+        exists($option{max_redirects}) ? delete($option{max_redirects}) : 5,
+        'new()',
+    );
     my $tls = exists($option{tls})
         ? _validate_tls_options(delete $option{tls})
         : {};
@@ -65,6 +78,7 @@ sub new ($class, %option) {
         loop             => $loop,
         connection_class => $connection_class,
         connect_timeout  => $connect_timeout,
+        max_redirects    => $max_redirects,
         tls              => $tls,
         idle             => {},
         connections      => {},
@@ -74,6 +88,7 @@ sub new ($class, %option) {
 
 sub loop             ($self) { $self->{loop} }
 sub connection_class ($self) { $self->{connection_class} }
+sub max_redirects    ($self) { $self->{max_redirects} }
 sub is_closed        ($self) { !!$self->{closed} }
 
 sub _parse_url ($url) {
@@ -205,41 +220,136 @@ sub _release_connection ($self, $origin, $connection) {
     return;
 }
 
-sub request ($self, $method, $url, %option) {
-    croak 'request(): Client is closed' if $self->{closed};
-    croak 'request(): method is required'
-        if !defined($method) || ref($method) || $method eq '';
+sub _resolve_redirect_url ($current_url, $location) {
+    my $base = URI->new("$current_url");
+    my $reference = URI->new("$location");
+    my $inherit_fragment = !defined($reference->fragment)
+        ? $base->fragment : undef;
 
-    my $destination = _parse_url($url);
-    my $headers = _copy_headers(delete $option{headers});
-    my $version = delete($option{version}) // '1.1';
-    my $has_body = exists $option{body};
-    my $body = delete $option{body};
-    my $has_stream_body = exists $option{stream_body};
-    my $stream_body = $has_stream_body
-        ? _validate_stream_body(delete $option{stream_body})
-        : undef;
-    my $has_buffer_body = exists $option{buffer_body};
-    my $buffer_body = $has_buffer_body
-        ? _validate_buffer_body(delete $option{buffer_body})
-        : undef;
+    my $next = URI->new_abs($reference, $base);
+    $next->fragment($inherit_fragment) if defined $inherit_fragment;
+    return $next->as_string;
+}
 
-    croak 'request(): body and stream_body are mutually exclusive'
-        if $has_body && $has_stream_body;
+sub _redirect_headers ($headers, $drop_body, $cross_origin) {
+    my @next;
 
-    my %callback;
-    for my $name (keys %CALLBACK) {
-        next if !exists $option{$name};
-        my $value = delete $option{$name};
-        croak "request(): $name must be a coderef"
-            if defined($value) && ref($value) ne 'CODE';
-        $callback{$name} = $value if defined $value;
+    for my $pair (@$headers) {
+        my ($name, $value) = @$pair;
+        my $lower = defined($name) && !ref($name) ? lc($name) : '';
+
+        next if $lower eq 'host';
+        next if $lower eq 'connection';
+        next if $lower eq 'keep-alive';
+        next if $lower eq 'proxy-connection';
+        next if $lower eq 'proxy-authorization';
+        next if $lower eq 'te';
+        next if $lower eq 'trailer';
+        next if $lower eq 'transfer-encoding';
+        next if $lower eq 'upgrade';
+        next if $lower eq 'content-length';
+
+        if ($cross_origin) {
+            next if $lower eq 'authorization';
+            next if $lower eq 'cookie';
+        }
+
+        if ($drop_body) {
+            next if $lower eq 'expect';
+            next if $lower =~ /\Acontent-/;
+        }
+
+        push @next, [ $name, $value ];
     }
 
-    croak 'request(): buffer_body cannot be combined with on_body'
-        if $has_buffer_body && $callback{on_body};
-    croak 'request(): unknown options: ' . join(', ', sort keys %option)
-        if %option;
+    return \@next;
+}
+
+sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
+    my $status = $response->status;
+    return undef if !$REDIRECT_STATUS{$status};
+
+    return undef if $spec->{max_redirects} == 0;
+
+    my @location = $response->header_values('Location');
+    return undef if !@location;
+    return {
+        error => 'redirect response contains multiple Location fields',
+    } if @location != 1;
+    return {
+        error => 'maximum redirect count exceeded',
+    } if $operation->redirect_count >= $spec->{max_redirects};
+
+    my ($next_url, $next_destination);
+    my $ok = eval {
+        $next_url = _resolve_redirect_url($spec->{url}, $location[0]);
+        $next_destination = _parse_url($next_url);
+        1;
+    };
+    if (!$ok) {
+        my $error = "$@";
+        $error =~ s/\s+\z//;
+        return {
+            error => "invalid redirect Location: $error",
+        };
+    }
+
+    my $method = $spec->{method};
+    my $drop_body = 0;
+
+    if ($status == 303) {
+        $method = uc($method) eq 'HEAD' ? 'HEAD' : 'GET';
+        $drop_body = 1;
+    } elsif (($status == 301 || $status == 302)
+        && uc($method) eq 'POST') {
+        $method = 'GET';
+        $drop_body = 1;
+    }
+
+    if (!$drop_body && $spec->{has_stream_body}) {
+        return {
+            error => "cannot automatically follow $status redirect for a streaming Request body because the producer is not replayable",
+        };
+    }
+
+    my $headers = _redirect_headers(
+        $spec->{headers},
+        $drop_body,
+        $destination->{origin} ne $next_destination->{origin},
+    );
+
+    my %next = (
+        url             => $next_url,
+        method          => $method,
+        headers         => $headers,
+        version         => $spec->{version},
+        has_body        => 0,
+        body            => undef,
+        has_stream_body => 0,
+        stream_body     => undef,
+        has_buffer_body => $spec->{has_buffer_body},
+        buffer_body     => $spec->{buffer_body},
+        max_redirects   => $spec->{max_redirects},
+        callback        => $spec->{callback},
+    );
+
+    if (!$drop_body && $spec->{has_body}) {
+        $next{has_body} = 1;
+        $next{body} = $spec->{body};
+    }
+
+    return {
+        url  => $next_url,
+        spec => \%next,
+    };
+}
+
+sub _start_operation_hop ($self, $operation, $spec) {
+    die 'cannot start another HTTP hop for a terminal Client operation'
+        if $operation->is_terminal;
+
+    my $destination = _parse_url($spec->{url});
+    my $headers = _copy_headers($spec->{headers});
 
     my @host = grep {
         defined($_->[0]) && !ref($_->[0]) && lc($_->[0]) eq 'host'
@@ -247,39 +357,106 @@ sub request ($self, $method, $url, %option) {
     push @$headers, [ Host => $destination->{host_header} ] if !@host;
 
     my %request = (
-        method  => $method,
+        method  => $spec->{method},
         target  => $destination->{target},
-        version => $version,
+        version => $spec->{version},
         headers => $headers,
     );
-    $request{body} = $body if $has_body;
+    $request{body} = $spec->{body} if $spec->{has_body};
     my $message = Linux::Event::HTTP::Request->new(%request);
 
     my $connection = $self->_connection_for($destination);
-    my %connection_callback;
+    my $callback = $spec->{callback};
+    my $redirect;
 
-    for my $name (qw(on_response on_body on_informational)) {
-        my $user = $callback{$name} or next;
-        $connection_callback{$name} = sub (@args) {
-            $user->(@args);
+    my %connection_callback;
+    $connection_callback{on_response} = sub ($transaction, $response) {
+        $redirect = $self->_redirect_plan(
+            $operation, $spec, $destination, $response,
+        );
+
+        if (!$redirect && $callback->{on_response}) {
+            $callback->{on_response}->($transaction, $response);
+            $operation->_mark_cancelled
+                if $transaction->is_cancelled && !$operation->is_terminal;
+        }
+        return;
+    };
+
+    if ($callback->{on_body}) {
+        $connection_callback{on_body} = sub ($transaction, $response, $bytes) {
+            return if $redirect;
+            $callback->{on_body}->($transaction, $response, $bytes);
+            $operation->_mark_cancelled
+                if $transaction->is_cancelled && !$operation->is_terminal;
             return;
         };
     }
-    $connection_callback{stream_body} = $stream_body if $has_stream_body;
-    $connection_callback{buffer_body} = $buffer_body if $has_buffer_body;
 
-    my $user_complete = $callback{on_complete};
+    if ($callback->{on_informational}) {
+        $connection_callback{on_informational} = sub ($transaction, $response) {
+            $callback->{on_informational}->($transaction, $response);
+            $operation->_mark_cancelled
+                if $transaction->is_cancelled && !$operation->is_terminal;
+            return;
+        };
+    }
+
+    $connection_callback{stream_body} = $spec->{stream_body}
+        if $spec->{has_stream_body};
+    $connection_callback{buffer_body} = $spec->{buffer_body}
+        if $spec->{has_buffer_body};
+
     $connection_callback{on_complete} = sub ($transaction) {
         $self->_release_connection(
             $destination->{origin}, $connection,
         );
-        $user_complete->($transaction) if $user_complete;
+
+        if ($redirect) {
+            if (defined $redirect->{error}) {
+                my $error = $redirect->{error};
+                $operation->_fail($error) if !$operation->is_terminal;
+                $callback->{on_error}->($transaction, $error)
+                    if $callback->{on_error};
+                return;
+            }
+
+            if (my $on_redirect = $callback->{on_redirect}) {
+                $on_redirect->(
+                    $operation,
+                    $transaction,
+                    $transaction->response,
+                    $redirect->{url},
+                );
+                return if $operation->is_terminal;
+            }
+
+            my $ok = eval {
+                $self->_start_operation_hop(
+                    $operation, $redirect->{spec},
+                );
+                1;
+            };
+            if (!$ok) {
+                my $error = "$@";
+                $error =~ s/\s+\z//;
+                $operation->_fail($error) if !$operation->is_terminal;
+                $callback->{on_error}->($transaction, $error)
+                    if $callback->{on_error};
+            }
+            return;
+        }
+
+        $operation->_mark_complete if !$operation->is_terminal;
+        $callback->{on_complete}->($transaction)
+            if $callback->{on_complete};
         return;
     };
 
-    my $user_error = $callback{on_error};
     $connection_callback{on_error} = sub ($transaction, $error) {
-        $user_error->($transaction, $error) if $user_error;
+        $operation->_fail($error) if !$operation->is_terminal;
+        $callback->{on_error}->($transaction, $error)
+            if $callback->{on_error};
         return;
     };
 
@@ -298,7 +475,75 @@ sub request ($self, $method, $url, %option) {
         die $error;
     }
 
+    $operation->_append_transaction($transaction, $spec->{url});
     return $transaction;
+}
+
+sub request ($self, $method, $url, %option) {
+    croak 'request(): Client is closed' if $self->{closed};
+    croak 'request(): method is required'
+        if !defined($method) || ref($method) || $method eq '';
+
+    _parse_url($url);
+
+    my $headers = _copy_headers(delete $option{headers});
+    my $version = delete($option{version}) // '1.1';
+    my $has_body = exists $option{body};
+    my $body = delete $option{body};
+    my $has_stream_body = exists $option{stream_body};
+    my $stream_body = $has_stream_body
+        ? _validate_stream_body(delete $option{stream_body})
+        : undef;
+    my $has_buffer_body = exists $option{buffer_body};
+    my $buffer_body = $has_buffer_body
+        ? _validate_buffer_body(delete $option{buffer_body})
+        : undef;
+    my $max_redirects = _validate_max_redirects(
+        exists($option{max_redirects})
+            ? delete($option{max_redirects})
+            : $self->{max_redirects},
+        'request()',
+    );
+
+    croak 'request(): body and stream_body are mutually exclusive'
+        if $has_body && $has_stream_body;
+
+    my %callback;
+    for my $name (keys %CALLBACK) {
+        next if !exists $option{$name};
+        my $value = delete $option{$name};
+        croak "request(): $name must be a coderef"
+            if defined($value) && ref($value) ne 'CODE';
+        $callback{$name} = $value if defined $value;
+    }
+
+    croak 'request(): buffer_body cannot be combined with on_body'
+        if $has_buffer_body && $callback{on_body};
+    croak 'request(): unknown options: ' . join(', ', sort keys %option)
+        if %option;
+
+    my $operation = Linux::Event::HTTP::Client::Operation->_new(
+        initial_url   => "$url",
+        max_redirects => $max_redirects,
+    );
+
+    my $spec = {
+        url             => "$url",
+        method          => $method,
+        headers         => $headers,
+        version         => $version,
+        has_body        => $has_body ? 1 : 0,
+        body            => $body,
+        has_stream_body => $has_stream_body ? 1 : 0,
+        stream_body     => $stream_body,
+        has_buffer_body => $has_buffer_body ? 1 : 0,
+        buffer_body     => $buffer_body,
+        max_redirects   => $max_redirects,
+        callback        => \%callback,
+    };
+
+    $self->_start_operation_hop($operation, $spec);
+    return $operation;
 }
 
 sub get ($self, $url, %option) {
@@ -348,33 +593,37 @@ Linux::Event::HTTP::Client - asynchronous HTTP client
 
 =head1 SYNOPSIS
 
-    my $client = Linux::Event::HTTP::Client->new(loop => $loop);
+    my $client = Linux::Event::HTTP::Client->new(
+        loop => $loop,
+        max_redirects => 5,
+    );
 
-    my $tx = $client->post(
-        'https://example.com/upload',
-        stream_body => {
-            on_drain  => sub ($body) { ... },
-            on_cancel => sub ($body) { ... },
+    my $operation = $client->get(
+        'https://example.com/start',
+        on_redirect => sub ($op, $tx, $res, $next_url) {
+            say "redirecting to $next_url";
         },
-        on_complete => sub ($tx) { ... },
+        on_complete => sub ($tx) {
+            say $tx->response->status;
+        },
         on_error => sub ($tx, $error) {
             warn $error;
         },
     );
 
-    my $body = $tx->request_body;
-    $body->write($bytes);
-    $body->complete;
-
 =head1 DESCRIPTION
 
 C<Linux::Event::HTTP::Client> is the high-level outbound HTTP entry point. It
-owns URL parsing, destination selection, connection creation, HTTPS transport
-policy, and a small bounded reuse policy. Client methods return
-L<Linux::Event::HTTP::Transaction>.
+owns URL parsing, destination selection, redirect policy, connection creation,
+HTTPS transport policy, and a small bounded reuse policy.
+
+Client methods return L<Linux::Event::HTTP::Client::Operation>. A client
+operation normally contains one L<Linux::Event::HTTP::Transaction>, but each
+followed redirect creates another Transaction because a Transaction always
+represents exactly one Request/Response exchange.
 
 Outgoing Request bodies may be complete scalar bodies or explicit streaming
-producers owned by the Transaction. Incoming Response handling remains
+producers owned by Transaction. Incoming Response handling remains
 incremental-first. C<on_body> consumes body chunks. Without C<on_body>, body
 bytes are drained and discarded. Explicit C<buffer_body =E<gt> $max_bytes>
 requests bounded whole-body buffering; there is no implicit unbounded buffering.
@@ -383,40 +632,93 @@ requests bounded whole-body buffering; there is no implicit unbounded buffering.
 
 =head2 request
 
-    my $tx = $client->request(
+    my $operation = $client->request(
         'POST',
         'https://example.com/api/items',
+        body => $bytes,
+        max_redirects => 5,
+        on_redirect => sub ($op, $tx, $res, $next_url) { ... },
+        on_response => sub ($tx, $res) { ... },
+        on_complete => sub ($tx) { ... },
+        on_error => sub ($tx, $error) { ... },
+    );
+
+Builds the canonical Request for each hop, obtains or creates a connection for
+the corresponding URL origin, and starts the operation immediately. Only
+absolute C<http> and C<https> URLs are accepted. The URL path/query becomes the
+Request target and Host is synthesized when absent.
+
+Callbacks C<on_response>, C<on_body>, and C<on_complete> describe the final
+response. Intermediate redirect response bodies are consumed according to the
+normal HTTP framing rules but are not delivered through C<on_body>.
+C<on_redirect> runs after an intermediate redirect Transaction completes and
+before the next hop starts:
+
+    on_redirect => sub ($operation, $tx, $res, $next_url) {
+        ...
+    }
+
+C<on_informational> remains per-Transaction and can therefore run on any hop.
+
+=head2 redirect policy
+
+C<max_redirects> is a non-negative integer and defaults to 5. It can be set on
+the Client or overridden per request. Zero disables automatic redirect
+following and exposes a 3xx response as the final response without interpreting
+its Location fields as redirect instructions.
+
+Automatic redirects recognize 301, 302, 303, 307, and 308 when exactly one
+Location field is present. Relative Location values are resolved against the
+current absolute URL.
+
+For compatibility with prevailing HTTP user-agent behavior, 301 and 302 change
+POST to GET and discard the request body. 303 uses GET, or HEAD when the
+original method was HEAD, and discards the body. 307 and 308 preserve the
+method and body.
+
+A complete scalar Request body can be replayed for a method-preserving
+redirect. A streaming Request body is intentionally not replayed automatically
+because a producer is not inherently rewindable. A method-preserving redirect
+for a streaming Request therefore terminates the Client operation with a clear
+error. Redirects that change POST to GET can proceed because the subsequent
+request has no body.
+
+Redirect hops regenerate Host and HTTP message-framing fields. Cross-origin
+redirects also remove Authorization and Cookie. Proxy-Authorization and
+connection-specific fields are never propagated automatically.
+
+=head2 request bodies
+
+C<body> supplies a complete scalar Request body. C<stream_body =E<gt> { ... }>
+selects incremental body production instead; the two are mutually exclusive.
+The producer remains owned by the current Transaction and is conveniently
+available from the returned operation:
+
+    my $operation = $client->post(
+        $url,
         stream_body => {
             on_drain  => sub ($body) { ... },
             on_cancel => sub ($body) { ... },
         },
-        buffer_body => 1_048_576,
-        on_complete => sub ($tx) {
-            my $bytes = $tx->response->body;
-            ...;
-        },
-        on_error => sub ($tx, $error) { ... },
     );
 
-Builds the canonical Request, obtains or creates a connection for the URL
-origin, starts one Transaction, and returns it immediately. Only absolute
-C<http> and C<https> URLs are accepted. The URL path/query becomes the Request
-target and Host is synthesized when absent.
+    my $body = $operation->request_body;
+    $body->write($bytes);
+    $body->complete;
 
-C<body> supplies a complete scalar Request body. C<stream_body =E<gt> { ... }>
-selects incremental body production instead; the two are mutually exclusive.
-The stream options are C<on_drain> and C<on_cancel>. The producer is available
-from C<< $tx->request_body >>. A supplied Content-Length is enforced exactly;
-otherwise HTTP/1.1 uses chunked transfer coding automatically. HTTP/1.0
-streaming requires Content-Length.
+A supplied Content-Length is enforced exactly; otherwise HTTP/1.1 uses chunked
+transfer coding automatically. HTTP/1.0 streaming requires Content-Length.
+
+=head2 buffer_body
 
 C<buffer_body =E<gt> $max_bytes> must be a positive integer byte limit and
 cannot be combined with C<on_body>. The limit counts the same body bytes that
-C<on_body> would receive after HTTP/1 chunk framing has been removed. A known
-Content-Length above the limit fails after C<on_response>; unknown-length bodies
-fail when accumulation would cross the limit. On success,
-C<< $tx->response->body >> contains the complete scalar before C<on_complete>
-runs. A limit failure is a Transaction error and closes the HTTP/1 connection.
+C<on_body> would receive after HTTP/1 chunk framing has been removed. On
+redirect hops the same bound applies while the intermediate response is drained;
+the final completed body is available through C<< $operation->response->body >>.
+
+A limit failure is a terminal Client operation error and closes the affected
+HTTP/1 connection.
 
 =head2 get, head, post, put, delete
 
@@ -429,6 +731,10 @@ Returns the Linux::Event Loop.
 =head2 connection_class
 
 Returns the configured Client::Connection class.
+
+=head2 max_redirects
+
+Returns the Client default redirect limit.
 
 =head2 is_closed
 
@@ -445,6 +751,8 @@ At most one idle connection is retained per origin. A concurrent request may
 open another connection rather than queueing or using HTTP/1 pipelining. When
 multiple connections later become idle, one is retained and extras are closed.
 
+Each redirect hop independently selects a connection for its target origin.
+
 =head1 HTTPS
 
 HTTPS uses the same Client::Connection class with a Linux::Event TLS transport,
@@ -453,6 +761,7 @@ protocol.
 
 =head1 SEE ALSO
 
+L<Linux::Event::HTTP::Client::Operation>,
 L<Linux::Event::HTTP::Client::Connection>, L<Linux::Event::HTTP::Request>,
 L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Transaction>,
 L<Linux::Event::HTTP::Body::Stream>.

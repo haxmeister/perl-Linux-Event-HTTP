@@ -1,39 +1,42 @@
 # Linux::Event::HTTP architecture
 
-Linux::Event::HTTP is an HTTP protocol implementation for Linux::Event. It is
-not a web framework or framework-adapter distribution.
+Linux::Event::HTTP is an HTTP communications layer for Linux::Event. It is not a
+web framework or framework-adapter distribution.
 
-## Boundaries
+## Ownership boundaries
 
-The design has four distinct responsibilities:
+The design separates five responsibilities:
 
-- **Transport** - Linux::Event owns sockets, TLS, readiness, buffering,
-  backpressure, deadlines, ordered write queuing, connection acquisition, and
-  event dispatch.
-- **Protocol execution** - Client::Connection and Server::Connection own HTTP
-  framing/parsing, ordering, persistence, and movement of message bytes across
-  Linux::Event transports.
+- **Transport** - Linux::Event owns sockets, TLS, readiness, byte buffering,
+  backpressure, deadlines, ordered output queues, and event dispatch.
+- **Protocol execution** - Client::Connection and Server::Connection own HTTP/1
+  parsing, serialization, framing, ordering, persistence, and movement of bytes
+  across Linux::Event transports.
 - **Messages** - Request and Response represent HTTP messages independent of
   whether they were created or received by a client or server.
 - **Exchange lifecycle** - Transaction represents exactly one Request/Response
-  exchange and owns cancellation plus operations that belong to one exchange
-  rather than to a message or socket.
+  exchange and owns cancellation plus exchange-specific producer/output state.
+- **High-level client lifecycle** - Client::Operation represents one application
+  client action. It normally contains one Transaction, but may contain several
+  when redirects are followed.
 
-`Body::Stream` is the writable producer used by Transaction for an outgoing
-incremental body. It is not a message and does not own a second transport queue.
+`Body::Stream` is the writable producer used by Transaction for outgoing
+incremental Request or Response bodies. It is not a message and does not own a
+second transport queue.
 
-Reusable transport or byte-stream performance work belongs in Linux::Event.
+Reusable transport or ordered-byte performance work belongs in Linux::Event.
 HTTP-specific native code should remain limited to HTTP wire work where a native
 boundary is justified by correctness or measurement.
 
-Routing, middleware, sessions, templates, PSGI/PAGI integration, and other web
-framework concerns are outside this distribution.
+Routing, middleware, sessions, templates, PSGI/PAGI, and general framework
+concerns are outside this distribution.
 
 ## Public structure
 
 ```text
 Linux::Event::HTTP
 Linux::Event::HTTP::Client
+Linux::Event::HTTP::Client::Operation
 Linux::Event::HTTP::Client::Connection
 Linux::Event::HTTP::Server
 Linux::Event::HTTP::Server::Connection
@@ -44,10 +47,10 @@ Linux::Event::HTTP::Body::Stream
 ```
 
 There is deliberately no generic public `Linux::Event::HTTP::Connection`.
-Client and server connections execute opposite HTTP roles and therefore have
-different state machines even though both are Linux::Event stream sockets.
+Client and server connections execute opposite HTTP roles and have different
+state machines even though both are Linux::Event stream sockets.
 
-There are also deliberately no `Client::Request`, `Client::Response`,
+There are deliberately no `Client::Request`, `Client::Response`,
 `Server::Request`, or `Server::Response` classes. Endpoint direction does not
 change HTTP message identity.
 
@@ -86,11 +89,11 @@ is_complete                     is_complete
 `target` is intentionally used instead of `uri`. An HTTP Request contains a
 request-target. Full URL parsing, scheme, authority, destination selection,
 Host synthesis, redirect resolution, and connection pooling are Client policy.
-They do not belong in the Request message merely because a client needs them.
+They do not belong in Request merely because a client needs them.
 
-Request and Response deliberately do not retain their peer message, carrying
-Connection, output writer, pool, or protocol-transition state. Those
-relationships and operations belong to Transaction and protocol executors.
+Request and Response do not retain their peer message, Connection, output
+writer, pool, redirect chain, or protocol-transition state. Those relationships
+belong to Transaction, Client::Operation, and protocol executors.
 
 HTTP/1-only framing and persistence decisions remain private protocol state
 rather than generic message methods.
@@ -101,24 +104,46 @@ A Transaction represents exactly one HTTP exchange:
 
 ```text
 Transaction
-    Request
-    Response
+    one Request
+    zero/one Response
     lifecycle state
-    cancellation
-    error
-    exchange-specific body/output operations
-    protocol handoff state where supported
+    cancellation/error
+    outgoing Request/Response body producer where applicable
+    server response-output state
+    server Upgrade state
 ```
 
-A redirect is another HTTP exchange and therefore another Transaction.
-Transaction does not own a socket, parser, connection pool, URL, redirect chain,
-or transport queue. Its current Client/Connection controller performs protocol
-execution.
+A Transaction does not own a socket, parser, connection pool, URL, redirect
+chain, or transport output queue. Its Client::Connection or Server::Connection
+controller performs protocol execution.
 
-On the server, Transaction owns outgoing Response body production, deferred
-scalar send, response-output progress, and Upgrade lifecycle. On the client,
-Transaction owns outgoing incremental Request body production. These operations
-do not make Request or Response transport objects.
+A redirect is another HTTP exchange and therefore another Transaction. This is
+an invariant, not an implementation detail.
+
+## Client::Operation model
+
+High-level Client methods return Client::Operation rather than pretending a
+multi-hop redirect sequence is one Transaction:
+
+```text
+Client::Operation
+    initial URL
+    current/final URL
+    redirect limit
+    Transaction history
+    operation terminal state
+
+        Transaction #1: Request -> 302 Response
+        Transaction #2: Request -> 307 Response
+        Transaction #3: Request -> 200 Response
+```
+
+For the common single-hop case, Operation delegates `request`, `response`,
+`request_body`, `cancel`, and terminal-state access so ordinary code remains
+concise. The actual body producer remains Transaction-owned.
+
+Low-level `Client::Connection->request()` continues to return exactly one
+Transaction. Redirect policy exists only in the high-level Client.
 
 ## Server model
 
@@ -131,7 +156,7 @@ on_request => sub ($conn, $req, $res) {
 }
 ```
 
-The active exchange is available without adding another callback argument:
+The active exchange is available without another callback argument:
 
 ```perl
 my $tx = $conn->transaction;
@@ -139,50 +164,54 @@ my $tx = $conn->transaction;
 
 The objects have different lifetimes:
 
-- `$conn` is the persistent TCP/TLS HTTP connection.
-- `$tx` is one HTTP exchange on that connection.
-- `$req` is the Request in that Transaction.
-- `$res` is the Response in that Transaction.
+- `$conn` is the persistent TCP/TLS HTTP connection;
+- `$tx` is one HTTP exchange on that connection;
+- `$req` is that exchange's Request;
+- `$res` is that exchange's Response.
 
 A complete HTTP response does not imply transport shutdown. On persistent
 HTTP/1.1 the same socket normally remains available for later Transactions.
 
-The server advances only when the complete request input boundary has been
-consumed and response output for the current Transaction has completed.
-
 ## Client model
 
-`Linux::Event::HTTP::Client` is the ordinary outbound entry point. It owns
-application-facing destination policy:
+`Linux::Event::HTTP::Client` is the ordinary outbound entry point:
 
 ```text
 Client
     absolute URL parsing
+    redirect policy
     scheme/host/port selection
     Host synthesis
     TLS transport creation
     connection selection/reuse
     convenience verbs
 
+Client::Operation
+    one application-facing client action
+    one or more Transactions
+    redirect history/limit
+    cancellation and operation terminal state
+
 Client::Connection
     one HTTP/1 socket
-    Request serialization/framing
+    one active Transaction at a time
+    Request serialization
     Response parsing/framing
     persistence/reuse eligibility
-    one active Transaction at a time
 
 Transaction
-    one Request/Response exchange
+    exactly one Request/Response exchange
 ```
 
-The generic high-level form is:
+The high-level form is:
 
 ```perl
-my $tx = $client->request(
+my $operation = $client->request(
     'POST',
     'https://example.com/api/items',
-    headers => [ [ 'Content-Type', 'application/json' ] ],
     body => $bytes,
+    max_redirects => 5,
+    on_redirect => sub ($op, $tx, $res, $next_url) { ... },
     on_response => sub ($tx, $res) { ... },
     on_body => sub ($tx, $res, $bytes) { ... },
     on_complete => sub ($tx) { ... },
@@ -191,37 +220,66 @@ my $tx = $client->request(
 ```
 
 Convenience methods are `get`, `head`, `post`, `put`, and `delete`.
-All return Transaction rather than Request because the returned object is the
-cancellable asynchronous exchange. The canonical Request is available at
-`$tx->request`.
 
-The initial connection-reuse policy is intentionally simple and bounded:
+The current connection-reuse policy is deliberately bounded:
 
 - no HTTP/1 pipelining;
 - one active Transaction per Client::Connection;
 - sequential keep-alive reuse;
 - at most one idle connection retained per origin;
-- if the retained connection is busy, concurrent requests create other
-  connections rather than queueing behind it;
+- concurrent same-origin operations may create additional connections;
 - when multiple connections later become idle for one origin, one is retained
-  and extras are closed.
+  and extras are closed;
+- each redirect hop independently selects a connection for its target origin.
 
-This policy is sufficient to establish ownership and correctness without
-prematurely turning Client into a large pooling subsystem. Richer pool limits
-can be added later without changing Request/Response/Transaction identity.
+## Client URL and redirect policy
 
-## Client URL policy
+Client uses the established `URI` distribution rather than implementing URL
+parsing itself.
 
-Client uses the established `URI` distribution rather than implementing a URL
-parser inside Linux::Event::HTTP.
-
-Only absolute `http` and `https` URLs are accepted. Fragments are not
+Only absolute `http` and `https` starting URLs are accepted. Fragments are not
 transmitted. Origin-form path plus query becomes the Request target, with `/`
-used when the URL has no path. For HTTP/1.1, Client synthesizes Host when the
-caller did not provide one; non-default ports are included.
+used when the URL has no path. HTTP/1.1 Host is synthesized when absent.
 
-Userinfo is rejected rather than silently creating authentication policy. Proxy,
-authentication, cookies, and redirects remain later Client features.
+Userinfo is rejected rather than silently creating authentication policy.
+
+Automatic redirect following recognizes 301, 302, 303, 307, and 308. Relative
+Location references are resolved against the current absolute URL. When a
+redirect Location omits a fragment, the existing fragment is inherited for URL
+processing; fragments still never enter the HTTP request-target.
+
+`max_redirects` defaults to 5 and may be configured globally or per operation.
+Zero disables redirect interpretation completely. In that mode a 3xx is an
+ordinary final Response; the Client does not validate or interpret its Location
+fields as redirect instructions.
+
+When following is enabled, a redirect is followed only when one Location field
+is available. Multiple Location fields are rejected as ambiguous redirect
+instructions.
+
+Method/body policy follows common HTTP user-agent semantics:
+
+- 301/302: POST may be changed to GET and its body discarded;
+- 303: use GET, except HEAD remains HEAD, and discard the body;
+- 307/308: preserve method and body.
+
+A complete scalar body is replayable and may be reused for a method-preserving
+redirect. A streaming producer is not inherently rewindable, so automatic
+method-preserving redirect of a streaming Request fails rather than guessing.
+A redirect that changes POST to GET can proceed because no body replay is
+required.
+
+Each redirect hop regenerates Host and framing/connection-specific fields.
+Cross-origin redirects additionally remove Authorization and Cookie.
+Proxy-Authorization is never propagated automatically. The Client does not yet
+implement a cookie jar or authentication manager; this is defensive forwarding
+policy for caller-supplied headers.
+
+`on_response`, `on_body`, and `on_complete` are final-response callbacks.
+Intermediate redirect responses are consumed to their actual message boundary
+but are not emitted through final `on_body`. `on_redirect` receives each
+completed intermediate redirect Transaction before the next hop begins.
+`on_informational` remains per-Transaction and can run on any hop.
 
 ## Body model
 
@@ -241,12 +299,10 @@ $res->header('Content-Type', 'text/plain');
 $res->body("hello\n");
 ```
 
-Inside an HTTP callback, body assignment is a complete-body declaration rather
-than an immediate transport write. Response metadata remains mutable until
-callback return.
+Inside an HTTP callback, body assignment declares a complete body rather than
+writing immediately. Response metadata remains mutable until callback return.
 
-For a Response completed by another event, retain the Transaction and send the
-configured message explicitly:
+For a Response completed by another event:
 
 ```perl
 my $tx = $conn->transaction;
@@ -267,7 +323,7 @@ $body->complete;
 ```
 
 Creating the producer does not commit response headers. First write/complete is
-the output commit point. A complete scalar body and incremental producer are
+the output commit point. Complete scalar body and incremental producer are
 mutually exclusive.
 
 ### Server incoming Request
@@ -278,14 +334,13 @@ absent, body bytes are drained/discarded rather than accumulated.
 
 ### Client outgoing Request
 
-A complete scalar Request uses normal message body state. Client::Connection
-adds Content-Length when needed and checks an explicit Content-Length against
-the scalar body length.
+A complete scalar body is stored on Request. Client::Connection adds
+Content-Length when needed and checks an explicit Content-Length.
 
-Incremental Request production is Transaction-owned:
+Incremental output is Transaction-owned:
 
 ```perl
-my $tx = $client->post(
+my $operation = $client->post(
     $url,
     stream_body => {
         on_drain  => sub ($body) { ... },
@@ -293,30 +348,13 @@ my $tx = $client->post(
     },
 );
 
-my $body = $tx->request_body;
+my $body = $operation->request_body;
 $body->write($bytes);
 $body->complete;
 ```
 
-`body` and `stream_body` are mutually exclusive. If the Request declares
-Content-Length, producer bytes are enforced against that exact size. If no
-length is known, HTTP/1.1 automatically uses `Transfer-Encoding: chunked`.
-HTTP/1.0 streaming requires Content-Length because request bodies are never
-close-delimited.
-
-Request `is_complete` remains false while the producer can still supply bytes
-and becomes true only after successful producer completion. A failed final write
-that does not satisfy Content-Length leaves the Request incomplete.
-
-Producer writes go directly into Linux::Event's existing ordered-byte output
-queue. A false `write` return means bytes were accepted but the producer must
-pause until `on_drain`. HTTP composes that producer drain signal with any custom
-Client::Connection `on_drain` behavior rather than replacing it.
-
-If a final server Response arrives while the Request producer is unfinished, the
-producer is cancelled and that HTTP/1 connection is marked non-reusable. The
-Response may still complete the Transaction normally; Request message
-completion is not fabricated just because the peer rejected the upload early.
+Known-length streams enforce Content-Length exactly. Unknown-length HTTP/1.1
+streams use chunked transfer coding. HTTP/1.0 streaming requires Content-Length.
 
 ### Client incoming Response
 
@@ -328,24 +366,15 @@ on_body => sub ($tx, $res, $bytes) { ... },
 on_complete => sub ($tx) { ... },
 ```
 
-`on_response` runs after the final response head has been validated and before
-body delivery. The Response is incomplete at this point when a body remains.
-`on_body` receives body bytes after HTTP/1 transfer framing has been removed.
-`on_complete` runs after the actual body boundary and Transaction success.
+If `on_body` is absent, bytes are drained/discarded. The protocol layer never
+creates an implicit unbounded whole-body scalar.
 
-If `on_body` is absent, bytes are drained/discarded by default. The protocol
-layer never creates an implicit unbounded whole-body scalar.
-
-For callers that explicitly want one scalar, Client and Client::Connection
-support bounded buffering:
+For callers that explicitly want one scalar:
 
 ```perl
 $client->get(
     $url,
     buffer_body => 1_048_576,
-    on_response => sub ($tx, $res) {
-        # head is available; body may still be incomplete
-    },
     on_complete => sub ($tx) {
         my $bytes = $tx->response->body;
         ...;
@@ -354,61 +383,47 @@ $client->get(
 ```
 
 `buffer_body` and `on_body` are mutually exclusive. The configured limit counts
-exactly the bytes that `on_body` would have received after HTTP/1 chunk framing
-is removed. Content-Encoding is not decoded by this protocol layer, so encoded
-representation bytes remain encoded for both streaming and limit accounting.
+bytes after HTTP/1 chunk framing is removed. Content-Encoding is not decoded.
+The same bound applies while intermediate redirect bodies are consumed.
 
-If a validated Content-Length is already above the limit, `on_response` still
-runs with the committed Response head and then the Transaction fails before body
-accumulation begins. For chunked, close-delimited, or otherwise unknown-length
-bodies, accumulation fails as soon as adding delivered bytes would cross the
-limit. Buffer-limit failure is a Transaction error and closes the HTTP/1
-connection so an unfinished response cannot be mistaken for a reusable stream.
-
-On successful completion, the committed received Response exposes the buffered
-scalar through `body`; bodyless buffered responses expose the empty string.
-Attaching this completed received body is private protocol/convenience state and
-does not make received metadata mutable.
+A known Content-Length above the limit fails before accumulation. Unknown-size
+bodies fail when adding decoded bytes would cross the bound. Failure closes the
+HTTP/1 connection so unread bytes cannot be mistaken for a reusable stream.
 
 ## Commit and completion state
 
-Message completion and protocol execution are intentionally different.
+Message, Transaction, and Operation completion are distinct:
 
-- Request/Response `is_complete` describes the message body boundary.
-- Received message metadata is committed/read-only once parsed.
-- An outgoing streaming Request remains incomplete until its producer completes.
-- Server `Transaction->is_response_started` describes output commit/start.
-- `Transaction->is_complete` means the whole exchange succeeded.
-- Cancellation and error are separate terminal states.
-
-For a Client response, the Response object may exist and be readable while
-`is_complete` is false because body bytes are still arriving. In bounded
-buffering mode, `Response->body` remains undef until successful completion.
+- Request/Response `is_complete` describes the message body boundary;
+- received metadata is committed/read-only once parsed;
+- server `Transaction->is_response_started` describes output start;
+- `Transaction->is_complete` means one HTTP exchange succeeded;
+- `Client::Operation->is_complete` means the overall high-level client action,
+  including followed redirects, reached its final successful Transaction;
+- cancellation and errors are separate terminal states.
 
 ## Client HTTP/1 response framing
 
-Client::Connection applies framing independently from application body handling:
+Client::Connection applies framing independently from application handling:
 
 - HEAD, 204, and 304 have no delivered body;
-- informational 1xx responses may be surfaced before the final Response;
-- Content-Length is delivered to the exact declared boundary;
-- HTTP/1.1 chunked transfer coding is decoded with the existing native chunked
-  decoder;
+- informational 1xx responses may precede the final Response;
+- Content-Length is consumed to the exact declared boundary;
+- HTTP/1.1 chunked transfer coding is decoded with the existing native decoder;
 - a response without Content-Length or Transfer-Encoding is close-delimited and
   makes the connection non-reusable;
 - Transfer-Encoding plus Content-Length is rejected as ambiguous;
 - only plain `chunked` Transfer-Encoding is currently supported;
-- 101 client Upgrade and CONNECT tunneling are later protocol-handoff work.
+- 101 client Upgrade and CONNECT tunneling remain later handoff work.
 
-Cancelling an active client Transaction closes the HTTP/1 connection. An
-unfinished response cannot generally be skipped safely while preserving reuse of
-that same ordered byte stream. Buffer-limit failure follows the same safe-close
-rule.
+Cancelling an active client Transaction closes its HTTP/1 connection because an
+unfinished response cannot generally be skipped safely while preserving stream
+reuse. Operation cancellation delegates to the active Transaction.
 
 ## Backpressure and transport ownership
 
 Linux::Event remains the only transport-output queue. HTTP does not maintain a
-second queue for server Response producers or client Request producers.
+second queue for server or client body producers.
 
 `Body::Stream->write()` preserves Linux::Event flow control:
 
@@ -420,11 +435,10 @@ false = accepted, but producer should pause until on_drain
 Linux::Event owns queued bytes, watermarks, pending-byte limits, readiness,
 drain signaling, connection progress, and TLS transport state.
 
-The optional Client response buffer is application-facing retained message data,
-not a transport queue. It is bounded explicitly and is populated only from bytes
-already consumed through the normal HTTP body path.
+The optional Client response buffer is retained message/application data, not a
+transport queue.
 
-## HTTP/1 native boundary
+## Native HTTP/1 boundary
 
 HTTP/1 native work is consolidated in one private extension:
 
@@ -435,54 +449,39 @@ Linux::Event::HTTP::_HTTP1
 It currently owns:
 
 - picohttpparser server request-head parsing and lazy Request accessors;
-- chunked transfer decoding used by both server and client;
+- chunked transfer decoding used by server and client;
 - server response-head serialization;
 - the narrow default server scalar-response builder.
 
-The client response-head parser is intentionally strict Perl code. This is the
-correctness baseline. Do not add response-parser XS merely for symmetry with the
-server. Benchmark the client parser in representative end-to-end workloads
-before deciding whether another native fast path is justified.
+The client response-head parser is intentionally strict Perl code. Do not add
+parser XS merely for symmetry. Benchmark representative client workloads before
+adding another native fast path.
 
-## Server::Connection
+## Connection classes
 
-`Linux::Event::HTTP::Server::Connection` is a
-`Linux::Event::IO::Sock::Stream` subclass and owns HTTP/1 server connection
-state. Listener constructs the configured Connection class directly from its
-Stream recipe; HTTP does not maintain an acceptance wrapper object.
+`Linux::Event::HTTP::Server::Connection` and
+`Linux::Event::HTTP::Client::Connection` are
+`Linux::Event::IO::Sock::Stream` subclasses.
 
-Most applications do not subclass it. `connection_class` is the advanced hook
-for reusable stream tuning, socket policy, TLS defaults, or named callbacks.
+Server::Connection owns HTTP/1 server ordering, parsing, response output, and
+Upgrade handoff. Client::Connection owns exactly one active client Transaction,
+Request serialization, Response framing, and reuse eligibility.
 
-## Client::Connection
-
-`Linux::Event::HTTP::Client::Connection` is also a
-`Linux::Event::IO::Sock::Stream` subclass. It executes one Transaction at a time
-and owns HTTP/1 Request serialization/framing and Response parsing on one
-persistent socket.
-
-It is usable directly for low-level work where destination acquisition is
-already known. The high-level Client normally creates and reuses it.
-
-The Connection reserves its raw data/eof/error/close callbacks for HTTP protocol
-execution. Transport drain is composed with Transaction-owned Request producer
-backpressure. Per-Transaction response callbacks, request producer options, and
-optional bounded response-buffering policy are supplied to its `request` method.
+The high-level Client normally creates Client::Connection objects. Direct
+Client::Connection use is appropriate when destination acquisition and redirect
+policy are being handled elsewhere.
 
 ## TLS
 
-HTTPS uses the same message and connection classes. TLS remains Linux::Event
-transport policy.
+HTTPS uses the same message, lifecycle, and connection classes. TLS remains
+Linux::Event transport policy. Client HTTPS uses the URL host as server name and
+currently offers only `http/1.1` through ALPN.
 
-Server TLS is supplied through the Listener/Server recipe. Client HTTPS creates a
-normal Linux::Event TLS client transport using the URL host as server name and
-offers only `http/1.1` through ALPN.
-
-There is no separate HTTPS class hierarchy.
+There is no separate HTTPS hierarchy.
 
 ## Upgrade
 
-Server-side HTTP Upgrade is a Transaction lifecycle operation:
+Server-side HTTP Upgrade is Transaction lifecycle:
 
 ```perl
 $res->header('Upgrade', 'my-protocol');
@@ -493,16 +492,15 @@ The 101 response is validated and queued, the HTTP Transaction completes, and
 Linux::Event `transition_to()` hands the same live stream object to the next
 protocol class while preserving transport identity/state.
 
-Client-side 101 handoff is not part of the current Client foundation. WebSocket
-handshake/frame semantics belong in a separate `Linux::Event::WebSocket`
-distribution.
+Client-side 101 handoff is not implemented here. WebSocket handshake/frame
+semantics belong in a separate `Linux::Event::WebSocket` distribution.
 
 ## Performance policy
 
-Correctness, ease of correct use, coherent API design, maintainability, and
+Correctness, ease of correct use, coherent APIs, maintainability, and
 composability take priority over HTTP-specific benchmark tricks.
 
-Benchmark discoveries may justify private optimizations, but they do not justify
+Benchmark discoveries may justify private optimizations, but should not create
 alternate public APIs merely to expose a fast path. The ordinary API should take
 an optimization transparently when eligible.
 
@@ -519,23 +517,25 @@ a benchmark.
 The current foundation includes:
 
 1. Direction-neutral Request and Response message types.
-2. Transaction as one Request/Response exchange with outgoing body producers.
+2. Transaction as exactly one Request/Response exchange.
 3. HTTP/1 Server and Server::Connection with request-body delivery, persistent
    ordering, scalar/incremental responses, TLS, deferred response send, and
    Upgrade.
-4. HTTP/1 Client::Connection with scalar and streaming Request serialization,
+4. HTTP/1 Client::Connection with scalar/streaming Request serialization,
    strict Response parsing, informational responses, incremental
    Content-Length/chunked/close body delivery, cancellation, and sequential
    reuse.
-5. High-level Client with URL parsing, Host synthesis, HTTP/HTTPS destination
-   acquisition, bounded same-origin idle reuse, common convenience verbs,
-   streaming Request production, and explicit bounded whole-response buffering.
-6. One consolidated private `_HTTP1` native extension and no duplicate transport
+5. High-level Client::Operation with redirect chains of distinct Transactions,
+   bounded redirect policy, cross-origin sensitive-header stripping, and safe
+   refusal to replay non-rewindable streaming Request bodies.
+6. High-level Client URL parsing, HTTP/HTTPS destination acquisition, bounded
+   same-origin idle reuse, common convenience verbs, and explicit bounded
+   whole-response buffering.
+7. One consolidated private `_HTTP1` native extension and no duplicate transport
    queues.
 
-Later client work includes redirects, richer pool policy, proxy/auth/cookie
-conveniences, CONNECT/client Upgrade, and measurement-driven parser
-optimization.
+Later client work includes richer pool policy, proxy/auth/cookie conveniences,
+CONNECT/client Upgrade, and measurement-driven parser optimization.
 
 HTTP/2 is future protocol work. WebSocket remains a separate protocol
 distribution.
