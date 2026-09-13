@@ -22,6 +22,8 @@ docs/BENCHMARKING.md
 docs/PICOHTTPPARSER-EXPERIMENT.md
 lib/Linux/Event/HTTP.pm
 lib/Linux/Event/HTTP/Body/Stream.pm
+lib/Linux/Event/HTTP/Client.pm
+lib/Linux/Event/HTTP/Client/Connection.pm
 lib/Linux/Event/HTTP/Request.pm
 lib/Linux/Event/HTTP/Response.pm
 lib/Linux/Event/HTTP/Transaction.pm
@@ -49,6 +51,10 @@ t/40-server.t
 t/41-tls-server.t
 t/42-upgrade.t
 t/50-final-response.t
+t/60-client-connection.t
+t/61-client-response-framing.t
+t/62-client.t
+t/63-client-tls.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c

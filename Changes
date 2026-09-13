@@ -15,7 +15,7 @@ Revision history for Linux-Event-HTTP
     - Validate HTTP/1 Host, Content-Length, Transfer-Encoding, body framing, and persistence.
     - Reject ambiguous TE/CL framing and unsupported request transfer codings.
     - Define Request and Response as direction-neutral HTTP message classes shared by
-      future client and current server code rather than endpoint-role-specific objects.
+      client and server code rather than endpoint-role-specific objects.
     - Add public locally constructible Request and Response messages while preserving
       the existing lazy XS-backed representation for parsed server Requests.
     - Keep Response transport-independent: it owns response message metadata/body state
@@ -80,6 +80,31 @@ Revision history for Linux-Event-HTTP
       Linux::Event transition_to() hands the same live stream to the target protocol.
     - Preserve same-read post-HTTP bytes across Upgrade, keep the normal request-end
       callback lifecycle, and queue the 101 response before target-protocol output.
+    - Add Linux::Event::HTTP::Client::Connection as the low-level HTTP/1 client executor
+      on Linux::Event::IO::Sock::Stream.
+    - Serialize complete scalar Request messages, add Content-Length when needed, and
+      deliberately defer streaming request bodies to a later client layer.
+    - Parse HTTP/1 response heads strictly in Perl as the correctness baseline before
+      considering response-parser XS; reuse the existing native _HTTP1::Chunked decoder.
+    - Deliver client response bodies incrementally for Content-Length, chunked, and
+      close-delimited framing; drain/discard when no on_body callback is installed.
+    - Support informational responses, reject ambiguous TE/CL response framing, and keep
+      101/CONNECT client handoff outside the first client foundation.
+    - Keep one in-flight Transaction per HTTP/1 client connection and support sequential
+      persistent reuse without enabling HTTP/1 pipelining.
+    - Make client cancellation close the HTTP/1 connection rather than risk reusing a
+      socket with an unfinished response on the wire.
+    - Add Linux::Event::HTTP::Client as the ordinary URL-oriented client entry point with
+      request/get/head/post/put/delete methods returning Transaction objects.
+    - Use URI for URL parsing while keeping full URLs out of Request; synthesize Host and
+      use path/query as the canonical request-target.
+    - Add a bounded initial reuse policy that retains at most one idle connection per
+      origin while allowing concurrent same-origin requests to use separate connections.
+    - Integrate HTTPS through Linux::Event TLS transport policy with the same Client and
+      Client::Connection classes and HTTP/1.1-only ALPN advertisement.
+    - Add client tests for scalar request bodies, fixed/chunked/close-delimited responses,
+      informational responses, ambiguous framing rejection, cancellation, URL handling,
+      connection reuse, concurrency, and HTTPS.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.
@@ -99,6 +124,6 @@ Revision history for Linux-Event-HTTP
     - Add focused Transaction tests covering pairing, request/response completion,
       cancellation, body-producer backpressure, chunking, close delimiting, deferred
       send, Upgrade, and the native scalar fast path.
-    - Simplify the README around the normal Server callback API, moving Connection
-      subclassing, TLS, Upgrade, and implementation details into clearly advanced sections.
+    - Simplify the README around the ordinary Client and Server APIs, leaving advanced
+      Connection, framing, and lifecycle detail in the architecture document and POD.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
