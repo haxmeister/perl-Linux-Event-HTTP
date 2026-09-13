@@ -214,14 +214,13 @@ can be added later without changing Request/Response/Transaction identity.
 Client uses the established `URI` distribution rather than implementing a URL
 parser inside Linux::Event::HTTP.
 
-Only absolute `http` and `https` URLs are accepted in the initial Client.
-Fragments are not transmitted. Origin-form path plus query becomes the Request
-target, with `/` used when the URL has no path. For HTTP/1.1, Client synthesizes
-Host when the caller did not provide one; non-default ports are included.
+Only absolute `http` and `https` URLs are accepted. Fragments are not
+transmitted. Origin-form path plus query becomes the Request target, with `/`
+used when the URL has no path. For HTTP/1.1, Client synthesizes Host when the
+caller did not provide one; non-default ports are included.
 
-Userinfo is currently rejected rather than silently creating authentication
-policy. Proxy, authentication, cookies, and redirects remain later Client
-features.
+Userinfo is rejected rather than silently creating authentication policy. Proxy,
+authentication, cookies, and redirects remain later Client features.
 
 ## Body model
 
@@ -278,13 +277,12 @@ absent, body bytes are drained/discarded rather than accumulated.
 
 ### Client outgoing Request
 
-The initial Client supports complete scalar Request bodies. Client::Connection
+The current Client supports complete scalar Request bodies. Client::Connection
 adds Content-Length when needed and checks an explicit Content-Length against
 the scalar body length.
 
 Streaming outgoing Request bodies are deliberately later work. Transfer-Encoding
-Request bodies are rejected by the initial client executor rather than partially
-supported.
+Request bodies are rejected rather than partially supported.
 
 ### Client incoming Response
 
@@ -298,12 +296,45 @@ on_complete => sub ($tx) { ... },
 
 `on_response` runs after the final response head has been validated and before
 body delivery. The Response is incomplete at this point when a body remains.
-`on_body` receives decoded bytes. `on_complete` runs after the actual body
-boundary and Transaction success.
+`on_body` receives body bytes after HTTP/1 transfer framing has been removed.
+`on_complete` runs after the actual body boundary and Transaction success.
 
-If `on_body` is absent, bytes are drained/discarded. The protocol layer does not
-implicitly create an unbounded whole-body scalar. A bounded buffered convenience
-can later be built on top of the same incremental primitive.
+If `on_body` is absent, bytes are drained/discarded by default. The protocol
+layer never creates an implicit unbounded whole-body scalar.
+
+For callers that explicitly want one scalar, Client and Client::Connection
+support bounded buffering:
+
+```perl
+$client->get(
+    $url,
+    buffer_body => 1_048_576,
+    on_response => sub ($tx, $res) {
+        # head is available; body may still be incomplete
+    },
+    on_complete => sub ($tx) {
+        my $bytes = $tx->response->body;
+        ...;
+    },
+);
+```
+
+`buffer_body` and `on_body` are mutually exclusive. The configured limit counts
+exactly the bytes that `on_body` would have received after HTTP/1 chunk framing
+is removed. Content-Encoding is not decoded by this protocol layer, so encoded
+representation bytes remain encoded for both streaming and limit accounting.
+
+If a validated Content-Length is already above the limit, `on_response` still
+runs with the committed Response head and then the Transaction fails before body
+accumulation begins. For chunked, close-delimited, or otherwise unknown-length
+bodies, accumulation fails as soon as adding delivered bytes would cross the
+limit. Buffer-limit failure is a Transaction error and closes the HTTP/1
+connection so an unfinished response cannot be mistaken for a reusable stream.
+
+On successful completion, the committed received Response exposes the buffered
+scalar through `body`; bodyless buffered responses expose the empty string.
+Attaching this completed received body is private protocol/convenience state and
+does not make received metadata mutable.
 
 ## Commit and completion state
 
@@ -316,7 +347,8 @@ Message completion and protocol execution are intentionally different.
 - Cancellation and error are separate terminal states.
 
 For a Client response, the Response object may exist and be readable while
-`is_complete` is false because body bytes are still arriving.
+`is_complete` is false because body bytes are still arriving. In bounded
+buffering mode, `Response->body` remains undef until successful completion.
 
 ## Client HTTP/1 response framing
 
@@ -330,12 +362,13 @@ Client::Connection applies framing independently from application body handling:
 - a response without Content-Length or Transfer-Encoding is close-delimited and
   makes the connection non-reusable;
 - Transfer-Encoding plus Content-Length is rejected as ambiguous;
-- only plain `chunked` Transfer-Encoding is supported in the first client stage;
+- only plain `chunked` Transfer-Encoding is currently supported;
 - 101 client Upgrade and CONNECT tunneling are later protocol-handoff work.
 
 Cancelling an active client Transaction closes the HTTP/1 connection. An
 unfinished response cannot generally be skipped safely while preserving reuse of
-that same ordered byte stream.
+that same ordered byte stream. Buffer-limit failure follows the same safe-close
+rule.
 
 ## Backpressure and transport ownership
 
@@ -352,6 +385,10 @@ false = accepted, but producer should pause until on_drain
 Linux::Event owns queued bytes, watermarks, pending-byte limits, readiness,
 drain signaling, connection progress, and TLS transport state.
 
+The optional Client response buffer is application-facing retained message data,
+not a transport queue. It is bounded explicitly and is populated only from bytes
+already consumed through the normal HTTP body path.
+
 ## HTTP/1 native boundary
 
 HTTP/1 native work is consolidated in one private extension:
@@ -367,9 +404,9 @@ It currently owns:
 - server response-head serialization;
 - the narrow default server scalar-response builder.
 
-The first client response-head parser is intentionally strict Perl code. This is
-the correctness baseline. Do not add response-parser XS merely for symmetry with
-the server. Benchmark the client parser in representative end-to-end workloads
+The client response-head parser is intentionally strict Perl code. This is the
+correctness baseline. Do not add response-parser XS merely for symmetry with the
+server. Benchmark the client parser in representative end-to-end workloads
 before deciding whether another native fast path is justified.
 
 ## Server::Connection
@@ -393,8 +430,8 @@ It is usable directly for low-level work where destination acquisition is
 already known. The high-level Client normally creates and reuses it.
 
 The Connection reserves its raw data/eof/error/close callbacks for HTTP protocol
-execution. Per-Transaction application callbacks are supplied to its `request`
-method instead.
+execution. Per-Transaction application callbacks and optional bounded buffering
+policy are supplied to its `request` method instead.
 
 ## TLS
 
@@ -420,9 +457,9 @@ The 101 response is validated and queued, the HTTP Transaction completes, and
 Linux::Event `transition_to()` hands the same live stream object to the next
 protocol class while preserving transport identity/state.
 
-Client-side 101 handoff is not part of the initial Client foundation.
-WebSocket handshake/frame semantics belong in a separate
-`Linux::Event::WebSocket` distribution.
+Client-side 101 handoff is not part of the current Client foundation. WebSocket
+handshake/frame semantics belong in a separate `Linux::Event::WebSocket`
+distribution.
 
 ## Performance policy
 
@@ -454,13 +491,14 @@ The current foundation includes:
    parsing, informational responses, incremental Content-Length/chunked/close
    body delivery, cancellation, and sequential reuse.
 5. High-level Client with URL parsing, Host synthesis, HTTP/HTTPS destination
-   acquisition, bounded same-origin idle reuse, and common convenience verbs.
+   acquisition, bounded same-origin idle reuse, common convenience verbs, and
+   explicit bounded whole-response buffering.
 6. One consolidated private `_HTTP1` native extension and no duplicate transport
    queues.
 
-Later client work includes bounded whole-body convenience, streaming outgoing
-Request bodies, redirects, richer pool policy, proxy/auth/cookie conveniences,
-CONNECT/client Upgrade, and measurement-driven parser optimization.
+Later client work includes streaming outgoing Request bodies, redirects, richer
+pool policy, proxy/auth/cookie conveniences, CONNECT/client Upgrade, and
+measurement-driven parser optimization.
 
 HTTP/2 is future protocol work. WebSocket remains a separate protocol
 distribution.
