@@ -22,7 +22,7 @@ isa_ok($request, 'Linux::Event::HTTP::Request');
 is($request->_consumed, length($head), 'native request retains consumed header length');
 is($request->method, 'GET', 'method materializes on access');
 is($request->target, '/hello?x=1', 'target materializes on access');
-is($request->http_version, '1.1', 'HTTP version is protocol-neutral application data');
+is($request->version, '1.1', 'shared Request version accessor reads native protocol state');
 is($request->header_count, 4, 'native request retains header count');
 
 is($request->header('host'), 'example.test', 'header lookup is ASCII case-insensitive');
@@ -48,6 +48,16 @@ like($@, qr/header index out of range/, 'header index error is clear');
 $error = eval { $request->header_value(4); 1 };
 ok(!$error, 'out-of-range header value index is rejected');
 like($@, qr/header index out of range/, 'header value index error is clear');
+
+$error = eval { $request->method('POST'); 1 };
+ok(!$error, 'parsed request method is read-only');
+like($@, qr/read-only/, 'parsed request mutation error is clear');
+
+$error = eval { $request->header('X-Test', 'changed'); 1 };
+ok(!$error, 'parsed request headers are read-only');
+like($@, qr/read-only/, 'parsed request header mutation error is clear');
+
+ok(!defined $request->body, 'parsed Request does not implicitly buffer incoming body bytes');
 
 substr($buffer, 0, 3, 'PUT');
 $buffer =~ s/example\.test/changed.invalid/;

@@ -11,6 +11,7 @@ use utf8 ();
 
 use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Response;
+use Linux::Event::HTTP::Transaction;
 
 our $VERSION = '0.001';
 
@@ -51,7 +52,7 @@ sub new ($class, %option) {
         if exists $option{on_data};
     croak 'new(): Connection cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
-    croak 'new(): on_request_final was removed; use on_request and Response->body or stream_body'
+    croak 'new(): on_request_final was removed; use on_request and Response->body or Transaction->response_body'
         if exists $option{on_request_final};
 
     my $loop = delete $option{loop};
@@ -74,6 +75,7 @@ sub new ($class, %option) {
     $self->{_http_user_on_drain} = $user_on_drain;
     $self->{_http_user_on_close} = $user_on_close;
     $self->{_http_input} = '';
+    $self->{_http_active_transaction} = undef;
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
     $self->{_http_request_state} = undef;
@@ -90,6 +92,10 @@ sub connect ($class, %option) {
     croak 'connect(): HTTP client support is not implemented by Linux::Event::HTTP::Server::Connection';
 }
 
+sub transaction ($self) {
+    return $self->{_http_active_transaction};
+}
+
 sub on_data ($self, $bytes) {
     return if $self->{_http_closing} || $self->is_closed;
     $self->{_http_input} .= $bytes;
@@ -98,8 +104,8 @@ sub on_data ($self, $bytes) {
 }
 
 sub _http_transport_drain ($self) {
-    if (my $response = $self->{_http_active_response}) {
-        if (my $body = $response->_stream_body_object) {
+    if (my $transaction = $self->{_http_active_transaction}) {
+        if (my $body = $transaction->_response_body_object) {
             $body->_drain;
         }
     }
@@ -110,16 +116,18 @@ sub _http_transport_drain ($self) {
 }
 
 sub _http_transport_close ($self) {
-    if (my $response = $self->{_http_active_response}) {
-        $response->_cancel_stream_body;
+    if (my $transaction = $self->{_http_active_transaction}) {
+        $transaction->_mark_cancelled if !$transaction->is_terminal;
     }
+    $self->_clear_transaction;
+
     my $callback = delete $self->{_http_user_on_close};
     delete $self->{_http_user_on_drain};
     $callback->($self) if $callback;
     return;
 }
 
-sub _new_request_state ($request, $mode = $request->body_mode) {
+sub _new_request_state ($request, $mode = $request->_http1_body_mode) {
     my $state = {
         mode      => $mode,
         body_done => 0,
@@ -144,7 +152,7 @@ sub _body_pending ($state) {
 sub _expect_continue ($request) {
     my @values = $request->header_values('Expect');
     return 0 if !@values;
-    return -1 if $request->http_version ne '1.1';
+    return -1 if $request->version ne '1.1';
 
     my $count = 0;
     for my $value (@values) {
@@ -190,36 +198,131 @@ sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
 
 sub _response_body_ready ($self, $response) {
     return if !$response || !$response->_has_scalar_body;
-    return if $response->is_complete;
     return if $self->{_http_dispatching};
 
-    croak 'body(): connection is closing or closed'
+    my $transaction = $self->{_http_active_transaction} or return;
+    return if $transaction->_is_response_output_complete;
+    my $active = $transaction->response;
+    return if !$active || refaddr($active) != refaddr($response);
+
+    $self->_send_http_response($transaction);
+    return;
+}
+
+sub _send_http_response ($self, $transaction) {
+    croak 'send_response(): connection is closing or closed'
         if $self->{_http_closing} || $self->is_closed;
 
-    my $active = $self->{_http_active_response};
-    croak 'body(): this Response is not the active HTTP transaction'
-        if !$active || refaddr($active) != refaddr($response);
+    my $active = $self->{_http_active_transaction};
+    croak 'send_response(): Transaction is not active on this HTTP connection'
+        if !$active || refaddr($active) != refaddr($transaction);
+    croak 'send_response(): response output has already started'
+        if $transaction->is_response_started;
+
+    my $response = $transaction->response
+        or croak 'send_response(): Transaction has no Response';
+    croak 'send_response(): Response does not have a complete scalar body'
+        if !$response->_has_scalar_body;
 
     my $body = $response->_scalar_body;
-    return if $response->_try_native_default_final($self, $body);
+    return 1 if $self->_try_native_default_final($transaction, $body);
 
-    $self->_write_response($response, $body, 1, 'body');
+    $self->_write_response($response, $body, 1, 'send_response');
+    return 1;
+}
+
+sub _try_native_default_final ($self, $transaction, $body) {
+    my $response = $transaction->response or return 0;
+    return 0 if ref($response) ne 'Linux::Event::HTTP::Response';
+    return 0 if $response->status != 200 || defined($response->reason);
+    return 0 if $response->header_count;
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    return 0 if $self->{_http_response_state};
+
+    my $active = $self->{_http_active_transaction} or return 0;
+    return 0 if refaddr($active) != refaddr($transaction);
+
+    my $request = $transaction->request or return 0;
+    my $request_state = $self->{_http_request_state} or return 0;
+    return 0 if !$request_state->{body_done};
+
+    my $wire = Linux::Event::HTTP::_HTTP1
+        ->build_default_final($request, $body);
+    return 0 if !defined $wire;
+
+    $response->_commit;
+    $transaction->_mark_response_started;
+    $transaction->_mark_response_output_complete;
+    $self->{_http_response_state} = undef;
+
+    $self->write($wire);
+    $self->_complete_active_transaction_state;
+    $self->_clear_transaction;
+
+    $self->resume_read if $self->is_read_paused;
+    return 1;
+}
+
+sub _upgrade_http_transaction ($self, $transaction, $target_class) {
+    require Linux::Event::HTTP::_Upgrade;
+    Linux::Event::HTTP::_Upgrade->schedule(
+        $self, $transaction, $target_class,
+    );
+    return $transaction;
+}
+
+sub _complete_active_transaction_state ($self) {
+    my $transaction = $self->{_http_active_transaction} or return;
+    return if $transaction->is_terminal;
+
+    croak 'cannot complete server Transaction before Request body completion'
+        if !$transaction->request->is_complete;
+    my $response = $transaction->response;
+    croak 'cannot complete server Transaction before Response body completion'
+        if !$response || !$response->is_complete;
+    croak 'cannot complete server Transaction before Response output completion'
+        if !$transaction->_is_response_output_complete;
+
+    $transaction->_mark_complete;
+    return;
+}
+
+sub _fail_active_transaction_state ($self, $error) {
+    my $transaction = $self->{_http_active_transaction} or return;
+    return if $transaction->is_terminal;
+    $transaction->_fail($error);
     return;
 }
 
 sub _clear_transaction ($self) {
+    $self->{_http_active_transaction} = undef;
     $self->{_http_active_request} = undef;
     $self->{_http_active_response} = undef;
     $self->{_http_request_state} = undef;
     $self->{_http_response_state} = undef;
+    delete $self->{_http_pending_upgrade};
     return;
 }
 
-sub _abort_started_response ($self, $response) {
+sub _cancel_http_transaction ($self, $transaction) {
+    return if $transaction->is_terminal;
+
+    my $active = $self->{_http_active_transaction};
+    croak 'cancel(): Transaction is not active on this HTTP connection'
+        if !$active || refaddr($active) != refaddr($transaction);
+
+    $transaction->_mark_cancelled;
+    $self->_clear_transaction;
+    $self->{_http_input} = '';
+    $self->{_http_closing} = 1;
+    $self->pause_read if !$self->is_read_paused;
+    $self->end;
+    return;
+}
+
+sub _abort_started_response ($self) {
     return if $self->{_http_closing} || $self->is_closed;
 
-    $response->_cancel_stream_body if $response;
-    $response->_mark_complete if $response && !$response->is_complete;
     $self->_clear_transaction;
     $self->{_http_input} = '';
     $self->{_http_closing} = 1;
@@ -231,10 +334,14 @@ sub _abort_started_response ($self, $response) {
 sub _fail_active_transaction ($self, $status, $request, $response) {
     return if $self->{_http_closing} || $self->is_closed;
 
-    if ($response && $response->is_started) {
-        $self->_abort_started_response($response);
+    my $transaction = $self->{_http_active_transaction};
+    my $started = $transaction && $transaction->is_response_started ? 1 : 0;
+    $self->_fail_active_transaction_state("HTTP server transaction failed ($status)");
+
+    if ($started) {
+        $self->_abort_started_response;
     } else {
-        $self->_protocol_error($status, $request->http_version);
+        $self->_protocol_error($status, $request->version);
     }
     return;
 }
@@ -246,6 +353,7 @@ sub _finish_request_body ($self) {
     return if $state->{body_done};
 
     $state->{body_done} = 1;
+    $request->_mark_complete;
     delete $state->{decoder};
     delete $state->{remaining};
 
@@ -255,7 +363,8 @@ sub _finish_request_body ($self) {
     return if $self->{_http_closing} || $self->is_closed;
     return if !$self->{_http_active_request};
 
-    if ($response->is_complete) {
+    my $transaction = $self->{_http_active_transaction};
+    if ($transaction && $transaction->_is_response_output_complete) {
         $self->_finalize_transaction;
     } else {
         $self->pause_read if !$self->is_read_paused;
@@ -338,6 +447,7 @@ sub _finalize_transaction ($self) {
     my $close_after = $request_state
         && $request_state->{close_after_response} ? 1 : 0;
 
+    $self->_complete_active_transaction_state;
     $self->_clear_transaction;
 
     if ($close_after) {
@@ -364,6 +474,7 @@ sub _drive_http1 ($self) {
         if (my $request = $self->{_http_active_request}) {
             my $response = $self->{_http_active_response};
             my $state = $self->{_http_request_state};
+            my $transaction = $self->{_http_active_transaction};
 
             if (!$state->{body_done}) {
                 if (!_body_pending($state)) {
@@ -376,7 +487,7 @@ sub _drive_http1 ($self) {
                 next;
             }
 
-            if ($response && $response->is_complete) {
+            if ($transaction && $transaction->_is_response_output_complete) {
                 $self->_finalize_transaction;
                 next;
             }
@@ -411,7 +522,7 @@ sub _drive_http1 ($self) {
 
         my $consumed = $request->_consumed;
         if ($consumed > $MAX_REQUEST_HEAD) {
-            $self->_protocol_error(431, $request->http_version);
+            $self->_protocol_error(431, $request->version);
             last;
         }
 
@@ -419,15 +530,23 @@ sub _drive_http1 ($self) {
 
         my $expect = _expect_continue($request);
         if ($expect < 0) {
-            $self->_protocol_error(417, $request->http_version);
+            $self->_protocol_error(417, $request->version);
             last;
         }
 
-        my $body_mode = $request->body_mode;
+        my $body_mode = $request->_http1_body_mode;
         my $bodyless = $body_mode eq 'none';
 
-        my $response
-            = Linux::Event::HTTP::Response->_new_bound($self, $request);
+        my $response = Linux::Event::HTTP::Response->new(
+            version => $request->version,
+        );
+        my $transaction = Linux::Event::HTTP::Transaction->_new(
+            request    => $request,
+            controller => $self,
+        );
+        $transaction->_set_response($response);
+        $transaction->_activate;
+
         my $request_state;
         if ($bodyless) {
             $request_state = $self->{_http_bodyless_state} //= {
@@ -437,10 +556,12 @@ sub _drive_http1 ($self) {
             $request_state->{body_done}
                 = $self->{_http_on_request_end} ? 0 : 1;
             delete $request_state->{close_after_response};
+            $request->_mark_complete;
         } else {
             $request_state = _new_request_state($request, $body_mode);
         }
 
+        $self->{_http_active_transaction} = $transaction;
         $self->{_http_active_request} = $request;
         $self->{_http_active_response} = $response;
         $self->{_http_request_state} = $request_state;
@@ -468,7 +589,7 @@ sub _drive_http1 ($self) {
                 next if !$self->{_http_active_request};
             }
 
-            if ($response->is_complete) {
+            if ($transaction->_is_response_output_complete) {
                 $self->_finalize_transaction;
                 next;
             }
@@ -538,8 +659,10 @@ sub _chunked_transfer_encoding ($operation, $version, $values) {
 }
 
 sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
-    my $request = $self->{_http_active_request};
-    my $version = $request->http_version;
+    my $transaction = $self->{_http_active_transaction}
+        or croak 'response output requires an active HTTP Transaction';
+    my $request = $transaction->request;
+    my $version = $request->version;
     my $method = $request->method;
     my $status = $response->status;
     $operation //= $final ? 'complete' : 'write';
@@ -598,20 +721,22 @@ sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
     }
 
     my @connection = $response->header_values('Connection');
-    my $close_after = !$request->keep_alive
+    my $keep_alive = $request->_http1_keep_alive;
+    my $close_after = !$keep_alive
         || _has_connection_token(\@connection, 'close')
         || $close_delimited;
 
-    if (!$request->keep_alive && $version eq '1.1') {
+    if (!$keep_alive && $version eq '1.1') {
         $response->header('Connection', 'close');
         $close_after = 1;
-    } elsif ($request->keep_alive && $version eq '1.0'
+    } elsif ($keep_alive && $version eq '1.0'
         && !@connection && !$close_after) {
         $response->header('Connection', 'keep-alive');
     }
 
     my $head = $response->_serialize_head($version);
-    $response->_mark_started;
+    $response->_commit;
+    $transaction->_mark_response_started;
 
     return (
         {
@@ -622,6 +747,18 @@ sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
             chunked       => $chunked ? 1 : 0,
         },
         $head,
+    );
+}
+
+sub _write_http_response_body ($self, $transaction, $body, $final, $operation) {
+    my $active = $self->{_http_active_transaction};
+    croak "$operation(): Transaction is not active on this HTTP connection"
+        if !$active || refaddr($active) != refaddr($transaction);
+
+    my $response = $transaction->response
+        or croak "$operation(): Transaction has no Response";
+    return $self->_write_response(
+        $response, $body, $final, $operation,
     );
 }
 
@@ -687,7 +824,9 @@ sub _write_response ($self, $response, $body, $final, $operation = undef) {
 }
 
 sub _complete_response ($self, $response, $wire, $close_after) {
-    $response->_mark_complete;
+    my $transaction = $self->{_http_active_transaction}
+        or croak 'response completion requires an active HTTP Transaction';
+    $transaction->_mark_response_output_complete;
     $self->{_http_response_state} = undef;
 
     my $request_state = $self->{_http_request_state};
@@ -699,6 +838,7 @@ sub _complete_response ($self, $response, $wire, $close_after) {
     }
 
     if ($close_after) {
+        $self->_complete_active_transaction_state;
         $self->_clear_transaction;
         $self->{_http_closing} = 1;
         $self->{_http_input} = '';
@@ -741,10 +881,7 @@ sub _protocol_error ($self, $status, $version = '1.1') {
     );
 
     my $head = $response->_serialize_head($version);
-    if (my $active = $self->{_http_active_response}) {
-        $active->_cancel_stream_body;
-        $active->_mark_complete if !$active->is_complete;
-    }
+    $self->_fail_active_transaction_state("HTTP protocol error ($status)");
     $self->_clear_transaction;
     $self->{_http_input} = '';
     $self->{_http_closing} = 1;
@@ -777,8 +914,23 @@ between a streaming response body and Linux::Event transport backpressure.
 Linux::Event continues to own the socket, TLS transport, readiness, and native
 ordered-byte output queue.
 
-Applications normally use L<Linux::Event::HTTP::Server>. Every request is
-paired with one L<Linux::Event::HTTP::Response> supplied to the HTTP callbacks.
+Each active exchange is represented by one L<Linux::Event::HTTP::Transaction>
+containing the Request and Response. The existing server callback API remains
+C<on_request($conn, $req, $res)>; the active Transaction is available through
+C<< $conn->transaction >> when lifecycle or streaming-body operations are
+needed.
+
+Response message completion and server output completion are intentionally
+separate. C<Response-E<gt>is_complete> describes the message body; Transaction
+tracks whether response output has started or finished before the Connection
+advances to a pipelined request.
+
+=head1 TRANSACTION
+
+C<transaction> returns the currently active HTTP Transaction, or undef when no
+exchange is active on the connection. During C<on_request>, C<on_body>, and
+C<on_request_end> it refers to the Transaction containing the supplied Request
+and Response.
 
 =head1 RESPONSE BODIES
 
@@ -787,21 +939,30 @@ A complete scalar body is configured on the Response:
     $res->header('Content-Type', 'text/plain');
     $res->body("hello\n");
 
-A streaming body is obtained from the Response and owns streaming operations:
+When configured during an HTTP callback, the scalar body is sent automatically
+after that callback returns. For a Response completed later from another event,
+explicitly tell the Transaction to send the now-complete message:
 
-    $res->stream_body(
+    my $tx = $conn->transaction;
+    $tx->response->body("later\n");
+    $tx->send_response;
+
+A streaming body is produced through the active Transaction:
+
+    my $body = $conn->transaction->response_body(
         on_drain  => sub ($body) { ... },
         on_cancel => sub ($body) { ... },
     );
 
-    $res->stream_body->write($bytes);
-    $res->stream_body->complete;
+    $body->write($bytes);
+    $body->complete;
 
-The streaming body does not maintain a second output queue. C<write> feeds the
-existing Linux::Event ordered-byte destination. Its false return preserves the
-normal high-watermark contract, and the body C<on_drain> callback is driven by
-the connection's native drain transition. C<on_cancel> runs if the connection
-closes before the streaming body completes.
+The writable producer belongs to the Transaction, not the Response message. It
+does not maintain a second output queue. C<write> feeds the existing
+Linux::Event ordered-byte destination. Its false return preserves the normal
+high-watermark contract, and C<on_drain> is driven by the connection's native
+drain transition. C<on_cancel> runs if the connection disappears before the
+producer completes.
 
 C<on_data> is reserved by this HTTP connection implementation. Connection-level
 C<on_drain> and C<on_close> callbacks or subclass methods remain supported;
@@ -812,14 +973,15 @@ than replacing them.
 
 C<on_request> runs after the validated request head is available. C<on_body>
 receives decoded request-body bytes. C<on_request_end> runs when the complete
-request input boundary has been consumed. If no response body has been selected
-by then, input pauses so a later asynchronous callback may finish configuring
-the Response without allowing the next request to overtake it.
+request input boundary has been consumed. The Request's C<is_complete> state is
+updated at that boundary. If no response body has been sent by then, input
+pauses so a later asynchronous callback may finish configuring the Response
+without allowing the next request to overtake it.
 
 =head1 SEE ALSO
 
-L<Linux::Event::HTTP::Server>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Body::Stream>,
-L<Linux::Event::IO::Sock::Stream>.
+L<Linux::Event::HTTP::Server>, L<Linux::Event::HTTP::Transaction>,
+L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Response>,
+L<Linux::Event::HTTP::Body::Stream>, L<Linux::Event::IO::Sock::Stream>.
 
 =cut

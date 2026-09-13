@@ -26,38 +26,48 @@ use Linux::Event::HTTP::Server::Connection;
 
         if ($req->target eq '/stream') {
             $res->header('Content-Type', 'text/plain');
-            my $body = $res->stream_body(
-                on_cancel => sub ($body) {
+            my $transaction = $self->transaction;
+            my $body = $transaction->response_body(
+                on_cancel => sub ($producer) {
                     ++$self->data->{unexpected_cancel};
                 },
             );
             $self->data->{same_stream}
                 = Scalar::Util::refaddr($body)
-                == Scalar::Util::refaddr($res->stream_body) ? 1 : 0;
-            $self->data->{started_after_stream_body}
-                = $res->is_started ? 1 : 0;
-            $res->header('X-After-Stream-Body', 'yes');
+                == Scalar::Util::refaddr($transaction->response_body) ? 1 : 0;
+            $self->data->{started_after_response_body}
+                = $transaction->is_response_started ? 1 : 0;
+            $res->header('X-After-Response-Body', 'yes');
             push @{$self->data->{write_status}}, $body->write("one\n");
-            $self->data->{started_after_stream_write}
-                = $res->is_started ? 1 : 0;
+            $self->data->{started_after_body_write}
+                = $transaction->is_response_started ? 1 : 0;
             my $late_metadata = eval {
                 $res->header('X-Too-Late', 'no');
                 1;
             };
-            $self->data->{metadata_locked_after_stream_write}
+            $self->data->{metadata_locked_after_body_write}
                 = $late_metadata ? 0 : 1;
             $body->complete("two\n");
             return;
         }
 
         if ($req->target eq '/async') {
+            my $transaction = $self->transaction;
             my $timer;
             $timer = Linux::Event::Kernel::Timer->new(
                 loop  => $self->loop,
                 after => 0.01,
+                data  => {
+                    transaction => $transaction,
+                    response    => $res,
+                },
                 on_timer => sub ($timer_object) {
-                    $res->header('X-Async', 'yes');
-                    $res->body("later\n");
+                    my $data = $timer_object->data;
+                    my $transaction = $data->{transaction};
+                    my $response = $data->{response};
+                    $response->header('X-Async', 'yes');
+                    $response->body("later\n");
+                    $transaction->send_response;
                     $self->data->{async_timer} = undef;
                 },
             );
@@ -72,14 +82,14 @@ use Linux::Event::HTTP::Server::Connection;
 
 my $loop = Linux::Event::Loop->new;
 my $state = {
-    targets                            => [],
-    write_status                       => [],
-    wire                               => '',
-    same_stream                        => 0,
-    unexpected_cancel                  => 0,
-    started_after_stream_body          => 1,
-    started_after_stream_write         => 0,
-    metadata_locked_after_stream_write => 0,
+    targets                          => [],
+    write_status                     => [],
+    wire                             => '',
+    same_stream                      => 0,
+    unexpected_cancel                => 0,
+    started_after_response_body      => 1,
+    started_after_body_write         => 0,
+    metadata_locked_after_body_write => 0,
 };
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
@@ -96,7 +106,7 @@ my $guard = Linux::Event::Kernel::Timer->new(
     loop  => $loop,
     after => 2,
     on_timer => sub ($timer) {
-        die "response body/stream integration test timed out\n";
+        die "response body producer integration test timed out\n";
     },
 );
 
@@ -121,7 +131,7 @@ my $client = Linux::Event::IO::Sock::Stream->connect(
         $loop->stop;
     },
     on_error => sub ($stream, $error) {
-        die "response body/stream client failed: $error\n";
+        die "response body producer client failed: $error\n";
     },
 );
 
@@ -130,17 +140,17 @@ $loop->run;
 is_deeply(
     $state->{targets},
     [ '/scalar', '/stream', '/async' ],
-    'body and stream responses preserve pipelined request order',
+    'scalar and incremental responses preserve pipelined request order',
 );
-ok($state->{same_stream}, 'stream_body returns one stable stream object');
-ok(!$state->{started_after_stream_body},
-    'selecting stream_body does not start response output');
-ok($state->{started_after_stream_write},
-    'first stream write starts response output');
-ok($state->{metadata_locked_after_stream_write},
-    'response metadata locks after first stream write');
-ok($state->{write_status}[0], 'stream_body write exposes Linux::Event flow-control return');
-is($state->{unexpected_cancel}, 0, 'normally completed stream is not cancelled');
+ok($state->{same_stream}, 'response_body returns one stable producer object');
+ok(!$state->{started_after_response_body},
+    'selecting response_body does not start response output');
+ok($state->{started_after_body_write},
+    'first response body write starts response output');
+ok($state->{metadata_locked_after_body_write},
+    'response metadata locks after first body write');
+ok($state->{write_status}[0], 'response body write exposes Linux::Event flow-control return');
+is($state->{unexpected_cancel}, 0, 'normally completed producer is not cancelled');
 
 my $wire = $state->{wire};
 like(
@@ -150,13 +160,13 @@ like(
 );
 like(
     $wire,
-    qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nX-After-Stream-Body: yes\r\nTransfer-Encoding: chunked\r\n\r\n4\r\none\n\r\n4\r\ntwo\n\r\n0\r\n\r\n/s,
-    'stream_body stays configurable until first write then uses HTTP chunk framing',
+    qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nX-After-Response-Body: yes\r\nTransfer-Encoding: chunked\r\n\r\n4\r\none\n\r\n4\r\ntwo\n\r\n0\r\n\r\n/s,
+    'response_body stays configurable until first write then uses HTTP chunk framing',
 );
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nX-Async: yes\r\nContent-Length: 6\r\nConnection: close\r\n\r\nlater\n\z/s,
-    'body set from a later event callback commits the waiting response',
+    'deferred scalar body is explicitly sent through its Transaction',
 );
 
 {
@@ -165,15 +175,15 @@ like(
 
     sub on_request ($self, $req, $res) {
         $self->data->{connection} = $self;
-        $res->stream_body(
-            on_cancel => sub ($body) {
+        my $body = $self->transaction->response_body(
+            on_cancel => sub ($producer) {
                 ++$self->data->{cancelled};
                 $self->data->{guard}->cancel;
                 $self->data->{listener}->close;
                 $self->data->{loop}->stop;
             },
         );
-        $self->data->{body} = $res->stream_body;
+        $self->data->{body} = $body;
     }
 
     sub on_close ($self) {
@@ -203,7 +213,7 @@ $guard = Linux::Event::Kernel::Timer->new(
     loop  => $loop,
     after => 2,
     on_timer => sub ($timer) {
-        die "stream body cancellation test timed out\n";
+        die "response body cancellation test timed out\n";
     },
 );
 $cancel_state->{guard} = $guard;
@@ -229,17 +239,17 @@ $client = Linux::Event::IO::Sock::Stream->connect(
         $stream->close;
     },
     on_error => sub ($stream, $error) {
-        die "stream body cancellation client failed: $error\n";
+        die "response body cancellation client failed: $error\n";
     },
 );
 
 $loop->run;
 
 is($cancel_state->{cancelled}, 1,
-    'closing the HTTP connection cancels an unfinished stream body exactly once');
+    'closing the HTTP connection cancels an unfinished producer exactly once');
 ok($cancel_state->{body}->is_cancelled,
-    'cancelled stream body exposes terminal cancellation state');
+    'cancelled producer exposes terminal cancellation state');
 is($cancel_state->{user_close}, 1,
-    'custom Connection on_close composes with stream-body cancellation');
+    'custom Connection on_close composes with body-producer cancellation');
 
 done_testing;

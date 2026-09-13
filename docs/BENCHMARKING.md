@@ -3,9 +3,9 @@
 The distribution keeps parser microbenchmarks and full HTTP transaction
 benchmarks separate. The parser benchmark answers questions about pico and the
 native Request representation. The end-to-end harness measures the combined
-cost of TCP accept/read/write, HTTP parsing, Request/Response lifecycle,
-application callback dispatch, response serialization, persistence, and the
-client-visible round trip.
+cost of TCP accept/read/write, HTTP parsing, Request/Response message lifecycle,
+Transaction execution, application callback dispatch, response serialization,
+persistence, and the client-visible round trip.
 
 ## End-to-end harness
 
@@ -34,7 +34,10 @@ repeats:                    5
 Each repeat starts a fresh server process. Connections stay persistent through
 warmup and measurement. The server returns a fixed scalar response with
 Content-Length so the default result measures the ordinary HTTP/1.1 request and
-Response->body path rather than chunked response framing.
+`Response->body` callback-return path. Transaction output lifecycle and the
+private eligible scalar fast path remain part of the measured server stack;
+incremental response production and chunked response framing are not part of the
+default workload.
 
 Useful variations:
 

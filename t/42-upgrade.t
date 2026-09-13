@@ -74,19 +74,24 @@ sub run_client ($loop, $server, $wire, $state, $done) {
 
     sub on_request ($self, $req, $res) {
         my $state = $self->data;
+        my $transaction = $self->transaction;
+        $state->{transaction} = $transaction;
         $state->{http_ref} = refaddr($self);
         $state->{request_class} = ref($req);
         $res->header('Upgrade', 'test-proto');
         $res->header('X-Handshake', 'ok');
-        $res->upgrade('T::UpgradedProtocol');
-        $state->{pending_in_request} = $res->is_upgrading ? 1 : 0;
-        $state->{started_in_request} = $res->is_started ? 1 : 0;
+        $transaction->upgrade('T::UpgradedProtocol');
+        $state->{pending_in_request} = $transaction->is_upgrading ? 1 : 0;
+        $state->{started_in_request}
+            = $transaction->is_response_started ? 1 : 0;
     }
 
     sub on_request_end ($self, $req, $res) {
         my $state = $self->data;
+        my $transaction = $self->transaction;
         $state->{request_end_hits}++;
-        $state->{pending_at_request_end} = $res->is_upgrading ? 1 : 0;
+        $state->{pending_at_request_end}
+            = $transaction->is_upgrading ? 1 : 0;
         $state->{complete_at_request_end} = $res->is_complete ? 1 : 0;
     }
 }
@@ -121,15 +126,19 @@ run_client(
 );
 
 ok($state->{pending_in_request},
-    'upgrade is pending while on_request remains on the stack');
+    'Upgrade is pending while on_request remains on the stack');
 ok(!$state->{started_in_request},
-    '101 response is not committed inside on_request');
+    '101 response output is not started inside on_request');
 is($state->{request_end_hits}, 1,
     'normal on_request_end lifecycle runs before handoff');
 ok($state->{pending_at_request_end},
     'handoff remains pending during on_request_end');
 ok(!$state->{complete_at_request_end},
-    'Response is not complete until switching response commits');
+    'Response message is not complete until switching response commits');
+ok($state->{transaction}->is_complete,
+    'Upgrade Transaction completes before protocol handoff');
+ok(!$state->{transaction}->is_upgrading,
+    'Upgrade pending state clears after successful handoff');
 is($state->{target_hits}, 1,
     'target protocol receives preserved post-HTTP input');
 is($state->{target_input}, 'PING',
@@ -157,7 +166,7 @@ is(
 
     sub on_request ($self, $req, $res) {
         $res->header('Upgrade', 'other-proto');
-        $res->upgrade('T::UpgradedProtocol');
+        $self->transaction->upgrade('T::UpgradedProtocol');
     }
 }
 
@@ -197,7 +206,7 @@ unlike($bad->{wire}, qr/101 Switching Protocols/,
 
     sub on_request ($self, $req, $res) {
         $res->header('Upgrade', 'test-proto');
-        $res->upgrade('T::UpgradedProtocol');
+        $self->transaction->upgrade('T::UpgradedProtocol');
     }
 }
 

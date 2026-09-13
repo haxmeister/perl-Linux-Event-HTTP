@@ -6,31 +6,35 @@ use Test::More;
 use Linux::Event::HTTP::Response;
 
 my $class = 'Linux::Event::HTTP::Response';
-ok(!$class->can('new'), 'Response objects are created by the HTTP connection');
+ok($class->can('new'), 'Response exposes a public message constructor');
 
-my $response = $class->_new(status => 200);
+my $response = $class->new(status => 200);
 
-is($response->status, 200, 'status getter returns internal initial status');
+is($response->status, 200, 'status getter returns initial status');
 ok(!defined $response->reason, 'reason is optional');
+is($response->version, '1.1', 'response defaults to HTTP version 1.1');
+ok(!$response->is_complete, 'response without a selected body is not yet complete');
+$response->version('1.0');
+is($response->version, '1.0', 'response version is mutable before commit');
+$response->version('1.1');
 
-my $bound_connection = {};
-my $bound_request = {};
-my $bound = $class->_new_bound($bound_connection, $bound_request);
-is($bound->status, 200, 'bound response uses the default status');
-is($bound->header('X-Missing'), undef, 'bound response starts without headers');
+my $first_empty = $class->new(version => '1.0');
+is($first_empty->status, 200, 'new response uses the default status');
+is($first_empty->version, '1.0', 'constructor accepts HTTP version');
+is($first_empty->header('X-Missing'), undef, 'new response starts without headers');
 is(
-    $bound->_serialize_head('1.1'),
-    "HTTP/1.1 200 OK\r\n\r\n",
-    'bound response with shared empty headers serializes normally',
+    $first_empty->_serialize_head('1.0'),
+    "HTTP/1.0 200 OK\r\n\r\n",
+    'new response with shared empty headers serializes normally',
 );
-$bound->add_header('X-Bound', 'yes');
-is($bound->header('X-Bound'), 'yes', 'bound response lazily owns added headers');
+$first_empty->add_header('X-First', 'yes');
+is($first_empty->header('X-First'), 'yes', 'response lazily owns added headers');
 
-my $second_bound = $class->_new_bound($bound_connection, $bound_request);
+my $second_empty = $class->new(version => '1.0');
 is(
-    $second_bound->header('X-Bound'),
+    $second_empty->header('X-First'),
     undef,
-    'adding a header does not mutate another bound response',
+    'adding a header does not mutate another Response',
 );
 
 $response->header('Content-Type', 'text/plain');
@@ -43,6 +47,9 @@ is_deeply(
     [ 'a=1', 'b=2' ],
     'repeated response headers preserve order',
 );
+is($response->header_count, 3, 'response exposes exact header count');
+is($response->header_name(1), 'Set-Cookie', 'response preserves indexed header name');
+is($response->header_value(2), 'b=2', 'response preserves indexed header value');
 
 is(
     $response->_serialize_head('1.1'),
@@ -79,19 +86,27 @@ is_deeply(
     'header setter replaces fields of same name',
 );
 
-my $with_length = $class->_new(
+$response->remove_header('Set-Cookie');
+is_deeply(
+    [ $response->header_values('Set-Cookie') ],
+    [],
+    'remove_header removes all same-name fields',
+);
+
+my $with_length = $class->new(
     status => 200,
     headers => [
         [ 'Content-Length', '0' ],
     ],
 );
+is($with_length->content_length, 0, 'response exposes declared Content-Length');
 like(
     $with_length->_serialize_head('1.1'),
     qr/Content-Length: 0\r\n\r\n\z/,
     'decimal Content-Length serializes',
 );
 
-my $no_content_length = $class->_new(
+my $no_content_length = $class->new(
     status => 204,
     headers => [
         [ 'Content-Length', '0' ],
@@ -101,7 +116,15 @@ my $no_content_ok = eval { $no_content_length->_serialize_head('1.1'); 1 };
 ok(!$no_content_ok, '204 response cannot emit Content-Length');
 like($@, qr/204.*Content-Length/, '204 Content-Length rejection is clear');
 
-my $ok = eval { $class->_new(status => 99); 1 };
+my $body_response = $class->new(body => "hello\n");
+is($body_response->body, "hello\n", 'constructor accepts a complete scalar body');
+ok($body_response->is_complete,
+    'complete scalar body makes the Response message complete immediately');
+$body_response->header('X-After-Body', 'yes');
+is($body_response->header('X-After-Body'), 'yes',
+    'message completion does not commit mutable response metadata');
+
+my $ok = eval { $class->new(status => 99); 1 };
 ok(!$ok, 'invalid status is rejected');
 like($@, qr/status/, 'invalid status error is clear');
 
@@ -121,7 +144,7 @@ $ok = eval { $response->_serialize_head('2'); 1 };
 ok(!$ok, 'HTTP/2 cannot use HTTP/1 serializer');
 like($@, qr/version/, 'invalid serializer version error is clear');
 
-my $both = $class->_new(
+my $both = $class->new(
     headers => [
         [ 'Content-Length', '3' ],
         [ 'Transfer-Encoding', 'chunked' ],
@@ -131,7 +154,7 @@ $ok = eval { $both->_serialize_head('1.1'); 1 };
 ok(!$ok, 'response TE plus CL is rejected');
 like($@, qr/both Transfer-Encoding and Content-Length/, 'response TE plus CL error is clear');
 
-my $duplicate_length = $class->_new(
+my $duplicate_length = $class->new(
     headers => [
         [ 'Content-Length', '3' ],
         [ 'Content-Length', '3' ],
@@ -141,7 +164,7 @@ $ok = eval { $duplicate_length->_serialize_head('1.1'); 1 };
 ok(!$ok, 'multiple response Content-Length fields are rejected');
 like($@, qr/multiple Content-Length/, 'duplicate response Content-Length error is clear');
 
-my $bad_length = $class->_new(
+my $bad_length = $class->new(
     headers => [
         [ 'Content-Length', '3, 3' ],
     ],
@@ -151,7 +174,7 @@ ok(!$ok, 'serializer only emits canonical decimal Content-Length');
 like($@, qr/decimal number/, 'non-canonical response Content-Length error is clear');
 
 # Serializer validates again in case internals are modified directly.
-my $tampered = $class->_new;
+my $tampered = $class->new;
 $tampered->{headers} = [ [ 'Bad Header', 'x' ] ];
 $ok = eval { $tampered->_serialize_head('1.1'); 1 };
 ok(!$ok, 'native serializer revalidates tampered field names');
@@ -160,15 +183,19 @@ $tampered->{headers} = [ [ 'X-Test', "x\0y" ] ];
 $ok = eval { $tampered->_serialize_head('1.1'); 1 };
 ok(!$ok, 'native serializer revalidates tampered field values');
 
-my $unbound = $class->_new;
-my $unbound_stream = $unbound->stream_body;
-$ok = eval { $unbound_stream->write("x"); 1 };
-ok(!$ok, 'unbound internal Response cannot emit application output');
-like($@, qr/not bound/, 'unbound output rejection is clear');
+ok(!$class->can('stream_body'),
+    'Response message does not expose a transport body producer');
+ok(!$class->can('connection'),
+    'Response message does not retain a transport Connection');
+ok(!$class->can('request'),
+    'Response message does not retain a peer Request');
+ok(!$class->can('upgrade'),
+    'Response message does not perform protocol Upgrade');
 
-$unbound->_mark_started;
-$ok = eval { $unbound->status(201); 1 };
-ok(!$ok, 'response metadata locks after output starts');
+my $committed = $class->new;
+$committed->_commit;
+$ok = eval { $committed->status(201); 1 };
+ok(!$ok, 'response metadata locks after message commit');
 like($@, qr/cannot change/, 'metadata lock error is clear');
 
 done_testing;

@@ -3,39 +3,39 @@ use v5.36;
 use strict;
 use warnings;
 
-use Scalar::Util qw(refaddr weaken);
+use Scalar::Util qw(refaddr);
 use utf8 ();
 
 use Linux::Event::HTTP::_HTTP1 ();
-use Linux::Event::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
 
 my $EMPTY_HEADERS = [];
 
-sub _new ($class, %args) {
+sub new ($class, %args) {
     my $status  = delete($args{status}) // 200;
     my $reason  = delete $args{reason};
+    my $version = delete($args{version}) // '1.1';
     my $headers = delete $args{headers};
+    my $has_body = exists $args{body};
+    my $body = delete $args{body};
 
     die 'unknown response option: ' . join(', ', sort keys %args)
         if %args;
 
     _validate_status($status);
     _validate_reason($reason) if defined $reason;
+    _validate_version($version);
 
     my $self = bless {
-        status          => 0 + $status,
-        reason          => $reason,
-        headers         => [],
-        connection      => undef,
-        request         => undef,
-        started         => 0,
-        ended           => 0,
-        upgrade_pending => 0,
-        body_kind       => undef,
-        body            => undef,
-        stream_body     => undef,
+        status    => 0 + $status,
+        reason    => $reason,
+        version   => "$version",
+        headers   => $EMPTY_HEADERS,
+        committed => 0,
+        complete  => 0,
+        body_kind => undef,
+        body      => undef,
     }, $class;
 
     if (defined $headers) {
@@ -49,39 +49,19 @@ sub _new ($class, %args) {
         }
     }
 
+    $self->body($body) if $has_body;
     return $self;
 }
 
-sub _new_bound ($class, $connection, $request) {
-    my $self = bless {
-        status          => 200,
-        reason          => undef,
-        headers         => $EMPTY_HEADERS,
-        connection      => $connection,
-        request         => $request,
-        started         => 0,
-        ended           => 0,
-        upgrade_pending => 0,
-        body_kind       => undef,
-        body            => undef,
-        stream_body     => undef,
-    }, $class;
-    weaken($self->{connection});
-    return $self;
+sub _new ($class, %args) {
+    return $class->new(%args);
 }
 
-sub connection   ($self) { $self->{connection} }
-sub request      ($self) { $self->{request} }
-sub is_started   ($self) { !!$self->{started} }
-sub is_complete  ($self) { !!$self->{ended} }
-sub is_upgrading ($self) { !!$self->{upgrade_pending} }
+sub is_complete ($self) { !!$self->{complete} }
 
 sub _assert_mutable ($self) {
-    die 'response metadata cannot change after Upgrade handoff is requested'
-        if $self->{upgrade_pending};
-    die 'response metadata cannot change after output has started'
-        if $self->{started};
-    die 'response is already complete' if $self->{ended};
+    die 'response metadata cannot change after message commit'
+        if $self->{committed};
     return;
 }
 
@@ -102,6 +82,16 @@ sub reason ($self, @args) {
     $self->_assert_mutable;
     _validate_reason($args[0]) if defined $args[0];
     $self->{reason} = $args[0];
+    return $self;
+}
+
+sub version ($self, @args) {
+    return $self->{version} if !@args;
+
+    die 'version accepts exactly one value' if @args != 1;
+    $self->_assert_mutable;
+    _validate_version($args[0]);
+    $self->{version} = "$args[0]";
     return $self;
 }
 
@@ -136,12 +126,46 @@ sub add_header ($self, $name, $value) {
     return $self;
 }
 
+sub remove_header ($self, $name) {
+    $self->_assert_mutable;
+    _validate_name($name);
+    my $wanted = lc $name;
+    my @kept = grep { lc($_->[0]) ne $wanted } @{$self->{headers}};
+    $self->{headers} = \@kept;
+    return $self;
+}
+
 sub header_values ($self, $name) {
     _validate_name($name);
     my $wanted = lc $name;
     return map { $_->[1] }
         grep { lc($_->[0]) eq $wanted }
         @{$self->{headers}};
+}
+
+sub header_count ($self) {
+    return scalar @{$self->{headers}};
+}
+
+sub header_name ($self, $index) {
+    die 'header index out of range'
+        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
+    return $self->{headers}[$index][0];
+}
+
+sub header_value ($self, $index) {
+    die 'header index out of range'
+        if !defined($index) || $index !~ /\A[0-9]+\z/ || $index >= @{$self->{headers}};
+    return $self->{headers}[$index][1];
+}
+
+sub content_length ($self) {
+    my @values = $self->header_values('Content-Length');
+    return undef if !@values;
+    die 'response must not contain multiple Content-Length fields' if @values != 1;
+    die 'response Content-Length must be a decimal number'
+        if $values[0] !~ /\A[0-9]+\z/;
+    return 0 + $values[0];
 }
 
 sub _body_bytes ($operation, $body) {
@@ -160,125 +184,55 @@ sub body ($self, @args) {
 
     die 'body accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
-    die 'body(): response already has a streaming body'
+    die 'body(): response already has an incremental body producer'
         if ($self->{body_kind} // '') eq 'stream';
 
     $self->{body_kind} = 'scalar';
     $self->{body} = _body_bytes('body', $args[0]);
-
-    if (my $connection = $self->{connection}) {
-        $connection->_response_body_ready($self);
-    }
-
+    $self->{complete} = 1;
     return $self;
 }
 
-sub stream_body ($self, @args) {
-    if ($self->{stream_body}) {
-        die 'stream_body options may only be supplied when the stream is created'
-            if @args;
-        return $self->{stream_body};
-    }
-
+sub _begin_stream_body ($self) {
     $self->_assert_mutable;
-    die 'stream_body(): response already has a scalar body'
+    die 'response_body(): Response already has a complete scalar body'
         if ($self->{body_kind} // '') eq 'scalar';
-    die 'stream_body options must be key/value pairs' if @args % 2;
+    die 'response_body(): Response already has an incremental body producer'
+        if ($self->{body_kind} // '') eq 'stream';
 
-    require Linux::Event::HTTP::Body::Stream;
-    my $body = Linux::Event::HTTP::Body::Stream->_new($self, @args);
     $self->{body_kind} = 'stream';
-    $self->{stream_body} = $body;
-    return $body;
+    $self->{complete} = 0;
+    return $self;
 }
 
 sub _has_scalar_body ($self) {
     return ($self->{body_kind} // '') eq 'scalar';
 }
 
+sub _has_incremental_body ($self) {
+    return ($self->{body_kind} // '') eq 'stream';
+}
+
 sub _scalar_body ($self) {
     return $self->{body};
 }
 
-sub _stream_write ($self, $bytes) {
-    die 'stream body write rejected: response has an Upgrade handoff pending'
-        if $self->{upgrade_pending};
-    die 'stream body write rejected: response is already complete'
-        if $self->{ended};
-    my $connection = $self->{connection}
-        or die 'stream body write rejected: response is not bound to an active HTTP connection';
-    return $connection->_write_response($self, $bytes, 0, 'stream_body->write');
-}
-
-sub _stream_complete ($self, $bytes = '') {
-    die 'stream body complete rejected: response has an Upgrade handoff pending'
-        if $self->{upgrade_pending};
-    die 'stream body complete rejected: response is already complete'
-        if $self->{ended};
-    my $connection = $self->{connection}
-        or die 'stream body complete rejected: response is not bound to an active HTTP connection';
-    $connection->_write_response($self, $bytes, 1, 'stream_body->complete');
+sub _commit ($self) {
+    $self->{committed} = 1;
     return $self;
 }
 
-sub _stream_body_object ($self) {
-    return $self->{stream_body};
-}
-
-sub _cancel_stream_body ($self) {
-    my $body = $self->{stream_body} or return;
-    $body->_cancel;
-    return;
-}
-
-sub _try_native_default_final ($self, $connection, $body) {
-    return 0 if ref($self) ne __PACKAGE__;
-    return 0 if $self->{status} != 200 || defined($self->{reason});
-    return 0 if @{$self->{headers}};
-    return 0 if $connection->{_http_closing} || $connection->is_closed;
-    return 0 if $connection->{_http_response_state};
-
-    my $active = $connection->{_http_active_response} or return 0;
-    return 0 if refaddr($active) != refaddr($self);
-
-    my $request = $connection->{_http_active_request} or return 0;
-    return 0 if !defined($self->{request})
-        || refaddr($request) != refaddr($self->{request});
-
-    my $request_state = $connection->{_http_request_state} or return 0;
-    return 0 if !$request_state->{body_done};
-
-    my $wire = Linux::Event::HTTP::_HTTP1
-        ->build_default_final($request, $body);
-    return 0 if !defined $wire;
-
-    $self->{started} = 1;
-    $self->{ended} = 1;
-    $connection->{_http_response_state} = undef;
-
-    $connection->write($wire);
-
-    $connection->{_http_active_request} = undef;
-    $connection->{_http_active_response} = undef;
-    $connection->{_http_request_state} = undef;
-    $connection->{_http_response_state} = undef;
-
-    $connection->resume_read if $connection->is_read_paused;
-    return 1;
-}
-
-sub upgrade ($self, $target_class) {
-    Linux::Event::HTTP::_Upgrade->schedule($self, $target_class);
-    return $self;
-}
-
-sub _mark_started ($self) {
-    $self->{started} = 1;
-    return;
+sub _is_committed ($self) {
+    return !!$self->{committed};
 }
 
 sub _mark_complete ($self) {
-    $self->{ended} = 1;
+    $self->{complete} = 1;
+    return;
+}
+
+sub _mark_incomplete ($self) {
+    $self->{complete} = 0;
     return;
 }
 
@@ -291,6 +245,11 @@ sub _validate_status ($status) {
 sub _validate_reason ($reason) {
     die 'response reason phrase contains invalid control characters'
         if $reason =~ /[\x00-\x08\x0a-\x1f\x7f]/;
+}
+
+sub _validate_version ($version) {
+    die 'HTTP version is required' if !defined($version) || ref($version);
+    die 'invalid HTTP version' if "$version" !~ /\A[0-9]+(?:\.[0-9]+)?\z/;
 }
 
 sub _validate_name ($name) {
@@ -319,74 +278,100 @@ Linux::Event::HTTP::Response - HTTP response message
 
 =head1 SYNOPSIS
 
+    my $response = Linux::Event::HTTP::Response->new(
+        status => 200,
+        headers => [
+            [ 'Content-Type', 'text/plain' ],
+        ],
+        body => "hello\n",
+    );
+
+Server callbacks receive the same Response class:
+
     sub on_request ($conn, $req, $res) {
         $res->status(200);
         $res->header('Content-Type', 'text/plain');
         $res->body("hello\n");
     }
 
-Streaming bodies are selected explicitly:
-
-    my $body = $res->stream_body(
-        on_drain  => sub ($body) { ... },
-        on_cancel => sub ($body) { ... },
-    );
-
-    $body->write($bytes);
-    $body->complete;
-
 =head1 DESCRIPTION
 
-Every successfully dispatched HTTP request receives one Response object created
-and bound by L<Linux::Event::HTTP::Server::Connection>. The Response describes
-one HTTP response message, not the underlying socket or a writable handle.
+C<Linux::Event::HTTP::Response> represents one HTTP response message. It is not
+a socket, transaction, connection, or writable transport handle. The same
+message class is used for locally constructed outgoing responses and is intended
+for parsed incoming client responses.
 
-C<body> supplies a complete scalar body. C<stream_body> selects a body whose
-bytes are produced over time. The streaming body object owns C<write> and
-C<complete>; the Response owns status, headers, and body selection.
+A Response owns status, reason, version, headers, complete scalar-body data, and
+message completion state. It does not retain its peer Request or the Connection
+that happens to carry it. Exchange lifecycle, output progress, cancellation,
+Upgrade, and incremental body production belong to
+L<Linux::Event::HTTP::Transaction> and the protocol Connection.
+
+Selecting a complete scalar C<body> makes the message body complete immediately.
+That does not mean the message has been written to a transport. Incremental body
+production is selected through the owning Transaction; the Response records only
+that its body is incomplete until the producer announces its final bytes.
 
 =head1 METHODS
 
-=head2 status, reason, header, add_header, header_values
+=head2 new
 
-Configure or inspect response metadata before output starts.
+Constructs a mutable response message. C<status> defaults to 200 and C<version>
+defaults to C<1.1>. C<headers> is an optional array reference of C<[name,
+value]> pairs. C<body> is an optional complete scalar byte body.
+
+=head2 status
+
+Gets or sets the response status code before message commit.
+
+=head2 reason
+
+Gets or sets the optional HTTP/1 reason phrase before message commit.
+
+=head2 version
+
+Gets or sets the HTTP version before message commit.
+
+=head2 header
+
+Gets the first matching field value. The setter form replaces all fields of the
+same ASCII case-insensitive name.
+
+=head2 add_header
+
+Adds another header field while preserving existing same-name fields.
+
+=head2 remove_header
+
+Removes all fields with the supplied ASCII case-insensitive name.
+
+=head2 header_values
+
+Returns all matching values in message order.
+
+=head2 header_count, header_name, header_value
+
+Provide exact indexed access to fields in message order while preserving the
+original field names.
+
+=head2 content_length
+
+Returns the declared Content-Length as an integer, or undef when absent.
 
 =head2 body
 
-    $res->body("hello\n");
-    my $bytes = $res->body;
+Gets or sets the complete scalar byte body. Setting it declares that the
+message body itself is complete. Incremental output is selected through the
+owning Transaction rather than through the Response message.
 
-Selects a complete scalar byte body. Inside an HTTP callback, selecting the body
-does not serialize the response in the middle of the callback. Status, reason,
-and headers remain configurable until the enclosing callback returns. The
-connection then commits the complete response if the transaction is ready.
+=head2 is_complete
 
-If C<body> is called later from an asynchronous callback while the response is
-waiting, the complete response is committed immediately. A scalar body and a
-streaming body are mutually exclusive.
+Returns whether the complete HTTP message body is known or its final boundary
+has been reached. This is deliberately independent of whether an outgoing
+message has started or finished writing to a transport.
 
-=head2 stream_body
+=head1 SEE ALSO
 
-    my $body = $res->stream_body(
-        on_drain  => sub ($body) { ... },
-        on_cancel => sub ($body) { ... },
-    );
-
-Creates the response's streaming body on first call and returns it. Later
-argumentless calls return the same object. Creating the stream does not start
-output and does not freeze Response metadata. The first C<write> or C<complete>
-on the body stream commits the response head; metadata cannot change after that
-point.
-
-C<on_drain> runs after downstream Linux::Event output pressure clears.
-C<on_cancel> runs if the HTTP consumer disappears before the body is completed.
-
-=head2 upgrade
-
-Schedules a validated HTTP/1.1 protocol handoff.
-
-=head2 connection, request, is_started, is_complete, is_upgrading
-
-Expose the owning transaction and response lifecycle state.
+L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Transaction>.
 
 =cut

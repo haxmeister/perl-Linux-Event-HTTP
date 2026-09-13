@@ -12,6 +12,7 @@ my @public_modules = qw(
     Linux::Event::HTTP::Server::Connection
     Linux::Event::HTTP::Request
     Linux::Event::HTTP::Response
+    Linux::Event::HTTP::Transaction
     Linux::Event::HTTP::Server
 );
 

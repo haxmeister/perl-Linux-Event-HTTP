@@ -5,15 +5,21 @@ not a web framework or a framework-adapter distribution.
 
 ## Boundaries
 
-The design has three layers:
+The design has four distinct responsibilities:
 
 - **Transport** - Linux::Event owns sockets, TLS, readiness, buffering,
   backpressure, deadlines, ordered write queuing, and event dispatch.
-- **Protocol** - Linux::Event::HTTP owns HTTP parsing, serialization, message
-  framing, persistence, limits, transfer coding, and Upgrade.
-- **Application-facing transaction objects** - Request exposes the incoming HTTP
-  request; Response describes the outgoing HTTP message; Body::Stream represents
-  a streaming response-body producer.
+- **Protocol execution** - Client::Connection and Server::Connection own HTTP
+  framing/parsing, ordering, persistence, and movement of message bytes across
+  the Linux::Event transport.
+- **Messages** - Request and Response represent HTTP messages independent of
+  whether they were created or received by a client or server.
+- **Exchange lifecycle** - Transaction represents exactly one Request/Response
+  exchange and owns cancellation, response-output progress, protocol handoff,
+  and outgoing incremental body producers.
+
+`Body::Stream` is the writable producer used by Transaction for an outgoing
+incremental body. It is not a message and does not own a second transport queue.
 
 Reusable transport or byte-stream performance work belongs in Linux::Event.
 HTTP-specific native code should remain limited to HTTP wire work where a native
@@ -24,7 +30,7 @@ framework concerns are outside this distribution.
 
 ## Public structure
 
-The current server-side public structure is:
+The current public foundation is:
 
 ```text
 Linux::Event::HTTP
@@ -32,6 +38,7 @@ Linux::Event::HTTP::Server
 Linux::Event::HTTP::Server::Connection
 Linux::Event::HTTP::Request
 Linux::Event::HTTP::Response
+Linux::Event::HTTP::Transaction
 Linux::Event::HTTP::Body::Stream
 ```
 
@@ -39,23 +46,93 @@ The connection class is deliberately server-specific. Client and server
 connections have opposite protocol roles, so there is no generic public
 `Linux::Event::HTTP::Connection`.
 
-Future native client support belongs in this distribution as:
+Native client support belongs in this distribution as:
 
 ```text
 Linux::Event::HTTP::Client
 Linux::Event::HTTP::Client::Connection
 ```
 
-The client is not implemented yet. It should be a native Linux::Event protocol
-client rather than an HTTP::Tiny or LWP transport adapter. Compatibility
-adapters can live in separate distributions.
+The client is not implemented yet. It will reuse Request, Response, and
+Transaction rather than introducing Client::Request or Client::Response types.
+
+## Message model
+
+Request and Response identify HTTP concepts, not endpoint roles:
+
+```text
+client sends Request  -----> server receives Request
+client gets Response  <----- server sends Response
+```
+
+A locally constructed message is mutable until committed. A received message
+uses the same public message type but its parsed wire metadata is read-only.
+Native parsed Requests retain lazy XS-backed storage rather than being eagerly
+expanded into Perl hashes or header objects.
+
+The common message concepts include:
+
+```text
+Request                         Response
+-------                         --------
+method                          status
+target                          reason
+version                         version
+header                          header
+add_header                      add_header
+remove_header                   remove_header
+header_values                   header_values
+header_count                    header_count
+header_name                     header_name
+header_value                    header_value
+content_length                  content_length
+body                            body
+is_complete                     is_complete
+```
+
+`target` is intentionally used instead of `uri`: an HTTP request message has a
+request-target, while URL resolution, scheme, authority, destination host, and
+redirect resolution are Client concerns.
+
+Request and Response deliberately do not retain their peer message, carrying
+Connection, output writer, or protocol-transition state. Those relationships and
+operations belong to Transaction and the protocol executor.
+
+HTTP/1-only parser decisions such as transfer-body framing and persistence are
+private protocol-execution state rather than generic Request message methods.
+
+## Transaction model
+
+A Transaction represents exactly one HTTP exchange:
+
+```text
+Transaction
+    Request
+    Response
+    lifecycle state
+    cancellation
+    error
+    response-output progress
+    outgoing body producer(s)
+    protocol handoff state
+```
+
+A redirect is another HTTP exchange and therefore another Transaction. A
+Transaction does not own a socket, parser, connection pool, or transport queue.
+Its current Client/Connection controller performs the protocol work.
+
+The public lifecycle intentionally stays smaller than protocol-internal wire
+state. In addition to Request, Response, state, cancellation, completion, and
+error, Transaction exposes operations that genuinely belong to an exchange:
+`response_body`, `send_response`, `upgrade`, `is_response_started`, and
+`is_upgrading`.
 
 ## Server transaction model
 
 `Linux::Event::HTTP::Server` is the normal server entry point. It is a thin
 control-plane convenience over `Linux::Event::IO::Sock::Listener`.
 
-The ordinary callback is:
+The ordinary callback remains:
 
 ```perl
 on_request => sub ($conn, $req, $res) {
@@ -63,29 +140,38 @@ on_request => sub ($conn, $req, $res) {
 }
 ```
 
-The three transaction objects have different lifetimes:
+The active exchange is available without adding another callback argument:
 
-- `$conn` is the persistent TCP/TLS HTTP connection.
-- `$req` is one incoming request on that connection.
-- `$res` is the outgoing Response paired with that request.
-
-A complete HTTP response does not imply transport shutdown. On a persistent
-HTTP/1.1 connection the same socket normally remains open for later requests.
-
-A persistent connection advances only when both halves of the current
-transaction are complete: the full request input boundary has been consumed and
-the Response is complete.
-
-## Response body model
-
-The public split is intentional:
-
-```text
-Response     = HTTP response message
-Body::Stream = streaming producer
+```perl
+my $tx = $conn->transaction;
 ```
 
-A complete scalar body is selected with:
+The objects have different lifetimes:
+
+- `$conn` is the persistent TCP/TLS HTTP connection.
+- `$tx` is one HTTP exchange on that connection.
+- `$req` is the Request in that Transaction.
+- `$res` is the Response in that Transaction.
+
+A complete HTTP response does not imply transport shutdown. On a persistent
+HTTP/1.1 connection the same socket normally remains open for later
+Transactions.
+
+The server advances only when the complete request input boundary has been
+consumed and response output for the current Transaction has completed.
+
+## Body model
+
+HTTP wire framing and application body handling are separate concepts.
+`Content-Length`, HTTP/1 chunked transfer coding, close delimiting, or a future
+HTTP/2 DATA-frame boundary tell the protocol implementation how to identify body
+bytes. They do not dictate whether the application buffers or incrementally
+produces/consumes those bytes.
+
+A message's `body(...)` means the application has a complete scalar byte body.
+Incremental production is owned by the Transaction.
+
+A complete scalar response body is selected with:
 
 ```perl
 $res->status(200);
@@ -93,22 +179,32 @@ $res->header('Content-Type', 'text/plain');
 $res->body("hello\n");
 ```
 
-`body(...)` is a complete-body declaration, not an immediate transport write.
-While an HTTP callback is running, the Response remains mutable until that
-callback returns. This makes configuration order intuitive:
+`body(...)` is a complete-body declaration, not a transport write. While an HTTP
+callback is running, the Response remains mutable until that callback returns:
 
 ```perl
 $res->body("hello\n");
 $res->header('X-After-Body', 'yes');
 ```
 
-When `body(...)` is called later from an asynchronous event callback while a
-Response is waiting, it commits the complete response immediately.
+The server automatically sends that scalar Response after callback return when
+the Transaction can advance.
 
-Streaming is explicit:
+If application work completes the Response later from another event, the
+message remains transport-independent. Retain its Transaction and explicitly
+send the configured scalar message:
 
 ```perl
-my $body = $res->stream_body(
+my $tx = $conn->transaction;
+$tx->response->body("later\n");
+$tx->send_response;
+```
+
+Incremental server response production is explicit through the active
+Transaction:
+
+```perl
+my $body = $conn->transaction->response_body(
     on_drain  => sub ($body) { ... },
     on_cancel => sub ($body) { ... },
 );
@@ -118,17 +214,32 @@ $body->write("two\n");
 $body->complete;
 ```
 
-`stream_body()` lazily creates one stable body object owned by the Response.
-Creating it does not commit headers. The first body `write()` or `complete()` is
-the streaming commit point and freezes Response metadata.
+`response_body()` lazily creates one stable producer owned by the Transaction.
+Creating it does not commit response headers. The first producer `write()` or
+`complete()` is the output commit point and freezes Response metadata.
 
-Scalar and streaming bodies are mutually exclusive.
+A complete scalar body and an incremental producer are mutually exclusive.
+Response deliberately has no public `write`, `complete`, `stream_body`, or
+`end` method. Public message completion introspection remains
+`Response->is_complete`; whole-exchange completion is
+`Transaction->is_complete`.
 
-The Response deliberately has no public `write`, `complete`, or `end` method.
-`write` belongs to the streaming body producer; `end` remains a transport
-concept. Public completion introspection remains `Response->is_complete`.
+## Commit and completion state
 
-## Response streaming and backpressure
+Message completion and protocol commit are intentionally different.
+
+- `Response->body($bytes)` means the complete message body is known, so
+  `Response->is_complete` is true immediately.
+- The Response remains mutable until the protocol commits it for output.
+- Once committed, Response metadata cannot change.
+- `Transaction->is_response_started` reports that response output has committed
+  and begun.
+- `Transaction->is_complete` means the complete HTTP exchange has succeeded.
+
+This distinction keeps Request and Response useful as messages while allowing
+Transaction to model asynchronous execution correctly.
+
+## Backpressure
 
 Body::Stream does not maintain a second output queue. Its writes are HTTP-framed
 and then fed into the existing Linux::Event ordered-byte output machinery.
@@ -143,16 +254,16 @@ true  = accepted and producer may continue
 false = accepted, but producer should pause until on_drain
 ```
 
-`on_cancel` means the HTTP connection abandoned an unfinished streaming body.
-Connection-level drain and close callbacks are composed with HTTP's body-stream
-bookkeeping rather than replaced.
+`on_cancel` means the Transaction abandoned an unfinished producer. Connection
+level drain and close callbacks are composed with this bookkeeping rather than
+replaced.
 
-## Request body streaming
+## Request body delivery
 
 `on_request($conn, $req, $res)` runs as soon as the validated request head is
 available. A request body may continue afterward.
 
-Optional callbacks are:
+Optional server callbacks are:
 
 ```perl
 on_body => sub ($conn, $req, $res, $bytes) {
@@ -168,7 +279,8 @@ Content-Length bodies are consumed directly from the connection input buffer.
 Chunked request bodies are decoded before application delivery. If `on_body` is
 not installed, body bytes are drained and discarded rather than accumulated.
 `on_request_end` runs once when the complete request input boundary has been
-consumed, including bodyless requests.
+consumed, including bodyless requests. Request `is_complete` becomes true at
+that actual message boundary.
 
 For HTTP/1.1 requests with a body and `Expect: 100-continue`, the connection
 emits `100 Continue` after validating the request head. Unsupported expectations
@@ -176,16 +288,18 @@ are rejected before application dispatch.
 
 ## HTTP/1 response framing
 
-The protocol layer chooses framing after the Response body mode is known.
+The HTTP/1 execution layer chooses wire framing after message/body state is
+known.
 
-- Scalar bodies normally produce Content-Length.
-- HTTP/1.1 streaming without Content-Length uses chunked transfer coding.
-- A declared Content-Length is enforced across streaming writes.
-- HTTP/1.0 unknown-length streaming is close-delimited and therefore requires
-  connection close after queued output drains.
+- Complete scalar bodies normally produce Content-Length.
+- HTTP/1.1 incremental output without Content-Length uses chunked transfer coding.
+- A declared Content-Length is enforced across incremental writes.
+- HTTP/1.0 unknown-length incremental output is close-delimited and therefore
+  requires connection close after queued output drains.
 - HEAD and body-forbidden status handling are enforced by the protocol layer.
 
-The first actual body-stream output commits streaming metadata.
+These choices are private HTTP/1 framing policy rather than generic Response
+body modes.
 
 ## HTTP/1 native boundary
 
@@ -208,26 +322,10 @@ when application code asks for them.
 
 The scalar-response builder is a private optimization behind eligible ordinary
 `Response->body(...)` calls. Applications do not select a special performance
-callback or alternate transaction API.
+callback or alternate Transaction API. The optimized path updates the same
+Transaction output/completion state as the general serializer.
 
-## Request semantics
-
-The Request API exposes validated protocol decisions rather than parser
-internals. Important methods include:
-
-```text
-method
-target
-http_version
-body_mode
-content_length
-keep_alive
-header
-header_values
-header_count
-header_name
-header_value
-```
+## HTTP/1 request validation
 
 HTTP/1 policy rejects ambiguous framing, obsolete folded headers, invalid Host
 requirements, conflicting Content-Length values, Transfer-Encoding plus
@@ -264,8 +362,8 @@ it.
 
 ## TLS
 
-HTTPS uses the same Server, Server::Connection, Request, Response, and
-Body::Stream classes. Server `tls => {...}` activates Linux::Event transport
+HTTPS uses the same Server, Server::Connection, Request, Response, Transaction,
+and Body::Stream classes. Server `tls => {...}` activates Linux::Event transport
 policy for generated Connections. A Connection subclass may provide reusable
 `tls_defaults()`, but defaults do not activate TLS by themselves, so one class
 can serve both plain and TLS listeners.
@@ -276,17 +374,23 @@ HTTPS class hierarchy.
 
 ## Upgrade
 
-HTTP Upgrade is a transaction boundary, not a second transport acquisition.
-The Response validates and schedules the switching transaction:
+HTTP Upgrade is a Transaction lifecycle operation, not a Response method and not
+a second transport acquisition:
 
 ```perl
 $res->header('Upgrade', 'my-protocol');
-$res->upgrade('MyProtocolConnection');
+$conn->transaction->upgrade('MyProtocolConnection');
 ```
 
-HTTP validates the HTTP/1.1 Upgrade request and response, queues the 101 response,
-then Linux::Event `transition_to()` hands the same live stream object to the
-target protocol class.
+The Response contains the HTTP switching-message metadata. The Transaction owns
+the decision and pending lifecycle state. Calling `upgrade()` validates the
+request/response pair, target class, body state, and HTTP/1.1 requirements before
+freezing Response metadata.
+
+The handoff queues the 101 response, marks the HTTP Transaction complete, then
+Linux::Event `transition_to()` hands the same live stream object to the target
+protocol class. `Transaction->is_upgrading` is true while that handoff is
+pending.
 
 Socket identity, TLS state, queued output, backpressure, deadlines, watcher
 state, application data, and bytes already read beyond the HTTP request head are
@@ -318,21 +422,24 @@ questions. See `docs/BENCHMARKING.md` for the measurement contract.
 
 ## Current status
 
-The current server foundation includes:
+The current server/client-ready foundation includes:
 
-1. HTTP/1 request-head parsing and lazy Request representation.
-2. Strict HTTP/1 request framing validation and persistence policy.
-3. Streaming Content-Length and chunked request bodies.
-4. Expect: 100-continue handling.
-5. Scalar Response bodies and explicit streaming Body::Stream output.
-6. Ordered persistent/pipelined request processing.
-7. Deferred asynchronous scalar Response bodies.
-8. Linux::Event backpressure propagation for streaming response bodies.
-9. TLS transport integration.
-10. Atomic HTTP/1.1 Upgrade handoff.
-11. One consolidated private `_HTTP1` native extension.
-12. One canonical server API using `Response->body(...)` or
-    `Response->stream_body(...)`.
+1. Direction-neutral Request and Response message types with no server binding.
+2. Locally constructible messages plus lazy native parsed Request state.
+3. A Transaction object representing exactly one Request/Response exchange.
+4. Transaction-owned response-output state, cancellation, deferred send, and Upgrade.
+5. HTTP/1 request-head parsing, validation, and persistence policy.
+6. Incremental Content-Length and chunked request-body delivery.
+7. Expect: 100-continue handling.
+8. Complete scalar Response bodies and Transaction-owned incremental response production.
+9. Ordered persistent/pipelined request processing.
+10. Deferred asynchronous scalar Responses through explicit `Transaction->send_response`.
+11. Linux::Event backpressure propagation for incremental response producers.
+12. TLS transport integration.
+13. Atomic Transaction-owned HTTP/1.1 Upgrade handoff.
+14. One consolidated private `_HTTP1` native extension.
+15. One canonical server callback API, with `$conn->transaction` available when lifecycle operations are needed.
 
-Future protocol work includes the native HTTP client and HTTP/2. WebSocket
-remains a separate protocol distribution.
+The next major protocol layer is the native HTTP Client and Client::Connection.
+HTTP/2 is future protocol work. WebSocket remains a separate protocol
+distribution.
