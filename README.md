@@ -4,7 +4,8 @@ Linux::Event::HTTP is a native HTTP protocol layer for Linux::Event.
 
 Linux::Event owns sockets, TLS, readiness, buffering, backpressure, and ordered
 byte output. Linux::Event::HTTP owns HTTP parsing, framing, persistence,
-serialization, and transaction state. It is deliberately not a web framework.
+serialization, client policy, and HTTP exchange state. It is deliberately not a
+web framework.
 
 ## Server quick start
 
@@ -43,7 +44,7 @@ use Linux::Event::HTTP::Client;
 my $loop = Linux::Event::Loop->new;
 my $client = Linux::Event::HTTP::Client->new(loop => $loop);
 
-my $tx = $client->get(
+my $operation = $client->get(
     'https://example.com/items?limit=10',
     on_response => sub ($tx, $res) {
         say $res->status;
@@ -66,9 +67,21 @@ my $tx = $client->get(
 $loop->run;
 ```
 
-Client methods return `Linux::Event::HTTP::Transaction`. The canonical outgoing
-Request is available immediately through `$tx->request`; the Response becomes
-available through `$tx->response` after its final response head arrives.
+High-level Client methods return `Linux::Event::HTTP::Client::Operation`. An
+operation normally contains one `Linux::Event::HTTP::Transaction`. If redirects
+are followed, every hop is another Transaction because a Transaction always
+means exactly one Request/Response exchange.
+
+For the current or final hop:
+
+```perl
+my $tx  = $operation->transaction;
+my $req = $operation->request;
+my $res = $operation->response;
+```
+
+Low-level `Linux::Event::HTTP::Client::Connection->request()` still returns a
+single Transaction directly.
 
 For a small response that should be available as one scalar, opt into a bound:
 
@@ -80,13 +93,12 @@ $client->get(
         my $bytes = $tx->response->body;
         ...;
     },
-    on_error => sub ($tx, $error) {
-        warn $error;
-    },
 );
 ```
 
-## Shared message model
+There is no implicit unbounded whole-response buffer.
+
+## Shared message and lifecycle model
 
 Request and Response are HTTP message objects, not client/server role objects:
 
@@ -94,7 +106,9 @@ Request and Response are HTTP message objects, not client/server role objects:
 client sends Request  -----> server receives Request
 client gets Response  <----- server sends Response
 
-Transaction = one Request + one Response + exchange lifecycle
+Transaction       = exactly one Request + one Response + exchange lifecycle
+Client::Operation = one high-level client action containing one or more Transactions
+Connection        = one persistent transport executing Transactions
 ```
 
 The same `Linux::Event::HTTP::Request` and `Linux::Event::HTTP::Response`
@@ -102,9 +116,64 @@ classes are used on both sides. A locally constructed message is mutable until
 protocol commit. Received message metadata is committed/read-only.
 
 A Request contains an HTTP request-target, not a full URL. The high-level Client
-owns URL parsing, destination selection, Host synthesis, TLS selection, and
-connection reuse. This keeps the Request type protocol-correct and usable on
-both client and server.
+owns URL parsing, redirects, destination selection, Host synthesis, TLS policy,
+and connection reuse. This keeps Request protocol-correct and usable in either
+direction.
+
+## Redirects
+
+The Client follows 301, 302, 303, 307, and 308 responses by default, with a
+limit of five redirects:
+
+```perl
+my $operation = $client->get(
+    $url,
+    max_redirects => 5,
+    on_redirect => sub ($op, $tx, $res, $next_url) {
+        say "redirecting to $next_url";
+    },
+    on_complete => sub ($tx) {
+        say $tx->response->status;
+    },
+);
+```
+
+`max_redirects` may be configured on the Client or overridden per request.
+`max_redirects => 0` disables redirect interpretation entirely: a 3xx response,
+including all of its Location fields and body, is delivered as the final
+response.
+
+Every followed redirect creates a distinct Transaction. The operation keeps the
+history:
+
+```perl
+my @transactions = $operation->transactions;
+my @urls         = $operation->urls;
+```
+
+Relative Location values are resolved against the current absolute URL. URL
+fragments remain client-side URL state and are never sent in the HTTP
+request-target.
+
+Redirect method/body policy is intentionally conservative and familiar:
+
+- 301 and 302 change POST to GET and discard the body;
+- 303 uses GET, except an original HEAD remains HEAD, and discards the body;
+- 307 and 308 preserve method and body;
+- a complete scalar body can be replayed for a method-preserving redirect;
+- a streaming body producer is not assumed to be rewindable, so an automatic
+  method-preserving redirect for a streamed body fails clearly rather than
+  replaying unsafe or incomplete data.
+
+Redirect hops regenerate Host and HTTP framing fields. Cross-origin redirects
+also remove `Authorization` and `Cookie`. `Proxy-Authorization` and
+connection-specific fields are never propagated automatically.
+
+`on_response`, `on_body`, and `on_complete` describe the final response.
+Intermediate redirect bodies are still consumed according to HTTP framing so
+the connection remains correct, but they are not delivered through the final
+`on_body` callback. `on_redirect` is the hook for each followed intermediate
+response.
 
 ## Body handling
 
@@ -120,7 +189,7 @@ On the server, an incremental outgoing Response body belongs to Transaction:
 
 ```perl
 my $body = $conn->transaction->response_body(
-    on_drain => sub ($body) { ... },
+    on_drain  => sub ($body) { ... },
     on_cancel => sub ($body) { ... },
 );
 
@@ -129,10 +198,11 @@ $body->complete;
 ```
 
 On the client, an incremental outgoing Request body follows the same producer
-model:
+model. The producer belongs to the current Transaction; Client::Operation
+provides a convenient delegate:
 
 ```perl
-my $tx = $client->post(
+my $operation = $client->post(
     $url,
     stream_body => {
         on_drain  => sub ($body) { ... },
@@ -140,7 +210,7 @@ my $tx = $client->post(
     },
 );
 
-my $body = $tx->request_body;
+my $body = $operation->request_body;
 $body->write($bytes);
 $body->complete;
 ```
@@ -161,9 +231,8 @@ close-delimited. Scalar `body` and `stream_body` are mutually exclusive.
 Incoming bodies are incremental-first. Server request bodies use `on_body`;
 Client response bodies use `on_body`. If no consumer is installed, bytes are
 drained/discarded rather than accumulated implicitly into Request or Response.
-There is intentionally no unbounded automatic whole-body buffer.
 
-The Client offers one explicit bounded convenience:
+The Client offers explicit bounded response buffering:
 
 ```perl
 $client->get(
@@ -176,13 +245,11 @@ $client->get(
 );
 ```
 
-`buffer_body` cannot be combined with `on_body`. Its limit counts the same body
-bytes that `on_body` would receive after HTTP/1 chunk framing has been removed.
-A declared Content-Length above the limit fails after the response head is
-available and before accumulation. Chunked, close-delimited, or otherwise
-unknown-length bodies fail when accumulation would cross the configured bound.
-Failure is a Transaction error and the HTTP/1 connection is closed rather than
-reused with unread response bytes.
+`buffer_body` cannot be combined with `on_body`. Its limit counts body bytes
+after HTTP/1 transfer framing has been removed. A declared Content-Length above
+the limit fails before accumulation; unknown-length bodies fail when decoded
+accumulation would cross the configured bound. The same bound applies while an
+intermediate redirect body is consumed.
 
 ## Deferred server responses
 
@@ -220,40 +287,36 @@ delete
 ```
 
 `request($method, $url, ...)` accepts absolute `http` and `https` URLs and builds
-the canonical Request. `headers` is an array reference of `[name, value]` pairs.
-`body` supplies a complete scalar Request body; `stream_body` selects a
-Transaction-owned producer instead.
+a canonical Request for each hop. `headers` is an array reference of `[name,
+value]` pairs. `body` supplies a complete scalar Request body; `stream_body`
+selects a Transaction-owned producer instead.
 
-The first reuse policy is intentionally simple and bounded:
+The initial connection reuse policy is intentionally simple and bounded:
 
 - one in-flight Transaction per HTTP/1 connection;
 - no HTTP/1 pipelining;
 - sequential keep-alive reuse;
 - at most one idle connection retained per origin;
 - concurrent same-origin requests may use additional connections;
-- extra connections close when they later become idle.
-
-A scalar Request body automatically receives Content-Length when the caller did
-not supply it. Streaming bodies enforce an explicit Content-Length or use
-HTTP/1.1 chunked framing when length is unknown. If a final Response arrives
-before an outgoing producer finishes, the producer is cancelled and that HTTP/1
-connection is not reused.
+- extra connections close when they later become idle;
+- each redirect hop independently selects a connection for its target origin.
 
 Client response framing supports Content-Length, HTTP/1.1 chunked transfer
 coding, bodyless HEAD/204/304 responses, informational responses, and
 close-delimited responses. Ambiguous Transfer-Encoding plus Content-Length is
 rejected.
 
-Cancelling a client Transaction closes its HTTP/1 connection rather than trying
-to reuse a socket that may still contain an unfinished response.
+Cancelling a Client::Operation cancels the active Transaction. Cancelling an
+HTTP/1 client Transaction closes its connection rather than trying to reuse a
+socket that may still contain an unfinished response.
 
-Redirects, proxy policy, cookies, authentication helpers, CONNECT/client
+Proxy policy, automatic authentication helpers, a cookie jar, CONNECT/client
 Upgrade, and richer pool policy remain later features.
 
 ## HTTPS
 
-HTTPS uses the same Client, Server, Request, Response, Transaction, and
-Connection concepts. TLS remains Linux::Event transport policy; there is no
+HTTPS uses the same Client, Server, Request, Response, Transaction, Operation,
+and Connection concepts. TLS remains Linux::Event transport policy; there is no
 parallel HTTPS class hierarchy.
 
 Server:
@@ -304,7 +367,7 @@ Linux::Event::HTTP validates and queues the 101 response, completes the HTTP
 Transaction, and uses Linux::Event `transition_to()` to hand the same stream
 object to the target protocol class.
 
-Client-side 101 handoff is not part of the initial Client foundation.
+Client-side 101 handoff is not part of the current Client implementation.
 WebSocket framing belongs in a separate `Linux::Event::WebSocket` distribution.
 
 ## Advanced connection subclasses
@@ -319,13 +382,14 @@ Linux::Event::HTTP::Client::Connection
 
 Both are Linux::Event stream-socket subclasses. `Server->new(connection_class =>
 ...)` and `Client->new(connection_class => ...)` allow reusable socket/tuning
-policy without changing Request, Response, or Transaction APIs.
+policy without changing Request, Response, Transaction, or Operation APIs.
 
 ## Public modules
 
 ```text
 Linux::Event::HTTP
 Linux::Event::HTTP::Client
+Linux::Event::HTTP::Client::Operation
 Linux::Event::HTTP::Client::Connection
 Linux::Event::HTTP::Server
 Linux::Event::HTTP::Server::Connection
@@ -347,7 +411,7 @@ It owns picohttpparser server request-head parsing/lazy Request accessors,
 chunked transfer decoding, response-head serialization, and the narrow eligible
 server scalar-response builder.
 
-The first client response-head parser is deliberately strict Perl code. The
+The client response-head parser remains deliberately strict Perl code. The
 existing native chunked decoder is reused. Client response-head parsing should
 move into native code only if measurement demonstrates a worthwhile need.
 
@@ -360,10 +424,11 @@ make test
 ```
 
 The distribution includes server/client, TLS, persistence, pipelining, Upgrade,
-request-body, streaming-upload, response-body, framing-error, bounded-buffer,
-Transaction-lifecycle, and distribution-integrity coverage.
+request-body, streaming-upload, redirects, response-body, framing-error,
+bounded-buffer, Transaction/Operation lifecycle, and distribution-integrity
+coverage.
 
-See `docs/ARCHITECTURE.md` for the detailed ownership and lifecycle model and
+See `docs/ARCHITECTURE.md` for detailed ownership and lifecycle rules and
 `docs/BENCHMARKING.md` for benchmark discipline.
 
 ## Scope
