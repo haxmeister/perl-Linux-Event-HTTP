@@ -181,14 +181,16 @@ The callback receives:
 
 =back
 
-A Response describes one HTTP response message. C<body> supplies a complete
-scalar body. For an incremental outgoing body, use the active
-L<Linux::Event::HTTP::Transaction> from C<< $conn->transaction >> and its
-C<response_body> producer. Completing an HTTP response does not normally close
-the connection; HTTP keep-alive may reuse the same connection for later
-requests.
+Request and Response are HTTP message objects. The one-request/one-response
+exchange is represented by L<Linux::Event::HTTP::Transaction> and is available
+as C<< $conn->transaction >> while active. Response does not retain a hidden
+Connection or peer-Request back-reference.
 
-For example:
+A complete scalar response body is configured on the Response:
+
+    $res->body("hello\n");
+
+For an incremental outgoing body, use the active Transaction:
 
     on_request => sub ($conn, $req, $res) {
         $res->header('Content-Type', 'text/plain');
@@ -197,9 +199,36 @@ For example:
         $body->complete("two\n");
     },
 
+Completing an HTTP response does not normally close the connection. HTTP
+keep-alive may reuse the same connection for later Transactions.
+
+=head1 DEFERRED RESPONSES
+
+Inside an HTTP callback, C<< $res->body(...) >> is committed after callback
+return when protocol state permits. This allows metadata to be configured in
+any natural order before output begins.
+
+If another event completes the Response later, retain the Transaction and send
+the complete scalar message explicitly:
+
+    my $tx = $conn->transaction;
+
+    Linux::Event::Kernel::Timer->new(
+        loop => $conn->loop,
+        after => 0.1,
+        on_timer => sub ($timer) {
+            $tx->response->body("later\n");
+            $tx->send_response;
+        },
+    );
+
+The explicit C<send_response> call is intentional. Response remains a
+transport-independent message and setting C<body> later does not secretly write
+to a socket.
+
 =head1 REQUEST BODIES
 
-Request bodies are streaming-first. Add C<on_body> when body bytes are needed,
+Request bodies are incremental-first. Add C<on_body> when body bytes are needed,
 and C<on_request_end> when work should happen after the complete request input
 has arrived:
 
@@ -221,7 +250,21 @@ has arrived:
     );
 
 If C<on_body> is absent, the server drains request-body bytes without building a
-whole-body scalar.
+whole-body scalar. C<Request-E<gt>is_complete> becomes true at the actual
+request-body boundary.
+
+=head1 UPGRADE
+
+HTTP Upgrade is an exchange operation owned by Transaction. Configure the
+Response switching metadata and ask the active Transaction to hand off the live
+transport:
+
+    $res->header('Upgrade', 'my-protocol');
+    $conn->transaction->upgrade('MyProtocolConnection');
+
+The server validates the HTTP/1.1 Upgrade, queues the 101 response, completes
+the HTTP Transaction, and then uses Linux::Event C<transition_to()> on the same
+stream object. Response itself has no C<upgrade> method.
 
 =head1 CONNECTION SUBCLASSES
 
