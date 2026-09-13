@@ -97,9 +97,13 @@ Executable head `8d93edaefa5cdfd51e9286cb1908ce4bf2df21c5` passed CI #399 / run
 `34745480988` across Perl 5.36, latest, and latest threaded; latest also passed
 end-to-end smoke and `disttest`.
 
-The branch documentation pass rewrites README around the ordinary APIs and marks
-default proxy routing implemented in `docs/CLIENT-POLICY.md`. Run final exact-head
-CI after those documentation changes before presenting PR #27 as ready.
+Documentation-complete head `df35f43f98f13b1db9fceb6c98ef2b198582e2da`
+passed CI #400 / run `34745650383` across Perl 5.36, latest, and latest threaded;
+latest also passed end-to-end smoke and distribution integrity. README, Client
+POD, `docs/CLIENT-POLICY.md`, MANIFEST, and the focused test are aligned.
+
+The commit after that checkpoint only refreshes this handoff and is excluded
+from MANIFEST.
 
 ## Client policy after PR #27
 
