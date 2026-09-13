@@ -6,189 +6,110 @@ Updated: 2026-09-13 (America/Chicago)
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Main baseline for current work: `9e387c6403de7ce48fa88f5ac3f9a3ea205bd102`
-- Active branch: `feature/client-uniform-auth`
-- Draft PR: #29, `Integrate Uniform HTTP authentication with Client`
-- Do not merge PR #29 without explicit user authorization.
+- Current main baseline: `8a39aa272d99a9303ac38eb7bb32f3fc371dc244`
+- That baseline is the merge of PR #29, client Uniform authentication integration.
+- Active branch: `feature/uniform-message-contract`
+- PR #30: `Conform native HTTP messages to Uniform 0.02 contract`
+- Do not merge PR #30 without explicit user authorization.
 - Linux::Event minimum: `0.113`
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
 
-The merged baseline includes client/server Upgrade and CONNECT, explicit/default
-forward-proxy routing, and `HTTP::CookieJar 0.014` cookie policy.
+## Uniform message contract work
 
-## External authentication dependency
+The current branch makes `Linux::Event::HTTP::Request` and
+`Linux::Event::HTTP::Response` conform by behavior to the Uniform::HTTP 0.02
+message contract without replacing the native/live classes and without adding
+inheritance.
 
-HTTP authentication mechanics are supplied by the user's separate distribution:
+Public message behavior now includes:
 
-- CPAN module: `Uniform::HTTP::Auth 0.01`
-- Repository: `haxmeister/perl-Uniform-HTTP-Auth`
-- API baseline inspected for this integration:
-  `d5c555d85711b34127fd134e1c512f98860e8e32`
+- `header_values($name)` always returns an array reference, including an empty
+  array reference when the field is absent;
+- `header($name,$value)` replaces all matching occurrences while retaining the
+  first occurrence position and using the caller-supplied field spelling;
+- `header_name($index)` / `header_value($index)` return undef beyond the end and
+  reject invalid indexes;
+- `has_buffered_body`, `is_mutable`, and `headers_are_lossless` capability
+  methods on both message types;
+- `target_is_exact` on Request;
+- no buffered body is distinct from an explicitly buffered empty body;
+- body setters require defined byte strings;
+- message version may be explicitly cleared to undef;
+- Response status is constrained to 100..599;
+- Response metadata/body setters consistently enforce the byte-string contract.
 
-Do not modify the Uniform repository from this Linux::Event::HTTP Project unless
-the user explicitly asks. Linux::Event::HTTP consumes its public API only.
+Parsed native server Requests remain lazy XS-backed objects. They report
+`is_mutable == 0`, preserve exact header spelling/order/duplicates, and expose
+the same public Uniform-compatible methods. The native XSUB list behavior is
+kept behind the private `_header_values_list` path for HTTP executor hot paths.
 
-Because CPAN mirror/index propagation has recently been unreliable, CI first
-tries `Uniform::HTTP::Auth@0.01` from CPAN and then falls back to the exact
-repository commit above. The fallback is intentionally pinned rather than using
-a moving `main` archive.
+Request/Response remain transport-independent. Connection, Transaction,
+streaming body producer, retry, pool, Upgrade, and CONNECT state stay outside
+message objects.
 
-## Authentication ownership boundary
+## Authentication simplification
 
-`Uniform::HTTP::Auth` owns:
+PR #29 is already merged. The dependency is now:
 
-- WWW-Authenticate / Proxy-Authenticate challenge parsing;
-- scheme selection;
-- credential lookup;
-- Basic, Bearer, and Digest construction;
-- Digest nonce/cnonce state and supported algorithms/qop behavior.
+- distribution/repository: `haxmeister/perl-Uniform-HTTP`
+- module: `Uniform::HTTP::Auth 0.02`
 
-`Linux::Event::HTTP::Client` owns:
+`Linux::Event::HTTP::_ClientAuth` now passes the actual
+`Linux::Event::HTTP::Request` message to Uniform 0.02 instead of reconstructing
+method/request-target/entity-body arguments. Bodyless Requests still provide an
+explicit empty entity body where needed; streaming producers remain outside the
+message buffer and remain non-replayable.
 
-- receiving 401 and 407 Responses;
-- target-versus-route protection-space identity;
-- Request replayability;
-- draining challenge Responses to their HTTP message boundary;
-- connection reuse/acquisition;
-- creating retry Transactions;
-- Client::Operation and callback lifecycle.
+Uniform owns authentication mechanics. Linux::Event::HTTP owns 401/407 receipt,
+protection-space selection, replayability, response draining, connection reuse,
+retry Transactions, and callback/Operation lifecycle.
 
-Request, Response, Transaction, Client::Connection, Linux::Event transport
-queues, and native `_HTTP1` code remain authentication-unaware.
+## Validation
 
-## Public Client authentication API
+Executable conformance head
+`c4530551081fce199cca57b02fd31a1243ef8086` passed CI #424 / run
+`34784790047` across the complete repository matrix.
 
-Client defaults:
+Documentation-aligned head
+`38f72adc488f99802718968c6515f8ee6d398b9b` passed CI #426 / run
+`34788300925` across the complete repository matrix.
 
-```perl
-use Uniform::HTTP::Auth;
+Focused coverage includes:
 
-my $auth = Uniform::HTTP::Auth->new(
-    credentials => sub ($context) {
-        return lookup_credentials($context);
-    },
-);
+- updated Request/Response tests for the arrayref `header_values` contract;
+- exact replacement/order semantics;
+- body-buffer capability distinction;
+- mutability/lossless capability reporting;
+- Response 100..599 status validation;
+- `t/79-uniform-message-contract.t`, including an XS-parsed native Request.
 
-my $client = Linux::Event::HTTP::Client->new(
-    loop             => $loop,
-    auth             => $auth,
-    proxy_auth       => $auth,
-    max_auth_retries => 3,
-);
-```
+Client policy documentation now names Uniform 0.02 and documents direct native
+Request integration. Request/Response POD documents the public message contract.
+Broader release-note wording cleanup can be handled in the planned 0.001
+release-readiness audit rather than widening PR #30.
 
-- `auth` handles target 401 / `WWW-Authenticate`.
-- `proxy_auth` handles route 407 / `Proxy-Authenticate`.
-- both can be overridden per ordinary request or explicitly disabled with undef;
-- `connect_tunnel()` uses `proxy_auth`, not target `auth`, and can override or
-  disable it per call;
-- `max_auth_retries` defaults to 3, can be overridden per operation, and zero
-  disables automatic challenge retry.
+## Design constraints that remain fixed
 
-When a manager is active, it owns its field: caller Authorization is rejected
-under `auth`, and caller Proxy-Authorization is rejected under `proxy_auth`.
-Disable the manager for an operation when manually constructing the field.
+- Do not replace Request/Response with Uniform classes.
+- Do not add inheritance solely for Uniform interoperability; behavioral
+  conformance is the contract.
+- Do not add Uniform-specific state to the HTTP message objects.
+- Do not convert native parsed Requests into Perl adapter objects.
+- Keep HTTP executor list-oriented header access private so the public arrayref
+  contract does not force avoidable hot-path allocation.
+- Do not modify Linux::Event core from this Project unless explicitly requested.
+- Do not add CONNECT relay/proxy bridging to Transaction.
 
-## Operation / replay semantics
+## Next actions
 
-Every successful automatic authentication retry is another HTTP Transaction in
-the same Client::Operation. Transaction remains exactly one Request/Response
-exchange.
-
-Client::Operation now tracks:
-
-- `redirect_count` independently;
-- `auth_retry_count` independently;
-- `max_redirects`;
-- `max_auth_retries`;
-- the complete Transaction and URL history.
-
-Authentication retries repeat the same URL and do not increment redirect_count.
-Redirects use their normal count and do not increment auth_retry_count.
-
-Uniform receives the exact wire request-target:
-
-- direct ordinary request: origin-form;
-- proxied ordinary request: absolute-form;
-- CONNECT: authority-form.
-
-Target 401 uses the normalized target origin. Proxy 407 uses the selected route
-origin. A proxy-authenticated request that then receives target 401 retains its
-Proxy-Authorization for that same request while adding target Authorization.
-
-Generated authentication fields are attempt-local and are not copied across
-redirects. Uniform 0.01 deliberately has no preemptive-auth cache and Digest
-includes request-target state, so a redirected endpoint can challenge again.
-
-Complete scalar bodies are replayable and supplied to Uniform as `entity_body`,
-which supports Digest `qop=auth-int`. Streaming Request producers are never
-automatically replayed, even after production completes; a satisfiable challenge
-terminates the Operation with a replayability error instead.
-
-Intermediate satisfiable 401/407 Responses are drained but not delivered through
-final `on_response`/`on_body`/`on_complete`. `on_redirect` remains redirect-only.
-`on_informational` remains per Transaction.
-
-## CONNECT authentication
-
-`connect_tunnel()` can answer proxy 407 through `proxy_auth` before tunnel
-handoff. A 407 is ordinary HTTP, is drained to its normal boundary, and can leave
-a reusable proxy connection for the next CONNECT attempt. A successful 2xx then
-uses the existing same-stream tunnel transition and leaves the HTTP pool.
-
-Cookie policy remains separate: `connect_tunnel()` does not consult the cookie
-jar.
-
-## Focused tests
-
-- `t/76-client-auth.t`
-  - proxy 407 followed by target 401 in one Operation;
-  - separate protection-space credential contexts;
-  - independent auth/redirect accounting;
-  - final-only response/body callbacks;
-  - Digest SHA-256 `qop=auth-int` and exact direct request-target;
-  - disabled retries and managed Authorization ownership.
-- `t/77-client-connect-auth.t`
-  - 407 -> authenticated CONNECT -> 2xx tunnel;
-  - persistent proxy connection reuse between CONNECT attempts;
-  - final-only response callback and same-stream post-2xx handoff.
-- `t/78-client-auth-stream-replay.t`
-  - satisfiable challenge for a completed streaming Request body is rejected as
-    non-replayable;
-  - no retry Transaction is created.
-
-## Validation checkpoints
-
-Executable head `979e042d35630d7c743d0f2aec7cb9f731cdee20` passed CI #411 / run
-`34777499838` across Perl 5.36, latest, and latest threaded; latest also passed
-end-to-end smoke and `disttest`.
-
-Executable head with explicit streaming replay regression
-`d195381f041157c7168b682e1c12653131656a17` passed CI #413 / run
-`34777592918` across the same matrix, including latest smoke and `disttest`.
-
-Documentation was then aligned in README, Client POD, Client::Operation POD,
-`docs/CLIENT-POLICY.md`, `docs/ARCHITECTURE.md`, top-level POD, `Changes`,
-`Makefile.PL`, CI, MANIFEST, and focused tests. This handoff is excluded from
-MANIFEST.
-
-## Deferred client policy
-
-Keep these separate unless a real workload requires them:
-
-- HTTP_PROXY / HTTPS_PROXY / ALL_PROXY environment discovery;
-- NO_PROXY;
-- PAC;
-- SOCKS;
-- preemptive authentication caches;
-- Authentication-Info / Proxy-Authentication-Info handling;
-- richer connection-pool policy;
-- client response-parser XS without measurement justification.
-
-After PR #29 is accepted, the next useful phase is a 0.001 release-readiness
-audit rather than automatically adding another client policy subsystem.
+1. Update PR #30 body with the final scope and validation checkpoints.
+2. Confirm CI on this final handoff-only branch head.
+3. Mark PR #30 ready for review if green, but do not merge without explicit user
+   authorization.
+4. After merge, perform the planned 0.001 release-readiness audit rather than
+   automatically adding another protocol-policy subsystem.
 
 ## Branch policy
 
-The user dislikes stale branches. Delete merged feature branches when available
-tooling permits it. Do not reuse old merged feature refs for new work.
+The user dislikes stale branches. Delete merged feature branches when supported
+by available tooling. Do not reuse old merged feature refs for new work.

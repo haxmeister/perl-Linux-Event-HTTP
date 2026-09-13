@@ -66,16 +66,16 @@ sub prepare_request ($class, $request, $target, $request_state) {
     croak 'request(): client Upgrade Request body must be empty'
         if defined($request->content_length) && $request->content_length != 0;
     croak 'request(): client Upgrade cannot use Transfer-Encoding'
-        if $request->header_values('Transfer-Encoding');
+        if $request->_header_values_list('Transfer-Encoding');
 
-    my @connection = $request->header_values('Connection');
+    my @connection = $request->_header_values_list('Connection');
     croak 'request(): client Upgrade requires Connection: Upgrade'
         if !_connection_has(\@connection, 'upgrade');
     croak 'request(): client Upgrade cannot combine Connection: close with Upgrade'
         if _connection_has(\@connection, 'close');
 
     my @offered = _tokens(
-        'request Upgrade', $request->header_values('Upgrade'),
+        'request Upgrade', $request->_header_values_list('Upgrade'),
     );
     croak 'request(): client Upgrade requires an Upgrade field' if !@offered;
 
@@ -101,22 +101,22 @@ sub schedule ($class, $conn, $transaction, $response, $target) {
     croak 'HTTP/1 Upgrade response must use HTTP/1.1'
         if $response->version ne '1.1';
     croak 'HTTP/1 Upgrade response cannot contain Content-Length'
-        if $response->header_values('Content-Length');
+        if $response->_header_values_list('Content-Length');
     croak 'HTTP/1 Upgrade response cannot contain Transfer-Encoding'
-        if $response->header_values('Transfer-Encoding');
+        if $response->_header_values_list('Transfer-Encoding');
 
-    my @connection = $response->header_values('Connection');
+    my @connection = $response->_header_values_list('Connection');
     croak 'HTTP/1 Upgrade response requires Connection: Upgrade'
         if !_connection_has(\@connection, 'upgrade');
     croak 'HTTP/1 Upgrade response cannot combine Connection: close with Upgrade'
         if _connection_has(\@connection, 'close');
 
     my @offered = _tokens(
-        'request Upgrade', $request->header_values('Upgrade'),
+        'request Upgrade', $request->_header_values_list('Upgrade'),
     );
     my %offered = map { $_ => 1 } @offered;
     my @selected = _tokens(
-        'response Upgrade', $response->header_values('Upgrade'),
+        'response Upgrade', $response->_header_values_list('Upgrade'),
     );
     croak 'HTTP/1 Upgrade response must select a protocol' if !@selected;
     for my $protocol (@selected) {

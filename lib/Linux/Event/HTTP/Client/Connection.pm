@@ -175,13 +175,13 @@ sub _prepare_request ($request, $streaming = 0) {
     croak "request(): HTTP/1 client supports version 1.0 or 1.1, not $version"
         if $version ne '1.0' && $version ne '1.1';
 
-    my @host = $request->header_values('Host');
+    my @host = $request->_header_values_list('Host');
     croak 'request(): HTTP/1.1 requires exactly one Host field'
         if $version eq '1.1' && @host != 1;
     croak 'request(): multiple Host fields are not allowed'
         if @host > 1;
 
-    my @transfer = $request->header_values('Transfer-Encoding');
+    my @transfer = $request->_header_values_list('Transfer-Encoding');
     my $body = $request->body;
     my $length = $request->content_length;
 
@@ -416,7 +416,7 @@ sub _decimal_content_length ($value) {
 }
 
 sub _response_content_length ($response) {
-    my @values = $response->header_values('Content-Length');
+    my @values = $response->_header_values_list('Content-Length');
     return undef if !@values;
 
     my $length;
@@ -435,7 +435,7 @@ sub _response_content_length ($response) {
 
 sub _connection_tokens ($response) {
     my %token;
-    for my $value ($response->header_values('Connection')) {
+    for my $value ($response->_header_values_list('Connection')) {
         for my $member (split /,/, $value, -1) {
             $member =~ s/\A[ \t]+//;
             $member =~ s/[ \t]+\z//;
@@ -456,8 +456,8 @@ sub _response_keep_alive ($response) {
 sub _response_transfer_mode ($request, $response) {
     my $status = $response->status;
     my $keep_alive = _response_keep_alive($response);
-    my @transfer = $response->header_values('Transfer-Encoding');
-    my @length_fields = $response->header_values('Content-Length');
+    my @transfer = $response->_header_values_list('Transfer-Encoding');
+    my @length_fields = $response->_header_values_list('Content-Length');
 
     if ($status >= 100 && $status < 200) {
         croak 'informational response must not contain Content-Length or Transfer-Encoding'

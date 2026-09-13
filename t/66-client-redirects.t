@@ -328,7 +328,7 @@ $op_nofollow = $client->get(
         is($res->status, 302,
             'max_redirects zero exposes redirect as final Response');
         is_deeply(
-            [ $res->header_values('Location') ],
+            $res->header_values('Location'),
             [ '/final', '/other' ],
             'disabled redirect following does not interpret duplicate Location fields',
         );

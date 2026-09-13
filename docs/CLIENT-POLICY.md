@@ -85,7 +85,7 @@ ordinary target-resource request.
 
 ## Implemented: Uniform::HTTP::Auth
 
-Authentication mechanics are delegated to `Uniform::HTTP::Auth 0.01` rather
+Authentication mechanics are delegated to `Uniform::HTTP::Auth 0.02` rather
 than implemented in Linux::Event::HTTP.
 
 ```perl
@@ -136,21 +136,23 @@ Client::Operation. Authentication retry count is tracked separately from
 redirect count. `max_auth_retries` defaults to 3 and is an operation-wide limit;
 zero exposes 401/407 as ordinary final Responses.
 
-Uniform receives the exact request-target used on the wire. Direct requests
-therefore use origin-form for Digest calculations; proxied ordinary requests use
-absolute-form; CONNECT uses authority-form. Target 401 uses the target origin.
-Proxy 407 uses the selected route origin.
+Uniform receives the actual `Linux::Event::HTTP::Request` object for the
+exchange. The message contract exposes the exact request-target, so direct
+requests use origin-form for Digest calculations, proxied ordinary requests use
+absolute-form, and CONNECT uses authority-form. Target 401 uses the target
+origin. Proxy 407 uses the selected route origin.
 
-Complete scalar Request bodies are replayable and are supplied to Uniform as the
-entity body so Digest `qop=auth-int` can be calculated correctly. Streaming
-Request producers are never automatically replayed, even after the producer has
-finished: Linux::Event::HTTP does not know how application stream state should be
-rewound. A satisfiable challenge for such a Request terminates the Operation with
-a replayability error.
+Complete scalar Request bodies are replayable and are available to Uniform
+through the Request message, allowing Digest `qop=auth-int` to be calculated
+without an HTTP-specific adapter. Bodyless Requests explicitly supply an empty
+entity body. Streaming Request producers are never automatically replayed, even
+after the producer has finished: Linux::Event::HTTP does not know how application
+stream state should be rewound. A satisfiable challenge for such a Request
+terminates the Operation with a replayability error.
 
 Generated Authorization and Proxy-Authorization fields are attempt-local. They
 are not copied across redirects, because Digest includes request-target state and
-Uniform 0.01 deliberately does not implement a preemptive-authentication cache.
+Uniform 0.02 deliberately does not implement a preemptive-authentication cache.
 A redirected target or proxy can challenge again normally. On the same target
 exchange, a proxy-authenticated retry that subsequently receives target 401
 keeps the generated Proxy-Authorization while adding target Authorization.

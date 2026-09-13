@@ -150,7 +150,7 @@ sub _body_pending ($state) {
 }
 
 sub _expect_continue ($request) {
-    my @values = $request->header_values('Expect');
+    my @values = $request->_header_values_list('Expect');
     return 0 if !@values;
     return -1 if $request->version ne '1.1';
 
@@ -683,8 +683,8 @@ sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
     croak "$operation(): this response status cannot carry a message body"
         if $body_forbidden && length($bytes);
 
-    my @transfer_encoding = $response->header_values('Transfer-Encoding');
-    my @content_length = $response->header_values('Content-Length');
+    my @transfer_encoding = $response->_header_values_list('Transfer-Encoding');
+    my @content_length = $response->_header_values_list('Content-Length');
     my $head_request = $method eq 'HEAD';
 
     croak "$operation(): response cannot contain both Transfer-Encoding and Content-Length"
@@ -703,7 +703,7 @@ sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
     if (!@content_length && !$body_forbidden && !$chunked) {
         if ($final) {
             $response->header('Content-Length', length($bytes));
-            @content_length = $response->header_values('Content-Length');
+            @content_length = $response->_header_values_list('Content-Length');
         } elsif ($version eq '1.1') {
             $response->header('Transfer-Encoding', 'chunked');
             $chunked = 1;
@@ -729,7 +729,7 @@ sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
         croak "$operation(): response body exceeds Content-Length";
     }
 
-    my @connection = $response->header_values('Connection');
+    my @connection = $response->_header_values_list('Connection');
     my $keep_alive = $request->_http1_keep_alive;
     my $close_after = !$keep_alive
         || _has_connection_token(\@connection, 'close')

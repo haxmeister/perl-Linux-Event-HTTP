@@ -14,6 +14,9 @@ is($response->status, 200, 'status getter returns initial status');
 ok(!defined $response->reason, 'reason is optional');
 is($response->version, '1.1', 'response defaults to HTTP version 1.1');
 ok(!$response->is_complete, 'response without a selected body is not yet complete');
+ok(!$response->has_buffered_body, 'response without body has no buffered body');
+ok($response->is_mutable, 'response is mutable before commit');
+ok($response->headers_are_lossless, 'response reports lossless headers');
 $response->version('1.0');
 is($response->version, '1.0', 'response version is mutable before commit');
 $response->version('1.1');
@@ -43,13 +46,15 @@ is($response->header('content-type'), 'text/plain', 'header lookup is case-insen
 $response->add_header('Set-Cookie', 'a=1');
 $response->add_header('Set-Cookie', 'b=2');
 is_deeply(
-    [ $response->header_values('set-cookie') ],
+    $response->header_values('set-cookie'),
     [ 'a=1', 'b=2' ],
     'repeated response headers preserve order',
 );
 is($response->header_count, 3, 'response exposes exact header count');
 is($response->header_name(1), 'Set-Cookie', 'response preserves indexed header name');
 is($response->header_value(2), 'b=2', 'response preserves indexed header value');
+ok(!defined($response->header_name(3)), 'past-end response header name returns undef');
+ok(!defined($response->header_value(3)), 'past-end response header value returns undef');
 
 is(
     $response->_serialize_head('1.1'),
@@ -76,19 +81,22 @@ $response->reason(undef);
 like(
     $response->_serialize_head('1.1'),
     qr/\AHTTP\/1\.1 404 Not Found\r\n/,
-    'default reason phrase follows changed status',
+    'HTTP/1 serializer may choose a standard wire reason without changing message reason',
 );
+ok(!defined $response->reason, 'message reason remains undef after serialization');
 
 $response->header('Content-Type', 'application/json');
 is_deeply(
-    [ $response->header_values('Content-Type') ],
+    $response->header_values('Content-Type'),
     [ 'application/json' ],
     'header setter replaces fields of same name',
 );
+is($response->header_name(0), 'Content-Type',
+    'header replacement retains first matching field position');
 
 $response->remove_header('Set-Cookie');
 is_deeply(
-    [ $response->header_values('Set-Cookie') ],
+    $response->header_values('Set-Cookie'),
     [],
     'remove_header removes all same-name fields',
 );
@@ -118,6 +126,8 @@ like($@, qr/204.*Content-Length/, '204 Content-Length rejection is clear');
 
 my $body_response = $class->new(body => "hello\n");
 is($body_response->body, "hello\n", 'constructor accepts a complete scalar body');
+ok($body_response->has_buffered_body,
+    'complete scalar body is reported as buffered');
 ok($body_response->is_complete,
     'complete scalar body makes the Response message complete immediately');
 $body_response->header('X-After-Body', 'yes');
@@ -127,6 +137,10 @@ is($body_response->header('X-After-Body'), 'yes',
 my $ok = eval { $class->new(status => 99); 1 };
 ok(!$ok, 'invalid status is rejected');
 like($@, qr/status/, 'invalid status error is clear');
+
+$ok = eval { $class->new(status => 600); 1 };
+ok(!$ok, 'status above Uniform contract range is rejected');
+like($@, qr/100 and 599/, 'high status rejection is clear');
 
 $ok = eval { $response->header('Bad Header', 'value'); 1 };
 ok(!$ok, 'invalid response field name is rejected');
@@ -194,6 +208,7 @@ ok(!$class->can('upgrade'),
 
 my $committed = $class->new;
 $committed->_commit;
+ok(!$committed->is_mutable, 'committed Response reports immutable state');
 $ok = eval { $committed->status(201); 1 };
 ok(!$ok, 'response metadata locks after message commit');
 like($@, qr/cannot change/, 'metadata lock error is clear');

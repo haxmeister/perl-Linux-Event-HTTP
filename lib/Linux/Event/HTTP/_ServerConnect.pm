@@ -85,14 +85,14 @@ sub schedule ($class, $conn, $transaction, $target) {
         if uc($request->method) ne 'CONNECT';
 
     my $authority = _authority($request->target);
-    my @host = $request->header_values('Host');
+    my @host = $request->_header_values_list('Host');
     croak 'tunnel(): CONNECT requires exactly one Host field'
         if @host != 1;
     croak 'tunnel(): CONNECT Host must match the authority-form request target'
         if lc(_trim("$host[0]")) ne lc($authority);
 
-    my @request_length = $request->header_values('Content-Length');
-    my @request_transfer = $request->header_values('Transfer-Encoding');
+    my @request_length = $request->_header_values_list('Content-Length');
+    my @request_transfer = $request->_header_values_list('Transfer-Encoding');
     croak 'tunnel(): CONNECT Request must not contain Content-Length'
         if @request_length;
     croak 'tunnel(): CONNECT Request must not contain Transfer-Encoding'
@@ -111,14 +111,14 @@ sub schedule ($class, $conn, $transaction, $target) {
     croak 'tunnel(): successful CONNECT response status must be 2xx'
         if $response->status < 200 || $response->status >= 300;
 
-    my @response_length = $response->header_values('Content-Length');
-    my @response_transfer = $response->header_values('Transfer-Encoding');
+    my @response_length = $response->_header_values_list('Content-Length');
+    my @response_transfer = $response->_header_values_list('Transfer-Encoding');
     croak 'tunnel(): successful CONNECT response must not contain Content-Length'
         if @response_length;
     croak 'tunnel(): successful CONNECT response must not contain Transfer-Encoding'
         if @response_transfer;
 
-    my @connection = $response->header_values('Connection');
+    my @connection = $response->_header_values_list('Connection');
     croak 'tunnel(): successful CONNECT response cannot request Connection: close'
         if _connection_has(\@connection, 'close');
 
