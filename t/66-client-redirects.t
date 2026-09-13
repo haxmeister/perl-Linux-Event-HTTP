@@ -89,6 +89,7 @@ my $server1 = Linux::Event::HTTP::Server->new(
         if ($req->target eq '/no-follow') {
             $res->status(302);
             $res->header('Location', '/final');
+            $res->add_header('Location', '/other');
             $res->body("stay here\n");
             return;
         }
@@ -326,6 +327,11 @@ $op_nofollow = $client->get(
     on_response => sub ($tx, $res) {
         is($res->status, 302,
             'max_redirects zero exposes redirect as final Response');
+        is_deeply(
+            [ $res->header_values('Location') ],
+            [ '/final', '/other' ],
+            'disabled redirect following does not interpret duplicate Location fields',
+        );
     },
     on_body => sub ($tx, $res, $bytes) {
         $nofollow_body .= $bytes;
