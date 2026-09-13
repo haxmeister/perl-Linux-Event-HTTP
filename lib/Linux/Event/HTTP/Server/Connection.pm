@@ -52,7 +52,7 @@ sub new ($class, %option) {
         if exists $option{on_data};
     croak 'new(): Connection cannot use message framing callbacks'
         if exists($option{on_message}) || exists($option{on_messages});
-    croak 'new(): on_request_final was removed; use on_request and Response->body or stream_body'
+    croak 'new(): on_request_final was removed; use on_request and Response->body or Transaction->response_body'
         if exists $option{on_request_final};
 
     my $loop = delete $option{loop};
@@ -92,6 +92,10 @@ sub connect ($class, %option) {
     croak 'connect(): HTTP client support is not implemented by Linux::Event::HTTP::Server::Connection';
 }
 
+sub transaction ($self) {
+    return $self->{_http_active_transaction};
+}
+
 sub on_data ($self, $bytes) {
     return if $self->{_http_closing} || $self->is_closed;
     $self->{_http_input} .= $bytes;
@@ -100,8 +104,8 @@ sub on_data ($self, $bytes) {
 }
 
 sub _http_transport_drain ($self) {
-    if (my $response = $self->{_http_active_response}) {
-        if (my $body = $response->_stream_body_object) {
+    if (my $transaction = $self->{_http_active_transaction}) {
+        if (my $body = $transaction->_response_body_object) {
             $body->_drain;
         }
     }
@@ -112,9 +116,6 @@ sub _http_transport_drain ($self) {
 }
 
 sub _http_transport_close ($self) {
-    if (my $response = $self->{_http_active_response}) {
-        $response->_cancel_stream_body;
-    }
     if (my $transaction = $self->{_http_active_transaction}) {
         $transaction->_mark_cancelled if !$transaction->is_terminal;
     }
@@ -253,9 +254,6 @@ sub _cancel_http_transaction ($self, $transaction) {
     croak 'cancel(): Transaction is not active on this HTTP connection'
         if !$active || refaddr($active) != refaddr($transaction);
 
-    if (my $response = $self->{_http_active_response}) {
-        $response->_cancel_stream_body;
-    }
     $transaction->_mark_cancelled;
     $self->_clear_transaction;
     $self->{_http_input} = '';
@@ -271,7 +269,6 @@ sub _abort_started_response ($self, $response) {
     $self->_fail_active_transaction_state(
         'HTTP response aborted after output started',
     );
-    $response->_cancel_stream_body if $response;
     $response->_mark_output_complete
         if $response && !$response->_is_output_complete;
     $self->_clear_transaction;
@@ -693,6 +690,18 @@ sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
     );
 }
 
+sub _write_http_response_body ($self, $transaction, $body, $final, $operation) {
+    my $active = $self->{_http_active_transaction};
+    croak "$operation(): Transaction is not active on this HTTP connection"
+        if !$active || refaddr($active) != refaddr($transaction);
+
+    my $response = $transaction->response
+        or croak "$operation(): Transaction has no Response";
+    return $self->_write_response(
+        $response, $body, $final, $operation,
+    );
+}
+
 sub _write_response ($self, $response, $body, $final, $operation = undef) {
     $operation //= $final ? 'complete' : 'write';
 
@@ -811,7 +820,6 @@ sub _protocol_error ($self, $status, $version = '1.1') {
 
     my $head = $response->_serialize_head($version);
     if (my $active = $self->{_http_active_response}) {
-        $active->_cancel_stream_body;
         $active->_mark_output_complete if !$active->_is_output_complete;
     }
     $self->_fail_active_transaction_state("HTTP protocol error ($status)");
@@ -847,16 +855,23 @@ between a streaming response body and Linux::Event transport backpressure.
 Linux::Event continues to own the socket, TLS transport, readiness, and native
 ordered-byte output queue.
 
-Each active exchange is represented internally by one
-L<Linux::Event::HTTP::Transaction> containing the Request and Response. The
-existing server callback API remains C<on_request($conn, $req, $res)>; callers
-do not need an extra callback argument merely because lifecycle state is now
-modeled explicitly.
+Each active exchange is represented by one L<Linux::Event::HTTP::Transaction>
+containing the Request and Response. The existing server callback API remains
+C<on_request($conn, $req, $res)>; the active Transaction is available through
+C<< $conn->transaction >> when lifecycle or streaming-body operations are
+needed.
 
 Response message completion and server output completion are intentionally
 separate. C<Response-E<gt>is_complete> describes the message body; the
 Connection privately tracks whether that response has finished writing before
 it finalizes the Transaction or advances to a pipelined request.
+
+=head1 TRANSACTION
+
+C<transaction> returns the currently active HTTP Transaction, or undef when no
+exchange is active on the connection. During C<on_request>, C<on_body>, and
+C<on_request_end> it refers to the Transaction containing the supplied Request
+and Response.
 
 =head1 RESPONSE BODIES
 
@@ -865,21 +880,22 @@ A complete scalar body is configured on the Response:
     $res->header('Content-Type', 'text/plain');
     $res->body("hello\n");
 
-A streaming body is obtained from the Response and owns streaming operations:
+A streaming body is produced through the active Transaction:
 
-    $res->stream_body(
+    my $body = $conn->transaction->response_body(
         on_drain  => sub ($body) { ... },
         on_cancel => sub ($body) { ... },
     );
 
-    $res->stream_body->write($bytes);
-    $res->stream_body->complete;
+    $body->write($bytes);
+    $body->complete;
 
-The streaming body does not maintain a second output queue. C<write> feeds the
-existing Linux::Event ordered-byte destination. Its false return preserves the
-normal high-watermark contract, and the body C<on_drain> callback is driven by
-the connection's native drain transition. C<on_cancel> runs if the connection
-closes before the streaming body completes.
+The writable producer belongs to the Transaction, not the Response message. It
+does not maintain a second output queue. C<write> feeds the existing
+Linux::Event ordered-byte destination. Its false return preserves the normal
+high-watermark contract, and C<on_drain> is driven by the connection's native
+drain transition. C<on_cancel> runs if the connection disappears before the
+producer completes.
 
 C<on_data> is reserved by this HTTP connection implementation. Connection-level
 C<on_drain> and C<on_close> callbacks or subclass methods remain supported;
