@@ -190,14 +190,10 @@ $tampered->{headers} = [ [ 'X-Test', "x\0y" ] ];
 $ok = eval { $tampered->_serialize_head('1.1'); 1 };
 ok(!$ok, 'native serializer revalidates tampered field values');
 
-my $unbound = $class->new;
-my $unbound_stream = $unbound->stream_body;
-ok(!$unbound->is_complete,
-    'selecting a streaming body does not complete the Response message');
-$ok = eval { $unbound_stream->write("x"); 1 };
-ok(!$ok, 'unbound Response cannot emit application output');
-like($@, qr/not bound/, 'unbound output rejection is clear');
+ok(!$class->can('stream_body'),
+    'Response message does not expose a transport body producer');
 
+my $unbound = $class->new;
 $unbound->_mark_started;
 $ok = eval { $unbound->status(201); 1 };
 ok(!$ok, 'response metadata locks after output starts');
