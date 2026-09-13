@@ -397,6 +397,43 @@ Low-level callers can construct the CONNECT Request directly and use
 CONNECT Requests are HTTP/1.1, authority-form, bodyless, and contain neither
 Content-Length nor Transfer-Encoding.
 
+The server receives CONNECT through the same ordinary `on_request` callback as
+any other HTTP request. Accepting the tunnel is a Transaction lifecycle action:
+
+```perl
+on_request => sub ($conn, $req, $res) {
+    if ($req->method eq 'CONNECT') {
+        authorize_target($req->target) or do {
+            $res->status(403);
+            $res->body('forbidden');
+            return;
+        };
+
+        $res->header('X-Proxy', 'accepted');
+        $conn->transaction->tunnel('MyTunnelProtocol');
+        return;
+    }
+
+    ...;
+},
+```
+
+`Transaction->tunnel()` accepts a valid bodyless HTTP/1.1 CONNECT request with
+an authority-form `host:port` target and matching Host field. The successful
+Response may use any 2xx status and application headers, but it cannot carry an
+HTTP body, Content-Length, Transfer-Encoding, or `Connection: close`. The
+Response and Transaction complete before `transition_to()` hands the same live
+accepted stream to the target class; bytes already read after the CONNECT head
+are preserved as target-protocol input.
+
+`tunnel()` only accepts the HTTP handshake and transfers ownership of that
+accepted stream. Linux::Event::HTTP does not open the requested upstream target,
+relay bytes between two sockets, authorize destinations, or implement proxy
+authentication policy. Those are application or higher protocol-bridge
+responsibilities. Rejecting a CONNECT needs no special API: return an ordinary
+non-2xx Response, which may carry a body and may remain persistent like any
+other HTTP response.
+
 ## Upgrade
 
 Server-side HTTP Upgrade is a Transaction lifecycle operation on the same live
@@ -508,6 +545,7 @@ See `docs/ARCHITECTURE.md` for detailed ownership and lifecycle rules and
 ## Scope
 
 Linux::Event::HTTP is an HTTP communications layer. It does not include routing,
-middleware, sessions, templates, PSGI, PAGI, or general web-framework
-responsibilities. Reusable low-level socket, buffering, backpressure, and
-transport performance work belongs in Linux::Event core.
+middleware, sessions, templates, PSGI, PAGI, proxy authorization/routing,
+upstream relay ownership, or general web-framework responsibilities. Reusable
+low-level socket, buffering, backpressure, and transport performance work
+belongs in Linux::Event core.

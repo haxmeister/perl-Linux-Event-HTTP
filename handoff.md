@@ -1,17 +1,16 @@
 # Linux::Event::HTTP handoff
 
-Updated: 2026-09-12 (America/Chicago)
+Updated: 2026-09-13 (America/Chicago)
 
 ## Start here next session
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
 - Canonical branch: `main`
-- Active branch: `feature/http-connect-tunnel`
-- Draft PR: #23, `Add client CONNECT tunneling`.
-- Do not merge PR #23 without explicit user authorization.
-- PR #22, client HTTP/1.1 Upgrade handoff, was merged to `main` as
-  `f430a779ee9f9855a291fd6fc10059d2727cbfaf`.
-- Main handoff refresh after that merge: `c5caa2b57991f7be5830e7ba23db23d81a8b098d`.
+- Main currently includes client CONNECT through merge commit
+  `bb44d15bb51d51a8d4ea0ddfa531532adc801963`.
+- Active branch: `feature/server-connect-tunnel`
+- Draft PR: #24, `Add server CONNECT tunnel handoff`.
+- Do not merge PR #24 without explicit user authorization.
 - Linux::Event minimum prerequisite: `0.113`.
 - Linux::Event::HTTP remains `0.001 UNRELEASED`.
 
@@ -23,6 +22,7 @@ Request / Response
 
 Transaction
     exactly one Request/Response HTTP exchange
+    owns exchange lifecycle and explicit protocol handoff operations
 
 Client::Operation
     one high-level client action
@@ -33,187 +33,203 @@ Client::Connection / Server::Connection
 ```
 
 Do not move URL, redirect-chain, pool, socket, or endpoint-role lifecycle into
-Request/Response. Do not redefine Transaction to span redirects.
+Request/Response. Do not redefine Transaction to span redirects. Linux::Event
+remains the only transport-output queue.
 
 ## Merged client baseline
 
-Main already includes:
+Main includes:
 
-- HTTP/HTTPS high-level Client and low-level Client::Connection;
+- high-level HTTP/HTTPS Client and low-level Client::Connection;
 - scalar and streaming Request bodies;
-- Linux::Event backpressure with no second HTTP output queue;
 - incremental Response delivery plus explicit bounded `buffer_body`;
 - strict Perl client response-head parsing and shared native chunked decoding;
-- one active Transaction per HTTP/1 connection, sequential keep-alive reuse,
-  and at most one retained idle connection per origin;
-- Client::Operation as the high-level handle;
-- bounded 301/302/303/307/308 redirect following with distinct Transactions;
-- redirect method/body policy, relative Location resolution, and cross-origin
-  credential stripping;
-- client-side HTTP/1.1 `101 Switching Protocols` handoff using the same live
-  Linux::Event stream object and `transition_to()` mechanism as server Upgrade.
+- one active Transaction per HTTP/1 connection and bounded persistent reuse;
+- Client::Operation with bounded 301/302/303/307/308 redirect following;
+- client HTTP/1.1 Upgrade through Linux::Event `transition_to()`;
+- explicit client HTTP/1.1 CONNECT tunnel establishment.
 
-Keep the client response-head parser in Perl unless measurement justifies XS.
+Client CONNECT was implemented by PR #23 and merged as
+`bb44d15bb51d51a8d4ea0ddfa531532adc801963`.
+Its final documentation-complete head
+`fd9f719cc218b7b9b8bbb3447380a7a2b69b6a87` passed CI #374 / run
+`34737821960` across Perl 5.36, latest Perl, and latest threaded Perl; latest
+Perl also passed end-to-end smoke and distribution integrity.
 
-## PR #23 - client CONNECT tunneling
-
-The active branch adds explicit HTTP/1.1 CONNECT tunnel establishment without
-making ordinary Client requests implicitly proxy-aware.
-
-Low-level API:
-
-```perl
-my $tx = $connection->request(
-    Linux::Event::HTTP::Request->new(
-        method  => 'CONNECT',
-        target  => 'target.example:443',
-        headers => [ [ Host => 'target.example:443' ] ],
-    ),
-    tunnel_to => 'MyTunnelProtocol',
-    on_tunnel => sub ($tx, $res, $connection) { ... },
-);
-```
-
-High-level API:
+High-level client CONNECT API:
 
 ```perl
 my $operation = $client->connect_tunnel(
     'http://proxy.example:3128',
     'target.example:443',
     tunnel_to => 'MyTunnelProtocol',
-    headers => [
-        [ 'Proxy-Authorization' => $value ],
-    ],
     on_tunnel => sub ($operation, $tx, $res, $connection) { ... },
 );
 ```
 
-The high-level API deliberately separates:
+Low-level client CONNECT uses a normal CONNECT Request plus
+`tunnel_to`/`on_tunnel` on Client::Connection->request(). Any 2xx response forms
+the tunnel boundary. Content-Length and Transfer-Encoding on that successful
+response are ignored. Non-2xx CONNECT remains ordinary HTTP and can retain a
+persistent proxy connection.
 
-```text
-proxy URL          = where the HTTP/TLS connection is made
-target authority   = what CONNECT asks the proxy to open
-tunnel_to          = which Linux::Event stream class owns the socket afterward
+Keep the client response-head parser in Perl unless measurement justifies XS.
+
+## PR #24 - server CONNECT handoff
+
+Server CONNECT deliberately uses the ordinary server request callback. There is
+no new CONNECT-specific callback or public message type.
+
+Application API:
+
+```perl
+on_request => sub ($conn, $req, $res) {
+    if ($req->method eq 'CONNECT') {
+        authorize_target($req->target) or do {
+            $res->status(403);
+            $res->body('forbidden');
+            return;
+        };
+
+        $res->header('X-Proxy', 'accepted');
+        $conn->transaction->tunnel('MyTunnelProtocol');
+        return;
+    }
+
+    ...;
+},
 ```
 
-`connect_tunnel` accepts `http` or `https` proxy endpoints. An HTTPS proxy means
-TLS is established to the proxy before CONNECT. It does not imply TLS to the
-CONNECT target; the target protocol class owns whatever happens inside the
-resulting byte tunnel.
+`Transaction->tunnel($target_class)` means only: validate and complete the HTTP
+CONNECT exchange, then hand the same accepted Linux::Event stream to
+`$target_class`.
 
-## CONNECT request rules
+It does **not**:
 
-- HTTP/1.1 only.
-- Method must be CONNECT when `tunnel_to` is used.
-- Low-level CONNECT requires explicit `tunnel_to`.
-- Request target must be authority-form `host:port`.
-- Port must be 1..65535.
-- Exactly one Host field is required and must match the authority target apart
-  from case.
-- Request body is forbidden.
-- Streaming Request body is forbidden.
-- Content-Length is forbidden by field presence, including `Content-Length: 0`.
-- Transfer-Encoding is forbidden by field presence.
-- `upgrade_to` and `tunnel_to` are mutually exclusive.
-- Invalid CONNECT configurations fail before protocol execution/wire output.
+- authorize the requested authority;
+- open the upstream target connection;
+- relay bytes between two sockets;
+- implement proxy authentication policy;
+- create a second output queue or transport object.
 
-Private validation/handoff helper:
+Those are application or higher protocol-bridge responsibilities.
 
-`lib/Linux/Event/HTTP/_ClientConnect.pm`
+Rejecting CONNECT requires no special API. Configure an ordinary non-2xx
+Response; normal body framing, persistence, and later requests remain HTTP.
 
-CONNECT control flow remains Perl-side and uses existing Linux::Event transport
-primitives. No new XS extension, output queue, or transport object was added.
+## Server CONNECT validation rules
 
-## Successful CONNECT response lifecycle
+A successful `Transaction->tunnel()` currently requires:
 
-Any 2xx response establishes the tunnel.
+- active nonterminal server Transaction;
+- response output not already started;
+- no pending Upgrade or another CONNECT tunnel handoff;
+- HTTP/1.1 CONNECT Request;
+- authority-form `host:port` target, including bracketed IPv6 support;
+- port 1..65535;
+- exactly one Host field matching the authority target case-insensitively;
+- no Request Content-Length field, including `Content-Length: 0`;
+- no Request Transfer-Encoding field;
+- no Request message body;
+- mutable incomplete Response;
+- 2xx Response status;
+- no scalar or incremental Response body;
+- no Response Content-Length;
+- no Response Transfer-Encoding;
+- no `Connection: close` on the successful Response;
+- target class inheriting `Linux::Event::IO::Sock::Stream` and differing from
+  the active HTTP connection class.
 
-On a successful CONNECT:
+Private helper:
 
-1. The response head is parsed as the final Response.
-2. `on_response($tx,$res)` runs while the Response is attached to the active
-   Transaction.
-3. The Response is marked complete at the response-head boundary.
-4. The HTTP connection becomes permanently non-reusable.
-5. A zero-delay handoff leaves the HTTP parser before any post-head bytes are
-   interpreted as HTTP content.
-6. The Transaction is marked complete.
-7. Linux::Event `transition_to($target, input => $already_read_bytes)` hands the
-   same live stream object to `tunnel_to`.
-8. Already-read bytes after the successful CONNECT head become tunnel input.
-9. Low-level `on_tunnel($tx,$res,$connection)` runs after transition.
-10. Low-level `on_complete($tx)` follows.
-11. At high level, Client::Operation is complete before
-    `on_tunnel($operation,$tx,$res,$connection)` runs.
-12. The transitioned stream never returns to the HTTP idle pool.
+`lib/Linux/Event/HTTP/_ServerConnect.pm`
 
-Per RFC 9110/9112 semantics, Content-Length and Transfer-Encoding on a successful
-2xx CONNECT response are ignored. They do not frame HTTP content after the
-successful response head.
+Transaction now exposes `is_tunneling` and keeps Upgrade/CONNECT pending states
+mutually exclusive.
 
-## Non-2xx CONNECT behavior
+## Server CONNECT handoff lifecycle
 
-A non-2xx CONNECT does not establish a tunnel and remains an ordinary HTTP
-response.
+Successful server CONNECT is deliberately parallel to server Upgrade but follows
+CONNECT-specific HTTP semantics:
 
-That means:
+1. `on_request($conn,$req,$res)` receives CONNECT normally.
+2. Application configures optional 2xx metadata and calls `$tx->tunnel($class)`.
+3. The Transaction is marked tunnel-pending; no response bytes are written in
+   the middle of the callback.
+4. Normal `on_request_end` lifecycle completes first.
+5. A zero-delay handoff validates that the Request boundary is complete.
+6. Only the successful Response head is serialized; no Content-Length,
+   Transfer-Encoding, or HTTP body is generated.
+7. Response output is marked started/complete and the Response is complete.
+8. The Transaction is completed.
+9. Any already-read bytes following the CONNECT head are removed from HTTP
+   parsing state.
+10. HTTP transaction state is cleared.
+11. Linux::Event `transition_to($target, input => $already_read_bytes)` gives
+    the same live accepted stream object to the target class.
+12. Preserved post-head bytes are target-protocol input.
 
-- `on_response`, `on_body`, or explicit bounded `buffer_body` work normally;
-- a 407 body can be inspected by the application;
-- normal HTTP framing/persistence rules apply;
-- a persistent proxy connection can be returned to the proxy-origin idle pool
-  and reused by a later request;
-- `on_tunnel` does not run.
+The successful 2xx response head is queued before target-protocol output. Object
+identity is retained across the transition.
 
-High-level `connect_tunnel` intentionally does not follow redirects and does not
-implement automatic proxy authentication. Caller-supplied Proxy-Authorization
-is passed through as an ordinary header.
+## Rejected CONNECT behavior
 
-## Focused tests
+A CONNECT that is not accepted with `Transaction->tunnel()` remains ordinary
+HTTP.
 
-- `t/69-client-connect.t`
-  - low-level authority-form request serialization;
-  - same-live-object 2xx handoff;
-  - same-read post-head tunnel bytes;
-  - deliberate Content-Length + Transfer-Encoding on 2xx proving those fields
-    are ignored at the tunnel boundary;
-  - callback order response -> tunnel -> complete;
-  - non-2xx 407 body delivery and persistent low-level connection reuse;
-  - invalid CONNECT configurations rejected before Transaction creation.
-- `t/70-client-connect-high-level.t`
-  - proxy endpoint and CONNECT target are distinct;
-  - Client::Operation lifecycle;
-  - synthesized target Host and caller Proxy-Authorization;
-  - Operation/Transaction complete before high-level on_tunnel;
-  - same-read target input and object identity;
-  - successful tunnel excluded from HTTP pool;
-  - non-2xx high-level CONNECT returned to the proxy-origin pool and reused.
-- `t/71-client-connect-validation.t`
-  - `Content-Length: 0` rejected by field presence;
-  - Transfer-Encoding rejected by field presence.
+Focused coverage proves that a server can return:
 
-## Validation checkpoints
+```text
+407 + Proxy-Authenticate + response body
+```
 
-Initial low-level CI #362 / run `34737313826` reached the new CONNECT test but
-failed because the validation-only test listener used an invalid empty raw
-Stream recipe. Linux::Event correctly requires `on_data`; this was a test-harness
-mistake, not an implementation failure.
+and then parse/respond to a later pipelined HTTP request on the same persistent
+connection. CONNECT therefore does not poison or consume the connection merely
+because the method was received.
 
-After fixing that harness only, head
-`0a9286ea8565a063d018738544f2dfbb0445fa1d` passed CI #363 / run
-`34737397121` across Perl 5.36, latest Perl, and latest threaded Perl; latest
-Perl also passed end-to-end smoke and distribution integrity.
+## Focused server CONNECT test
 
-The complete low/high-level executable head including `connect_tunnel`, pool
-isolation/reuse tests, and the exact framing-field presence fix passed CI #367 /
-run `34737613279` across Perl 5.36, latest Perl, and latest threaded Perl; latest
-Perl also passed end-to-end smoke and distribution integrity.
+`t/72-server-connect.t` covers:
 
-The commits after CI #367 add the focused field-presence regression test and
-align README, Changes, architecture, top-level POD, MANIFEST, and this handoff.
-Run one final branch-head CI before presenting PR #23 as ready for review.
+- successful authority-form CONNECT through ordinary `on_request`;
+- tunnel-pending state during `on_request` and `on_request_end`;
+- no mid-callback successful response write;
+- Request/Response/Transaction completion before target ownership;
+- same-read post-CONNECT bytes preserved as tunnel input;
+- same live object identity across transition;
+- successful response head queued before target output;
+- no automatic Content-Length or Transfer-Encoding on successful CONNECT;
+- ordinary persistent 407 rejection with body;
+- later pipelined GET after rejected CONNECT on the same connection;
+- invalid method/target/Host/version/request framing fields;
+- invalid successful-response body/framing/Connection: close/status cases.
 
-## Server baseline remains unchanged
+## PR #24 validation checkpoints
+
+Initial executable head `f8e42f97fc18155313719cf9fd8cd9a330b0665f`
+ran CI #376 / run `34740380345`. All pre-existing tests and server CONNECT
+mechanics worked; the only failure was a test assertion that assumed status 407
+would automatically serialize reason phrase `Proxy Authentication Required`.
+The actual Response serializer correctly emitted status 407 with the unset
+reason phrase left empty. This was a test-policy mistake, not a CONNECT failure.
+
+After changing that assertion to validate the status without inventing reason
+phrase policy, head `5bb4540a2cbfffa0af9060176ed84a7449ca2359`
+passed CI #377 / run `34740465706` across Perl 5.36, latest Perl, and latest
+threaded Perl; latest Perl also passed end-to-end smoke and distribution
+integrity.
+
+Documentation-complete implementation head
+`6fd3edeee8bb246c54bd0bb43fed91058dd8a0a6` passed CI #382 / run
+`34740672456` across Perl 5.36, latest Perl, and latest threaded Perl; latest
+Perl also passed end-to-end smoke and distribution integrity. README, Changes,
+architecture, Transaction/Server::Connection/top-level POD, MANIFEST, and this
+handoff are aligned with the server CONNECT design.
+
+PR #24 is ready for merge review but remains draft until explicit user
+authorization.
+
+## Existing server response / Upgrade baseline
 
 Scalar Response:
 
@@ -232,13 +248,9 @@ $body->write($bytes);
 $body->complete;
 ```
 
-Deferred scalar Response uses `$tx->send_response`. Server Upgrade remains
-`$tx->upgrade($target_class)` and transitions the same live stream object after
-validated 101 output.
-
-Server-side CONNECT tunnel handoff has not been implemented yet. If symmetry for
-proxy-server use is desired, it should be a separate feature branch/PR rather
-than being mixed into client PR #23.
+Deferred scalar Response uses `$tx->send_response`.
+Server Upgrade remains `$tx->upgrade($target_class)`.
+Server CONNECT is the sibling `$tx->tunnel($target_class)` operation.
 
 ## Native boundary
 
@@ -246,19 +258,18 @@ Keep one private `_HTTP1` extension. It owns pico server request parsing/lazy
 Request accessors, shared chunked decoding, server response serialization, and
 the narrow server scalar-response fast path.
 
-Client Upgrade and CONNECT are Perl-side execution policy around Linux::Event's
-existing transition primitive. Neither justifies another XS extension.
+Upgrade and CONNECT handoff policy remain Perl-side control flow around
+Linux::Event's existing `transition_to()` primitive. Neither justifies another
+XS extension.
 
-## Next work after PR #23
+## After PR #24
 
-Do not mix another subsystem into PR #23.
+Do not add automatic upstream relay behavior to `Transaction->tunnel()`.
+If proxy behavior is pursued, keep HTTP handshake/policy separate from a
+reusable stream-bridging abstraction so that bridging work can benefit other
+Linux::Event protocols too.
 
-The next protocol capability worth evaluating is server-side successful CONNECT
-handoff so Linux::Event::HTTP can also serve as the HTTP boundary of a proxy or
-other tunnel-accepting protocol bridge. Keep that separate from general forward
-proxy client policy.
-
-Other later client layers include:
+Other later client layers remain:
 
 - automatic forward-proxy policy for ordinary HTTP requests;
 - proxy/authentication helpers;
@@ -266,6 +277,8 @@ Other later client layers include:
 - richer connection-pool policy only when a real workload justifies it.
 
 Client parser XS remains measurement-driven, not a default next step.
+HTTP/2 is future protocol work. WebSocket remains a separate protocol
+distribution.
 
 ## Parked Linux::Event core question
 
@@ -276,8 +289,5 @@ second HTTP output queue.
 ## Branch cleanup limitation
 
 The user dislikes stale branches. The GitHub connector currently does not expose
-branch deletion. Merged feature refs such as `feature/message-objects`,
-`feature/http-client-foundation`, `feature/client-buffered-response`,
-`feature/client-streaming-request-body`, `feature/client-redirects`, and
-`feature/client-upgrade` may still require GitHub's normal `Delete branch`
-control. Do not reuse them for new work.
+branch deletion. Merged feature refs may require GitHub's normal `Delete branch`
+control. Do not reuse stale merged branches for new work.

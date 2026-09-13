@@ -199,3 +199,16 @@ Revision history for Linux-Event-HTTP
     - Simplify the README around the ordinary Client and Server APIs, leaving advanced
       Connection, framing, and lifecycle detail in the architecture document and POD.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
+    - Add server-side Transaction->tunnel() and is_tunneling for explicit acceptance of
+      valid HTTP/1.1 CONNECT requests without adding a new server callback or message type.
+    - Validate server CONNECT authority-form targets, matching Host, absent request body
+      and framing fields, and a bodyless 2xx response with no framing fields or
+      Connection: close before scheduling handoff.
+    - Complete the server CONNECT Request/Response Transaction before Linux::Event
+      transition_to() hands the same accepted stream to the target protocol, preserving
+      already-read post-head bytes as tunnel input and retaining object identity.
+    - Keep rejected CONNECT requests on the ordinary HTTP response path so non-2xx bodies,
+      persistent reuse, and later pipelined requests continue to work normally.
+    - Keep upstream destination authorization, upstream connection creation, and byte
+      relay/bridge ownership outside Linux::Event::HTTP; server CONNECT adds no proxy
+      framework, second transport object, output queue, or protocol-specific XS.
