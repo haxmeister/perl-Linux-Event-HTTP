@@ -3,11 +3,10 @@ use v5.36;
 use strict;
 use warnings;
 
-use Scalar::Util qw(refaddr weaken);
+use Scalar::Util qw(refaddr);
 use utf8 ();
 
 use Linux::Event::HTTP::_HTTP1 ();
-use Linux::Event::HTTP::_Upgrade ();
 
 our $VERSION = '0.001';
 
@@ -29,18 +28,14 @@ sub new ($class, %args) {
     _validate_version($version);
 
     my $self = bless {
-        status          => 0 + $status,
-        reason          => $reason,
-        version         => "$version",
-        headers         => [],
-        connection      => undef,
-        request         => undef,
-        started         => 0,
-        ended           => 0,
-        complete        => 0,
-        upgrade_pending => 0,
-        body_kind       => undef,
-        body            => undef,
+        status    => 0 + $status,
+        reason    => $reason,
+        version   => "$version",
+        headers   => $EMPTY_HEADERS,
+        committed => 0,
+        complete  => 0,
+        body_kind => undef,
+        body      => undef,
     }, $class;
 
     if (defined $headers) {
@@ -62,38 +57,11 @@ sub _new ($class, %args) {
     return $class->new(%args);
 }
 
-sub _new_bound ($class, $connection, $request) {
-    my $self = bless {
-        status          => 200,
-        reason          => undef,
-        version         => $request->version,
-        headers         => $EMPTY_HEADERS,
-        connection      => $connection,
-        request         => $request,
-        started         => 0,
-        ended           => 0,
-        complete        => 0,
-        upgrade_pending => 0,
-        body_kind       => undef,
-        body            => undef,
-    }, $class;
-    weaken($self->{connection});
-    return $self;
-}
-
-sub connection   ($self) { $self->{connection} }
-sub request      ($self) { $self->{request} }
-sub is_started   ($self) { !!$self->{started} }
-sub is_complete  ($self) { !!$self->{complete} }
-sub is_upgrading ($self) { !!$self->{upgrade_pending} }
-
-sub _is_output_complete ($self) { !!$self->{ended} }
+sub is_complete ($self) { !!$self->{complete} }
 
 sub _assert_mutable ($self) {
-    die 'response metadata cannot change after Upgrade handoff is requested'
-        if $self->{upgrade_pending};
-    die 'response metadata cannot change after output has started'
-        if $self->{started};
+    die 'response metadata cannot change after message commit'
+        if $self->{committed};
     return;
 }
 
@@ -222,11 +190,6 @@ sub body ($self, @args) {
     $self->{body_kind} = 'scalar';
     $self->{body} = _body_bytes('body', $args[0]);
     $self->{complete} = 1;
-
-    if (my $connection = $self->{connection}) {
-        $connection->_response_body_ready($self);
-    }
-
     return $self;
 }
 
@@ -246,56 +209,21 @@ sub _has_scalar_body ($self) {
     return ($self->{body_kind} // '') eq 'scalar';
 }
 
+sub _has_incremental_body ($self) {
+    return ($self->{body_kind} // '') eq 'stream';
+}
+
 sub _scalar_body ($self) {
     return $self->{body};
 }
 
-sub _try_native_default_final ($self, $connection, $body) {
-    return 0 if ref($self) ne __PACKAGE__;
-    return 0 if $self->{status} != 200 || defined($self->{reason});
-    return 0 if @{$self->{headers}};
-    return 0 if $connection->{_http_closing} || $connection->is_closed;
-    return 0 if $connection->{_http_response_state};
-
-    my $active = $connection->{_http_active_response} or return 0;
-    return 0 if refaddr($active) != refaddr($self);
-
-    my $request = $connection->{_http_active_request} or return 0;
-    return 0 if !defined($self->{request})
-        || refaddr($request) != refaddr($self->{request});
-
-    my $request_state = $connection->{_http_request_state} or return 0;
-    return 0 if !$request_state->{body_done};
-
-    my $wire = Linux::Event::HTTP::_HTTP1
-        ->build_default_final($request, $body);
-    return 0 if !defined $wire;
-
-    $self->{started} = 1;
-    $self->{ended} = 1;
-    $connection->{_http_response_state} = undef;
-
-    $connection->write($wire);
-    $connection->_complete_active_transaction_state;
-
-    $connection->{_http_active_transaction} = undef;
-    $connection->{_http_active_request} = undef;
-    $connection->{_http_active_response} = undef;
-    $connection->{_http_request_state} = undef;
-    $connection->{_http_response_state} = undef;
-
-    $connection->resume_read if $connection->is_read_paused;
-    return 1;
-}
-
-sub upgrade ($self, $target_class) {
-    Linux::Event::HTTP::_Upgrade->schedule($self, $target_class);
+sub _commit ($self) {
+    $self->{committed} = 1;
     return $self;
 }
 
-sub _mark_started ($self) {
-    $self->{started} = 1;
-    return;
+sub _is_committed ($self) {
+    return !!$self->{committed};
 }
 
 sub _mark_complete ($self) {
@@ -305,11 +233,6 @@ sub _mark_complete ($self) {
 
 sub _mark_incomplete ($self) {
     $self->{complete} = 0;
-    return;
-}
-
-sub _mark_output_complete ($self) {
-    $self->{ended} = 1;
     return;
 }
 
@@ -374,19 +297,20 @@ Server callbacks receive the same Response class:
 =head1 DESCRIPTION
 
 C<Linux::Event::HTTP::Response> represents one HTTP response message. It is not
-a socket, transaction, or connection object. The same message class is intended
-for both locally constructed outgoing responses and parsed incoming responses.
+a socket, transaction, connection, or writable transport handle. The same
+message class is used for locally constructed outgoing responses and is intended
+for parsed incoming client responses.
 
-A Response's message completion state is separate from transport/output
-completion. Selecting a complete scalar C<body> makes the message body complete
-immediately, while the server may not have written that response yet.
-Incremental body production is owned by L<Linux::Event::HTTP::Transaction>;
-the Response records only that such a body is incomplete until the producer
-announces its final bytes.
+A Response owns status, reason, version, headers, complete scalar-body data, and
+message completion state. It does not retain its peer Request or the Connection
+that happens to carry it. Exchange lifecycle, output progress, cancellation,
+Upgrade, and incremental body production belong to
+L<Linux::Event::HTTP::Transaction> and the protocol Connection.
 
-The current server implementation still binds its outgoing Response to server
-transaction machinery for scalar commit and Upgrade. Those remaining lifecycle
-responsibilities can be separated independently of body production.
+Selecting a complete scalar C<body> makes the message body complete immediately.
+That does not mean the message has been written to a transport. Incremental body
+production is selected through the owning Transaction; the Response records only
+that its body is incomplete until the producer announces its final bytes.
 
 =head1 METHODS
 
@@ -398,15 +322,15 @@ value]> pairs. C<body> is an optional complete scalar byte body.
 
 =head2 status
 
-Gets or sets the response status code before the message is committed.
+Gets or sets the response status code before message commit.
 
 =head2 reason
 
-Gets or sets the optional HTTP/1 reason phrase before commit.
+Gets or sets the optional HTTP/1 reason phrase before message commit.
 
 =head2 version
 
-Gets or sets the HTTP version before commit.
+Gets or sets the HTTP version before message commit.
 
 =head2 header
 
@@ -444,11 +368,10 @@ owning Transaction rather than through the Response message.
 
 Returns whether the complete HTTP message body is known or its final boundary
 has been reached. This is deliberately independent of whether an outgoing
-message has finished writing to its transport.
+message has started or finished writing to a transport.
 
-=head2 upgrade
+=head1 SEE ALSO
 
-The existing server Upgrade handoff remains available while lifecycle ownership
-moves to Transaction.
+L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Transaction>.
 
 =cut
