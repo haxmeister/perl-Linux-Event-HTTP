@@ -70,6 +70,22 @@ Client methods return `Linux::Event::HTTP::Transaction`. The canonical outgoing
 Request is available immediately through `$tx->request`; the Response becomes
 available through `$tx->response` after its final response head arrives.
 
+For a small response that should be available as one scalar, opt into a bound:
+
+```perl
+$client->get(
+    'https://example.com/config.json',
+    buffer_body => 1_048_576,
+    on_complete => sub ($tx) {
+        my $bytes = $tx->response->body;
+        ...;
+    },
+    on_error => sub ($tx, $error) {
+        warn $error;
+    },
+);
+```
+
 ## Shared message model
 
 Request and Response are HTTP message objects, not client/server role objects:
@@ -104,7 +120,7 @@ On the server, an incremental outgoing Response body belongs to Transaction:
 
 ```perl
 my $body = $conn->transaction->response_body(
-    on_drain  => sub ($body) { ... },
+    on_drain => sub ($body) { ... },
     on_cancel => sub ($body) { ... },
 );
 
@@ -124,6 +140,27 @@ Incoming bodies are incremental-first. Server request bodies use `on_body`;
 Client response bodies use `on_body`. If no consumer is installed, bytes are
 drained/discarded rather than accumulated implicitly into Request or Response.
 There is intentionally no unbounded automatic whole-body buffer.
+
+The Client offers one explicit bounded convenience:
+
+```perl
+$client->get(
+    $url,
+    buffer_body => 1_048_576,
+    on_complete => sub ($tx) {
+        my $bytes = $tx->response->body;
+        ...;
+    },
+);
+```
+
+`buffer_body` cannot be combined with `on_body`. Its limit counts the same body
+bytes that `on_body` would receive after HTTP/1 chunk framing has been removed.
+A declared Content-Length above the limit fails after the response head is
+available and before accumulation. Chunked, close-delimited, or otherwise
+unknown-length bodies fail when accumulation would cross the configured bound.
+Failure is a Transaction error and the HTTP/1 connection is closed rather than
+reused with unread response bytes.
 
 ## Deferred server responses
 
@@ -176,8 +213,8 @@ The first reuse policy is intentionally simple and bounded:
 A scalar Request body automatically receives Content-Length when the caller did
 not supply it. Streaming outgoing Request bodies are a later layer.
 
-Client response framing currently supports Content-Length, HTTP/1.1 chunked
-transfer coding, bodyless HEAD/204/304 responses, informational responses, and
+Client response framing supports Content-Length, HTTP/1.1 chunked transfer
+coding, bodyless HEAD/204/304 responses, informational responses, and
 close-delimited responses. Ambiguous Transfer-Encoding plus Content-Length is
 rejected.
 
@@ -185,7 +222,7 @@ Cancelling a client Transaction closes its HTTP/1 connection rather than trying
 to reuse a socket that may still contain an unfinished response.
 
 Redirects, proxy policy, cookies, authentication helpers, CONNECT/client
-Upgrade, and bounded whole-body convenience are intentionally later features.
+Upgrade, and richer pool policy remain later features.
 
 ## HTTPS
 
@@ -297,8 +334,8 @@ make test
 ```
 
 The distribution includes server/client, TLS, persistence, pipelining, Upgrade,
-request-body, response-body, framing-error, Transaction-lifecycle, and
-distribution-integrity coverage.
+request-body, response-body, framing-error, bounded-buffer, Transaction-lifecycle,
+and distribution-integrity coverage.
 
 See `docs/ARCHITECTURE.md` for the detailed ownership and lifecycle model and
 `docs/BENCHMARKING.md` for benchmark discipline.
