@@ -110,7 +110,7 @@ Transaction
     cancellation/error
     outgoing Request/Response body producer where applicable
     server response-output state
-    server Upgrade state
+    server Upgrade / CONNECT handoff state
 ```
 
 A Transaction does not own a socket, parser, connection pool, URL, redirect
@@ -120,10 +120,9 @@ controller performs protocol execution.
 A redirect is another HTTP exchange and therefore another Transaction. This is
 an invariant, not an implementation detail.
 
-A successful client/server Upgrade or successful client CONNECT completes the
-HTTP Transaction before the live transport belongs to the next protocol.
-Protocol handoff is an executor/transport transition, not a new kind of HTTP
-message.
+A successful client or server Upgrade or CONNECT exchange completes the HTTP
+Transaction before the live transport belongs to the next protocol. Protocol
+handoff is an executor/transport transition, not a new kind of HTTP message.
 
 ## Client::Operation model
 
@@ -176,6 +175,23 @@ The objects have different lifetimes:
 
 A complete HTTP response does not imply transport shutdown. On persistent
 HTTP/1.1 the same socket normally remains available for later Transactions.
+
+CONNECT also arrives through ordinary `on_request`. Accepting a valid CONNECT is
+an explicit Transaction operation:
+
+```perl
+if ($req->method eq 'CONNECT') {
+    $conn->transaction->tunnel('MyTunnelProtocol');
+    return;
+}
+```
+
+This operation completes the HTTP exchange and hands the same accepted stream
+to the target Linux::Event class. It does not open the requested upstream
+endpoint or create a second relay transport. Destination authorization,
+upstream acquisition, and bidirectional proxy bridging are application or
+higher protocol-layer policy. A rejected CONNECT is simply an ordinary non-2xx
+HTTP Response.
 
 ## Client model
 
@@ -297,9 +313,9 @@ but are not emitted through final `on_body`. `on_redirect` receives each
 completed intermediate redirect Transaction before the next hop begins.
 `on_informational` remains per-Transaction and can run on any hop.
 
-## Explicit CONNECT tunnel policy
+## CONNECT tunnel policy
 
-`Client->connect_tunnel($proxy_url,$target_authority,...)` is intentionally a
+Client-side `connect_tunnel($proxy_url,$target_authority,...)` is intentionally a
 separate high-level operation rather than hidden proxy policy on ordinary
 requests:
 
@@ -331,6 +347,31 @@ CONNECT consumes that HTTP connection permanently; it never returns to the pool.
 `connect_tunnel` deliberately does not follow redirects or implement automatic
 proxy authentication. Callers may supply fields such as Proxy-Authorization
 explicitly. General forward-proxy policy remains separate future work.
+
+Server-side CONNECT uses the same message and Transaction objects as every other
+request. The application accepts a CONNECT with:
+
+```perl
+$conn->transaction->tunnel('MyTunnelProtocol');
+```
+
+The Request must be HTTP/1.1, authority-form `host:port`, have exactly one
+matching Host field, and contain no message body, Content-Length, or
+Transfer-Encoding. The application may configure any 2xx response status and
+additional response headers before calling `tunnel`, but a successful CONNECT
+response cannot carry an HTTP body, Content-Length, Transfer-Encoding, or
+`Connection: close`.
+
+After the request boundary is complete, the server queues only the successful
+response head, completes the Response and Transaction, and hands the same live
+accepted stream to the requested class with Linux::Event `transition_to()`.
+Already-read bytes following the CONNECT head become target-protocol input. A
+non-2xx rejection follows ordinary HTTP response framing and persistence instead
+and does not leave HTTP mode.
+
+The HTTP layer deliberately stops there. It does not interpret the CONNECT
+authority as permission, connect to that authority, or own the second side of a
+proxy bridge.
 
 ## Body model
 
@@ -453,8 +494,11 @@ Message, Transaction, and Operation completion are distinct:
   including followed redirects, reached its final successful Transaction;
 - for a successful client Upgrade, the final 101 Response and Transaction are
   complete and the Operation is marked complete before `on_upgrade` runs;
-- for a successful CONNECT tunnel, the 2xx Response and Transaction are complete
-  and the Operation is marked complete before `on_tunnel` runs;
+- for a successful client CONNECT tunnel, the 2xx Response and Transaction are
+  complete and the Operation is marked complete before `on_tunnel` runs;
+- for a successful server CONNECT tunnel, the Request, 2xx Response, and
+  Transaction are complete before the target protocol receives preserved tunnel
+  bytes;
 - cancellation and errors are separate terminal states.
 
 ## Client HTTP/1 response framing
@@ -522,10 +566,10 @@ adding another native fast path.
 `Linux::Event::HTTP::Client::Connection` are
 `Linux::Event::IO::Sock::Stream` subclasses.
 
-Server::Connection owns HTTP/1 server ordering, parsing, response output, and
-Upgrade handoff. Client::Connection owns exactly one active client Transaction,
-Request serialization, Response framing, reuse eligibility, validated 101
-handoff, and validated CONNECT tunnel handoff.
+Server::Connection owns HTTP/1 server ordering, parsing, response output,
+Upgrade handoff, and successful CONNECT handoff. Client::Connection owns exactly
+one active client Transaction, Request serialization, Response framing, reuse
+eligibility, validated 101 handoff, and validated CONNECT tunnel handoff.
 
 The high-level Client normally creates Client::Connection objects. Direct
 Client::Connection use is appropriate when destination acquisition and redirect
@@ -591,8 +635,9 @@ distribution that can use the client/server handoff primitives here.
 
 ## CONNECT
 
-Low-level callers construct a normal Request with method CONNECT, authority-form
-`host:port` target, and matching Host, then request an explicit tunnel target:
+Low-level client callers construct a normal Request with method CONNECT,
+authority-form `host:port` target, and matching Host, then request an explicit
+tunnel target:
 
 ```perl
 my $tx = $connection->request(
@@ -602,16 +647,29 @@ my $tx = $connection->request(
 );
 ```
 
-High-level callers use `connect_tunnel`, which separates the proxy endpoint URL
-from the CONNECT target authority. The successful tunnel transition uses the
-same Linux::Event `transition_to()` primitive as Upgrade but has different HTTP
-validation: any 2xx response forms the tunnel, and response framing fields do
-not delimit HTTP content after a successful CONNECT. Non-2xx responses remain
-ordinary HTTP and can retain the proxy connection for reuse.
+High-level client callers use `connect_tunnel`, which separates the proxy
+endpoint URL from the CONNECT target authority. The successful tunnel transition
+uses the same Linux::Event `transition_to()` primitive as Upgrade but has
+different HTTP validation: any 2xx response forms the tunnel, and response
+framing fields do not delimit HTTP content after a successful CONNECT. Non-2xx
+responses remain ordinary HTTP and can retain the proxy connection for reuse.
+
+Server callers receive CONNECT as a normal Request. Accepting it is an explicit
+Transaction handoff:
+
+```perl
+$conn->transaction->tunnel('MyTunnelProtocol');
+```
+
+The server validates the HTTP/1.1 authority-form request, matching Host, absence
+of request body/framing fields, and a bodyless 2xx Response before handoff. It
+queues the response head, completes the Transaction, preserves already-read
+post-head bytes, and transitions the same accepted stream. Non-2xx rejection is
+ordinary HTTP and can remain persistent.
 
 CONNECT handling is Perl-side execution policy around existing transport
-primitives. It adds no native parser path, extra transport object, or second
-output queue.
+primitives. It adds no native parser path, extra transport object, second output
+queue, upstream connection, or automatic proxy bridge.
 
 ## Performance policy
 
@@ -637,8 +695,8 @@ The current foundation includes:
 1. Direction-neutral Request and Response message types.
 2. Transaction as exactly one Request/Response exchange.
 3. HTTP/1 Server and Server::Connection with request-body delivery, persistent
-   ordering, scalar/incremental responses, TLS, deferred response send, and
-   Upgrade.
+   ordering, scalar/incremental responses, TLS, deferred response send, Upgrade,
+   and validated successful CONNECT handoff.
 4. HTTP/1 Client::Connection with scalar/streaming Request serialization,
    strict Response parsing, informational responses, incremental
    Content-Length/chunked/close body delivery, cancellation, sequential reuse,
