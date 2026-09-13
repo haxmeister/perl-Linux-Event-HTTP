@@ -53,39 +53,48 @@ sub _connection_has ($values, $wanted) {
     return 0;
 }
 
-sub schedule ($class, $response, $target) {
-    my $conn = $response->connection
-        or croak 'upgrade(): response is not bound to an active HTTP connection';
-    croak 'upgrade(): response output has already started'
-        if $response->is_started;
-    croak 'upgrade(): response is already complete'
-        if $response->is_complete;
-    croak 'upgrade(): response already has an Upgrade handoff pending'
-        if $response->{upgrade_pending};
+sub schedule ($class, $conn, $transaction, $target) {
     croak 'upgrade(): connection is closing or closed'
         if $conn->{_http_closing} || $conn->is_closed;
+    croak 'upgrade(): Transaction is already terminal'
+        if $transaction->is_terminal;
+    croak 'upgrade(): response output has already started'
+        if $transaction->is_response_started;
+    croak 'upgrade(): Transaction already has an Upgrade handoff pending'
+        if $transaction->is_upgrading;
 
-    my $active = $conn->{_http_active_response};
-    croak 'upgrade(): this Response is not the active HTTP transaction'
-        if !$active || refaddr($active) != refaddr($response);
+    my $active = $conn->{_http_active_transaction};
+    croak 'upgrade(): Transaction is not active on this HTTP connection'
+        if !$active || refaddr($active) != refaddr($transaction);
 
-    my $req = $conn->{_http_active_request}
+    my $req = $transaction->request
         or croak 'upgrade(): active Request is missing';
+    my $response = $transaction->response
+        or croak 'upgrade(): active Response is missing';
+
+    croak 'upgrade(): response message has already been committed'
+        if $response->_is_committed;
+    croak 'upgrade(): response is already complete'
+        if $response->is_complete;
+    croak 'upgrade(): response already has an incremental body producer'
+        if $response->_has_incremental_body;
+
     my $request_state = $conn->{_http_request_state}
         or croak 'upgrade(): request state is missing';
 
     croak 'upgrade(): HTTP Upgrade requires HTTP/1.1'
-        if $req->http_version ne '1.1';
+        if $req->version ne '1.1';
     croak 'upgrade(): request body must be empty before protocol handoff'
-        if $req->body_mode eq 'chunked'
-        || ($req->body_mode eq 'content-length'
+        if $req->_http1_body_mode eq 'chunked'
+        || ($req->_http1_body_mode eq 'content-length'
             && ($req->content_length // '0') ne '0');
 
     my @request_connection = $req->header_values('Connection');
     croak 'upgrade(): request Connection field must contain Upgrade'
         if !_connection_has(\@request_connection, 'upgrade');
     croak 'upgrade(): request cannot combine Connection: close with Upgrade'
-        if _connection_has(\@request_connection, 'close') || !$req->keep_alive;
+        if _connection_has(\@request_connection, 'close')
+        || !$req->_http1_keep_alive;
 
     my @offered = _tokens('request Upgrade', $req->header_values('Upgrade'));
     croak 'upgrade(): request must contain an Upgrade field' if !@offered;
@@ -107,9 +116,7 @@ sub schedule ($class, $response, $target) {
         if $response->header_values('Transfer-Encoding');
 
     my @response_connection = $response->header_values('Connection');
-    if (!@response_connection) {
-        $response->header('Connection', 'Upgrade');
-    } else {
+    if (@response_connection) {
         croak 'upgrade(): response Connection field must contain Upgrade'
             if !_connection_has(\@response_connection, 'upgrade');
         croak 'upgrade(): response cannot combine Connection: close with Upgrade'
@@ -118,16 +125,19 @@ sub schedule ($class, $response, $target) {
 
     croak 'upgrade(): cannot replace an explicit non-upgrade status'
         if $response->status != 200 && $response->status != 101;
-    $response->status(101);
-    $response->reason(undef);
 
     $target = _load_target($target);
     croak "upgrade(): $target is already the active Connection class"
         if ref($conn) eq $target;
 
-    $response->{upgrade_pending} = 1;
+    $response->header('Connection', 'Upgrade') if !@response_connection;
+    $response->status(101);
+    $response->reason(undef);
+    $response->_commit;
+
+    $transaction->_set_upgrade_pending;
     $conn->{_http_pending_upgrade} = {
-        response    => $response,
+        transaction => $transaction,
         target      => $target,
         resume_read => $conn->is_read_paused ? 0 : 1,
     };
@@ -136,38 +146,39 @@ sub schedule ($class, $response, $target) {
         loop     => $conn->loop,
         after    => 0,
         data     => {
-            connection => $conn,
-            response   => $response,
-            target     => $target,
+            connection  => $conn,
+            transaction => $transaction,
+            target      => $target,
         },
         on_timer => \&_handoff,
     );
 
-    return $response;
+    return $transaction;
 }
 
 sub _handoff ($timer) {
     my $state = $timer->data;
     my $conn = $state->{connection};
-    my $response = $state->{response};
+    my $transaction = $state->{transaction};
     my $target = $state->{target};
 
     return if !$conn || $conn->is_closed || $conn->{_http_closing};
+    return if !$transaction || $transaction->is_terminal;
 
     my $pending = $conn->{_http_pending_upgrade} or return;
-    return if refaddr($pending->{response}) != refaddr($response);
+    return if refaddr($pending->{transaction}) != refaddr($transaction);
     return if $pending->{target} ne $target;
 
-    my $active = $conn->{_http_active_response};
-    return if !$active || refaddr($active) != refaddr($response);
+    my $active = $conn->{_http_active_transaction};
+    return if !$active || refaddr($active) != refaddr($transaction);
 
+    my $request = $transaction->request;
+    my $response = $transaction->response;
     my $request_state = $conn->{_http_request_state};
     if (!$request_state || !$request_state->{body_done}) {
-        $response->{upgrade_pending} = 0;
+        $transaction->_clear_upgrade_pending;
         delete $conn->{_http_pending_upgrade};
-        $conn->_fail_active_transaction(
-            500, $conn->{_http_active_request}, $response,
-        );
+        $conn->_fail_active_transaction(500, $request, $response);
         return;
     }
 
@@ -177,20 +188,20 @@ sub _handoff ($timer) {
         1;
     };
     if (!$serialized) {
-        $response->{upgrade_pending} = 0;
+        $transaction->_clear_upgrade_pending;
         delete $conn->{_http_pending_upgrade};
-        $conn->_fail_active_transaction(
-            500, $conn->{_http_active_request}, $response,
-        );
+        $conn->_fail_active_transaction(500, $request, $response);
         return;
     }
 
-    $response->_mark_started;
     $response->_mark_complete;
-    $response->{upgrade_pending} = 0;
+    $transaction->_mark_response_started;
+    $transaction->_mark_response_output_complete;
+    $transaction->_clear_upgrade_pending;
     $conn->{_http_response_state} = undef;
 
     $conn->write($head);
+    $conn->_complete_active_transaction_state;
 
     my $input = $conn->{_http_input};
     my $resume_read = $pending->{resume_read};
