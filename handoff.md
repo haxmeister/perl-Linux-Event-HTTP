@@ -136,14 +136,12 @@ Initial PR #20 CI #329 exposed a test-only error: the early-response test called
 `$tx->request_body` after the Transaction was terminal. The test was corrected
 to retain the producer handle before completion.
 
-CI #330 / run `34731728358` then passed:
+CI #330 / run `34731728358` passed the implementation checkpoint across Perl
+5.36, latest Perl, latest threaded Perl, the full suite, server smoke, and
+disttest.
 
-- Perl 5.36;
-- latest Perl;
-- latest threaded Perl;
-- full test suite including streaming uploads;
-- end-to-end server smoke;
-- disttest / distribution integrity.
+Final documentation-complete CI #338 / run `34732032612` passed the same matrix
+on branch head `4d429d340143082f2283ca08cacbff2506ac0bf5`.
 
 Focused streaming upload test:
 
@@ -151,14 +149,11 @@ Focused streaming upload test:
 t/65-client-request-stream.t
 ```
 
-Coverage includes scalar/stream conflict, HTTP/1.0 unknown-length rejection,
-Content-Length underflow/overflow, known-length streaming, automatic chunked
-streaming, Request completion state, actual high/low-watermark producer drain,
-subclass `on_drain` composition, early final Response cancellation, and server
-receipt of decoded body bytes.
-
-A final full CI run must pass on the final documentation branch head before PR
-#20 is considered review-ready.
+Coverage includes scalar/stream conflict, invalid producer callback validation,
+HTTP/1.0 unknown-length rejection, Content-Length underflow/overflow,
+known-length streaming, automatic chunked streaming, Request completion state,
+actual high/low-watermark producer drain, subclass `on_drain` composition,
+early final Response cancellation, and server receipt of decoded body bytes.
 
 ## Server baseline
 
