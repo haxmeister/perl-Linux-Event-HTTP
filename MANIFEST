@@ -55,6 +55,7 @@ t/60-client-connection.t
 t/61-client-response-framing.t
 t/62-client.t
 t/63-client-tls.t
+t/64-client-buffered-response.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
