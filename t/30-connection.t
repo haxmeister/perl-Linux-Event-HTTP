@@ -21,8 +21,13 @@ use Linux::Event::HTTP::Server::Connection;
             refaddr($self->{_http_request_state});
         push @{$self->data->{body_done_on_request}},
             $self->{_http_request_state}{body_done} ? 1 : 0;
+
+        my $transaction = $self->transaction;
         push @{$self->data->{paired}},
-            $response->request == $request
+            $transaction
+            && $transaction->request == $request
+            && $transaction->response == $response
+            && $response->request == $request
             && $response->connection == $self ? 1 : 0;
 
         $response->status(200);
@@ -30,7 +35,7 @@ use Linux::Event::HTTP::Server::Connection;
 
         if ($request->target eq '/one') {
             $response->header('Content-Length', 4);
-            my $body = $response->stream_body;
+            my $body = $transaction->response_body;
             push @{$self->data->{write_status}}, $body->write('on');
             $body->complete("e\n");
         } else {
@@ -108,7 +113,7 @@ is_deeply(
 is_deeply(
     $state->{paired},
     [ 1, 1 ],
-    'each request receives a Response bound to the same transaction',
+    'Connection Transaction pairs each Request and Response',
 );
 is(
     $state->{request_state_refs}[0],
@@ -130,13 +135,13 @@ is_deeply(
     [ 1, 1 ],
     'bodyless request state is complete during on_request_end',
 );
-ok($state->{write_status}[0], 'stream body write exposes Stream backpressure status');
+ok($state->{write_status}[0], 'response body producer exposes Stream backpressure status');
 ok(
     $state->{responses}[0]->is_complete && $state->{responses}[1]->is_complete,
     'each Response is complete when its transaction completes',
 );
 my $mutation_ok = eval { $state->{responses}[0]->status(201); 1 };
-ok(!$mutation_ok, 'completed Response metadata is immutable');
+ok(!$mutation_ok, 'completed Response metadata is immutable after output commit');
 like($@, qr/cannot change|already complete/, 'completed metadata rejection is clear');
 ok($state->{eof}, 'Connection close request drains responses then ends stream');
 
@@ -147,7 +152,7 @@ is(scalar @status, 2, 'two HTTP responses were serialized on one connection');
 like(
     $wire,
     qr/HTTP\/1\.1 200 OK\r\nContent-Type: text\/plain\r\nContent-Length: 4\r\n\r\none\n/s,
-    'fixed-length streaming body emits first body without buffering it whole',
+    'fixed-length incremental body emits without buffering it whole',
 );
 like(
     $wire,
