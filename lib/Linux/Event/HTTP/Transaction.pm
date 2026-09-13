@@ -54,12 +54,13 @@ sub response_body ($self, @args) {
     }
 
     die 'response_body options must be key/value pairs' if @args % 2;
-    $response->_begin_stream_body;
 
     require Linux::Event::HTTP::Body::Stream;
     my $body = Linux::Event::HTTP::Body::Stream->_new(
         $self, 'response', @args,
     );
+
+    $response->_begin_stream_body;
     $self->{response_body} = $body;
     return $body;
 }
