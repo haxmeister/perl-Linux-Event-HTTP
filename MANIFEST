@@ -30,6 +30,7 @@ lib/Linux/Event/HTTP/Response.pm
 lib/Linux/Event/HTTP/Transaction.pm
 lib/Linux/Event/HTTP/Server.pm
 lib/Linux/Event/HTTP/Server/Connection.pm
+lib/Linux/Event/HTTP/_ClientConnect.pm
 lib/Linux/Event/HTTP/_ClientUpgrade.pm
 lib/Linux/Event/HTTP/_HTTP1.pm
 lib/Linux/Event/HTTP/_Upgrade.pm
@@ -62,6 +63,9 @@ t/65-client-request-stream.t
 t/66-client-redirects.t
 t/67-client-upgrade.t
 t/68-client-upgrade-high-level.t
+t/69-client-connect.t
+t/70-client-connect-high-level.t
+t/71-client-connect-validation.t
 vendor/picohttpparser/LICENSE
 vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c

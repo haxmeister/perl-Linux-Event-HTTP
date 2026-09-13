@@ -42,9 +42,9 @@ Transactions when redirects are followed.
 L<Linux::Event::HTTP::Server::Connection> execute inbound HTTP.
 
 =item * L<Linux::Event::HTTP::Client> owns outbound URL, redirect, TLS,
-connection-selection, and explicit protocol-handoff policy, while
-L<Linux::Event::HTTP::Client::Connection> executes one HTTP Transaction on one
-client connection.
+connection-selection, explicit CONNECT establishment, and protocol-handoff
+policy, while L<Linux::Event::HTTP::Client::Connection> executes one HTTP
+Transaction on one client connection.
 
 =back
 
@@ -77,13 +77,20 @@ stream object, including already-read post-HTTP bytes, to the selected protocol
 class. WebSocket framing and other upgraded protocols remain separate
 protocol-layer distributions.
 
+Client CONNECT uses the same live-stream handoff principle with CONNECT-specific
+HTTP semantics. C<connect_tunnel()> separates the proxy endpoint URL from the
+authority-form tunnel target. Any successful 2xx CONNECT response completes the
+HTTP Transaction at the response-head boundary and transitions the same live
+stream to the caller-selected tunnel class; a non-2xx response remains ordinary
+HTTP and can expose its body normally.
+
 =head1 DESIGN
 
 See F<README.md> for ordinary Client and Server examples and
 F<docs/ARCHITECTURE.md> for ownership, lifecycle, framing, redirect, pooling,
-Upgrade, and native-boundary details. F<docs/PICOHTTPPARSER-EXPERIMENT.md>
-records server parser provenance, correctness policy, and representation
-benchmarks.
+Upgrade, CONNECT, and native-boundary details.
+F<docs/PICOHTTPPARSER-EXPERIMENT.md> records server parser provenance,
+correctness policy, and representation benchmarks.
 
 =head1 THIRD-PARTY CODE
 

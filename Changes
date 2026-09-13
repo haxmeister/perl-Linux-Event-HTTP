@@ -110,6 +110,22 @@ Revision history for Linux-Event-HTTP
       transitioned protocol class without another socket or transport queue.
     - Regenerate Upgrade handshake fields across redirect hops and keep a successfully
       upgraded stream permanently outside the HTTP idle-connection pool.
+    - Add explicit HTTP/1.1 CONNECT tunneling with tunnel_to and on_tunnel on
+      Client::Connection, using authority-form request targets and the same live
+      Linux::Event stream transition model as Upgrade.
+    - Add Client->connect_tunnel(proxy_url,target_authority,...) as a high-level explicit
+      tunnel operation without making ordinary requests implicitly proxy-aware.
+    - Reject CONNECT request bodies, Content-Length, and Transfer-Encoding by field
+      presence, require Host to match the authority target, and fail invalid CONNECT
+      configurations before protocol execution.
+    - Treat any successful 2xx CONNECT response as the HTTP-to-tunnel boundary at the end
+      of the response head, ignoring Content-Length and Transfer-Encoding on that 2xx and
+      preserving already-read bytes as tunnel input.
+    - Keep non-2xx CONNECT responses as ordinary HTTP so proxy errors such as 407 can use
+      normal incremental or bounded body handling and persistent proxy connections can be
+      reused when framing permits it.
+    - Keep successfully tunneled connections permanently outside the HTTP idle pool while
+      allowing an explicit HTTP or HTTPS proxy endpoint to be reused after failed CONNECT.
     - Keep one in-flight Transaction per HTTP/1 client connection and support sequential
       persistent reuse without enabling HTTP/1 pipelining.
     - Make client Transaction cancellation close the HTTP/1 connection rather than risk
@@ -158,8 +174,9 @@ Revision history for Linux-Event-HTTP
       whole-response buffering, producer backpressure, early upload cancellation,
       redirect chains, relative Location resolution, method/body transformation,
       cross-origin credential stripping, redirect limits, disabled redirect policy,
-      client Upgrade validation, same-read protocol handoff, redirected Upgrade, and
-      HTTP-pool isolation after transition.
+      client Upgrade validation, same-read protocol handoff, redirected Upgrade,
+      CONNECT validation, successful same-read tunnel handoff, non-2xx proxy response
+      handling, and HTTP-pool isolation/reuse across protocol transitions.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.

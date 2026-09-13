@@ -284,6 +284,7 @@ head
 post
 put
 delete
+connect_tunnel
 ```
 
 `request($method, $url, ...)` accepts absolute `http` and `https` URLs and builds
@@ -300,20 +301,21 @@ The initial connection reuse policy is intentionally simple and bounded:
 - concurrent same-origin requests may use additional connections;
 - extra connections close when they later become idle;
 - each redirect hop independently selects a connection for its target origin;
-- a connection that leaves HTTP through Upgrade is never returned to the HTTP
-  idle pool.
+- a connection that leaves HTTP through Upgrade or successful CONNECT is never
+  returned to the HTTP idle pool.
 
 Client response framing supports Content-Length, HTTP/1.1 chunked transfer
 coding, bodyless HEAD/204/304 responses, informational responses,
-`101 Switching Protocols`, and close-delimited responses. Ambiguous
-Transfer-Encoding plus Content-Length is rejected.
+`101 Switching Protocols`, successful CONNECT tunnel boundaries, and
+close-delimited responses. Ambiguous Transfer-Encoding plus Content-Length is
+rejected for ordinary HTTP responses.
 
 Cancelling a Client::Operation cancels the active Transaction. Cancelling an
 HTTP/1 client Transaction closes its connection rather than trying to reuse a
 socket that may still contain an unfinished response.
 
-Proxy policy, automatic authentication helpers, a cookie jar, CONNECT, and
-richer pool policy remain later features.
+Automatic forward-proxy policy, automatic authentication helpers, a cookie jar,
+and richer pool policy remain later features.
 
 ## HTTPS
 
@@ -353,7 +355,47 @@ $client->get('https://example.com/');
 ```
 
 The Client uses the URL host as the TLS server name and currently offers only
-`http/1.1` through ALPN.
+`http/1.1` through ALPN. `connect_tunnel` also accepts an `https` proxy endpoint;
+that TLS session terminates at the proxy before CONNECT establishes the byte
+tunnel.
+
+## CONNECT tunnels
+
+The high-level Client can explicitly establish a CONNECT tunnel without turning
+ordinary requests into implicit proxy traffic:
+
+```perl
+my $operation = $client->connect_tunnel(
+    'http://proxy.example:3128',
+    'target.example:443',
+    tunnel_to => 'MyTunnelProtocol',
+    headers => [
+        [ 'Proxy-Authorization' => $value ],
+    ],
+    on_tunnel => sub ($op, $tx, $res, $connection) {
+        # same live socket, now owned by MyTunnelProtocol
+    },
+);
+```
+
+The proxy URL selects where the HTTP connection is made. The second argument is
+the authority-form `host:port` target carried by CONNECT and used for Host. A
+successful 2xx response ends HTTP framing immediately after its header section;
+Content-Length and Transfer-Encoding on that successful response are ignored,
+and bytes already read afterward are tunnel bytes. Response and Transaction are
+complete before `on_tunnel`, and Linux::Event `transition_to()` hands the same
+live stream object to `tunnel_to`.
+
+A non-2xx response, such as 407, remains ordinary HTTP and may be consumed with
+`on_body` or explicit `buffer_body`. If its persistence/framing permits reuse,
+the failed CONNECT connection can return to the proxy-origin idle pool. A
+successful tunnel never returns to HTTP reuse. `connect_tunnel` deliberately
+does not follow redirects or provide automatic proxy-authentication policy.
+
+Low-level callers can construct the CONNECT Request directly and use
+`Client::Connection->request(..., tunnel_to => $class, on_tunnel => ...)`.
+CONNECT Requests are HTTP/1.1, authority-form, bodyless, and contain neither
+Content-Length nor Transfer-Encoding.
 
 ## Upgrade
 
@@ -398,9 +440,9 @@ Upgrade handshake fields rather than forwarding stale connection-specific
 headers. Once the connection transitions away from HTTP, it is never returned
 to the Client's HTTP idle pool.
 
-A bare unexpected 101 without `upgrade_to` is a protocol error. CONNECT tunnels
-remain separate work. WebSocket handshake/frame semantics belong in a separate
-`Linux::Event::WebSocket` distribution that can use this handoff capability.
+A bare unexpected 101 without `upgrade_to` is a protocol error. WebSocket
+handshake/frame semantics belong in a separate `Linux::Event::WebSocket`
+distribution that can use this handoff capability.
 
 ## Advanced connection subclasses
 
@@ -456,9 +498,9 @@ make test
 ```
 
 The distribution includes server/client, TLS, persistence, pipelining, Upgrade,
-request-body, streaming-upload, redirects, response-body, framing-error,
-bounded-buffer, Transaction/Operation lifecycle, and distribution-integrity
-coverage.
+CONNECT tunneling, request-body, streaming-upload, redirects, response-body,
+framing-error, bounded-buffer, Transaction/Operation lifecycle, and
+distribution-integrity coverage.
 
 See `docs/ARCHITECTURE.md` for detailed ownership and lifecycle rules and
 `docs/BENCHMARKING.md` for benchmark discipline.

@@ -120,9 +120,10 @@ controller performs protocol execution.
 A redirect is another HTTP exchange and therefore another Transaction. This is
 an invariant, not an implementation detail.
 
-A successful client or server Upgrade still completes the HTTP Transaction
-before the live transport belongs to the next protocol. Protocol handoff is an
-executor/transport transition, not a new kind of HTTP message.
+A successful client/server Upgrade or successful client CONNECT completes the
+HTTP Transaction before the live transport belongs to the next protocol.
+Protocol handoff is an executor/transport transition, not a new kind of HTTP
+message.
 
 ## Client::Operation model
 
@@ -189,6 +190,7 @@ Client
     TLS transport creation
     connection selection/reuse
     protocol-handoff policy
+    explicit CONNECT tunnel establishment
     convenience verbs
 
 Client::Operation
@@ -203,7 +205,7 @@ Client::Connection
     Request serialization
     Response parsing/framing
     persistence/reuse eligibility
-    validated 101 protocol handoff
+    validated 101 / CONNECT handoff
 
 Transaction
     exactly one Request/Response exchange
@@ -226,6 +228,7 @@ my $operation = $client->request(
 ```
 
 Convenience methods are `get`, `head`, `post`, `put`, and `delete`.
+`connect_tunnel` is the explicit high-level CONNECT operation.
 
 The current connection-reuse policy is deliberately bounded:
 
@@ -237,8 +240,8 @@ The current connection-reuse policy is deliberately bounded:
 - when multiple connections later become idle for one origin, one is retained
   and extras are closed;
 - each redirect hop independently selects a connection for its target origin;
-- a connection transitioned to another protocol is never returned to the HTTP
-  idle pool.
+- a connection transitioned to another protocol or tunnel is never returned to
+  the HTTP idle pool.
 
 ## Client URL and redirect policy
 
@@ -293,6 +296,41 @@ Intermediate redirect responses are consumed to their actual message boundary
 but are not emitted through final `on_body`. `on_redirect` receives each
 completed intermediate redirect Transaction before the next hop begins.
 `on_informational` remains per-Transaction and can run on any hop.
+
+## Explicit CONNECT tunnel policy
+
+`Client->connect_tunnel($proxy_url,$target_authority,...)` is intentionally a
+separate high-level operation rather than hidden proxy policy on ordinary
+requests:
+
+```perl
+my $operation = $client->connect_tunnel(
+    'http://proxy.example:3128',
+    'target.example:443',
+    tunnel_to => 'MyTunnelProtocol',
+    on_tunnel => sub ($op, $tx, $res, $connection) { ... },
+);
+```
+
+The proxy URL selects the actual HTTP/TLS endpoint. The tunnel target remains the
+CONNECT authority-form request-target and Host value. An `https` proxy URL means
+TLS is established to the proxy before CONNECT; this is distinct from whatever
+protocol the application runs inside the resulting tunnel.
+
+CONNECT is HTTP/1.1 and bodyless. Content-Length and Transfer-Encoding are not
+sent. Any successful 2xx response completes the HTTP Response and Transaction at
+the response-head boundary. Content-Length or Transfer-Encoding fields supplied
+on that successful response are ignored; subsequent bytes belong to the tunnel
+and are handed to `tunnel_to` through Linux::Event `transition_to()`.
+
+A non-2xx CONNECT response is ordinary HTTP. Its body can be delivered
+incrementally or through explicit bounded buffering, and a persistent proxy
+connection can return to the proxy-origin idle pool afterward. A successful
+CONNECT consumes that HTTP connection permanently; it never returns to the pool.
+
+`connect_tunnel` deliberately does not follow redirects or implement automatic
+proxy authentication. Callers may supply fields such as Proxy-Authorization
+explicitly. General forward-proxy policy remains separate future work.
 
 ## Body model
 
@@ -415,6 +453,8 @@ Message, Transaction, and Operation completion are distinct:
   including followed redirects, reached its final successful Transaction;
 - for a successful client Upgrade, the final 101 Response and Transaction are
   complete and the Operation is marked complete before `on_upgrade` runs;
+- for a successful CONNECT tunnel, the 2xx Response and Transaction are complete
+  and the Operation is marked complete before `on_tunnel` runs;
 - cancellation and errors are separate terminal states.
 
 ## Client HTTP/1 response framing
@@ -431,7 +471,9 @@ Client::Connection applies framing independently from application handling:
 - only plain `chunked` Transfer-Encoding is currently supported;
 - a validated `101 Switching Protocols` completes HTTP framing and transitions
   the same live stream to the explicitly requested target class;
-- CONNECT tunneling remains separate work.
+- any successful 2xx CONNECT response completes HTTP framing at the response
+  head and transitions the same live stream into tunnel mode; framing fields on
+  that successful response are ignored.
 
 Cancelling an active client Transaction closes its HTTP/1 connection because an
 unfinished response cannot generally be skipped safely while preserving stream
@@ -482,8 +524,8 @@ adding another native fast path.
 
 Server::Connection owns HTTP/1 server ordering, parsing, response output, and
 Upgrade handoff. Client::Connection owns exactly one active client Transaction,
-Request serialization, Response framing, reuse eligibility, and validated 101
-handoff.
+Request serialization, Response framing, reuse eligibility, validated 101
+handoff, and validated CONNECT tunnel handoff.
 
 The high-level Client normally creates Client::Connection objects. Direct
 Client::Connection use is appropriate when destination acquisition and redirect
@@ -494,6 +536,9 @@ policy are being handled elsewhere.
 HTTPS uses the same message, lifecycle, and connection classes. TLS remains
 Linux::Event transport policy. Client HTTPS uses the URL host as server name and
 currently offers only `http/1.1` through ALPN.
+
+An HTTPS proxy endpoint in `connect_tunnel` uses the same TLS transport creation
+path, with TLS terminating at the proxy before the CONNECT tunnel begins.
 
 There is no separate HTTPS hierarchy.
 
@@ -540,9 +585,33 @@ Client's idle HTTP pool. Redirect hops may precede the 101; Upgrade handshake
 fields are regenerated on each hop.
 
 An unexpected bare 101 without `upgrade_to` is a protocol error. CONNECT is a
-separate tunnel operation and remains future work. WebSocket handshake/frame
-semantics belong in a separate `Linux::Event::WebSocket` distribution that can
-use the client/server handoff primitives here.
+separate sibling handoff operation with different HTTP semantics. WebSocket
+handshake/frame semantics belong in a separate `Linux::Event::WebSocket`
+distribution that can use the client/server handoff primitives here.
+
+## CONNECT
+
+Low-level callers construct a normal Request with method CONNECT, authority-form
+`host:port` target, and matching Host, then request an explicit tunnel target:
+
+```perl
+my $tx = $connection->request(
+    $request,
+    tunnel_to => 'MyTunnelProtocol',
+    on_tunnel => sub ($tx, $res, $connection) { ... },
+);
+```
+
+High-level callers use `connect_tunnel`, which separates the proxy endpoint URL
+from the CONNECT target authority. The successful tunnel transition uses the
+same Linux::Event `transition_to()` primitive as Upgrade but has different HTTP
+validation: any 2xx response forms the tunnel, and response framing fields do
+not delimit HTTP content after a successful CONNECT. Non-2xx responses remain
+ordinary HTTP and can retain the proxy connection for reuse.
+
+CONNECT handling is Perl-side execution policy around existing transport
+primitives. It adds no native parser path, extra transport object, or second
+output queue.
 
 ## Performance policy
 
@@ -573,19 +642,21 @@ The current foundation includes:
 4. HTTP/1 Client::Connection with scalar/streaming Request serialization,
    strict Response parsing, informational responses, incremental
    Content-Length/chunked/close body delivery, cancellation, sequential reuse,
-   and validated 101 protocol handoff.
+   validated 101 protocol handoff, and validated CONNECT tunnel handoff.
 5. High-level Client::Operation with redirect chains of distinct Transactions,
    bounded redirect policy, cross-origin sensitive-header stripping, safe
-   refusal to replay non-rewindable streaming Request bodies, and client Upgrade
-   lifecycle integration.
+   refusal to replay non-rewindable streaming Request bodies, Upgrade lifecycle
+   integration, and explicit single-Transaction CONNECT tunnel operations.
 6. High-level Client URL parsing, HTTP/HTTPS destination acquisition, bounded
    same-origin idle reuse, common convenience verbs, explicit bounded
-   whole-response buffering, and redirect-to-Upgrade handshake regeneration.
+   whole-response buffering, redirect-to-Upgrade handshake regeneration, and
+   explicit HTTP/HTTPS proxy-endpoint CONNECT establishment.
 7. One consolidated private `_HTTP1` native extension and no duplicate transport
    queues.
 
-Later client work includes richer pool policy, proxy/auth/cookie conveniences,
-CONNECT, and measurement-driven parser optimization.
+Later client work includes automatic forward-proxy policy, proxy/auth/cookie
+conveniences, richer pool policy only when justified by workload, and
+measurement-driven parser optimization.
 
 HTTP/2 is future protocol work. WebSocket remains a separate protocol
 distribution.
