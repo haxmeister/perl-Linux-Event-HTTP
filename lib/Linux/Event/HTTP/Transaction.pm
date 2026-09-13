@@ -29,6 +29,7 @@ sub _new ($class, %args) {
         response_output_started   => 0,
         response_output_complete  => 0,
         upgrade_pending           => 0,
+        tunnel_pending            => 0,
         state                     => 'pending',
         error                     => undef,
         controller                => $controller,
@@ -46,6 +47,7 @@ sub is_cancelled        ($self) { $self->{state} eq 'cancelled' }
 sub is_terminal         ($self) { !!$TERMINAL{$self->{state}} }
 sub is_response_started ($self) { !!$self->{response_output_started} }
 sub is_upgrading        ($self) { !!$self->{upgrade_pending} }
+sub is_tunneling        ($self) { !!$self->{tunnel_pending} }
 
 sub request_body ($self, @args) {
     die 'request_body(): Transaction is already terminal'
@@ -120,6 +122,8 @@ sub upgrade ($self, $target_class) {
         if $self->{response_output_started};
     die 'upgrade(): Transaction already has an Upgrade handoff pending'
         if $self->{upgrade_pending};
+    die 'upgrade(): Transaction already has a CONNECT tunnel handoff pending'
+        if $self->{tunnel_pending};
 
     my $response = $self->{response}
         or die 'upgrade(): Transaction has no Response yet';
@@ -127,6 +131,25 @@ sub upgrade ($self, $target_class) {
         or die 'upgrade(): Transaction has no active controller';
 
     $controller->_upgrade_http_transaction($self, $target_class);
+    return $self;
+}
+
+sub tunnel ($self, $target_class) {
+    die 'tunnel(): Transaction is already terminal'
+        if $self->is_terminal;
+    die 'tunnel(): response output has already started'
+        if $self->{response_output_started};
+    die 'tunnel(): Transaction already has an Upgrade handoff pending'
+        if $self->{upgrade_pending};
+    die 'tunnel(): Transaction already has a CONNECT tunnel handoff pending'
+        if $self->{tunnel_pending};
+
+    my $response = $self->{response}
+        or die 'tunnel(): Transaction has no Response yet';
+    my $controller = $self->{controller}
+        or die 'tunnel(): Transaction has no active controller';
+
+    $controller->_tunnel_http_transaction($self, $target_class);
     return $self;
 }
 
@@ -240,12 +263,28 @@ sub _mark_response_output_complete ($self) {
 sub _set_upgrade_pending ($self) {
     die 'cannot schedule Upgrade on a terminal Transaction'
         if $self->is_terminal;
+    die 'cannot schedule Upgrade while CONNECT tunnel handoff is pending'
+        if $self->{tunnel_pending};
     $self->{upgrade_pending} = 1;
     return $self;
 }
 
 sub _clear_upgrade_pending ($self) {
     $self->{upgrade_pending} = 0;
+    return $self;
+}
+
+sub _set_tunnel_pending ($self) {
+    die 'cannot schedule CONNECT tunnel on a terminal Transaction'
+        if $self->is_terminal;
+    die 'cannot schedule CONNECT tunnel while Upgrade handoff is pending'
+        if $self->{upgrade_pending};
+    $self->{tunnel_pending} = 1;
+    return $self;
+}
+
+sub _clear_tunnel_pending ($self) {
+    $self->{tunnel_pending} = 0;
     return $self;
 }
 
@@ -268,6 +307,7 @@ sub _mark_complete ($self) {
         $body->_cancel if !$body->is_complete;
     }
     $self->{upgrade_pending} = 0;
+    $self->{tunnel_pending} = 0;
     $self->{state} = 'complete';
     delete $self->{controller};
     return $self;
@@ -279,6 +319,7 @@ sub _mark_cancelled ($self) {
 
     $self->_cancel_body_producers;
     $self->{upgrade_pending} = 0;
+    $self->{tunnel_pending} = 0;
     $self->{state} = 'cancelled';
     delete $self->{controller};
     return $self;
@@ -290,6 +331,7 @@ sub _fail ($self, $error) {
 
     $self->_cancel_body_producers;
     $self->{upgrade_pending} = 0;
+    $self->{tunnel_pending} = 0;
     $self->{error} = $error;
     $self->{state} = 'error';
     delete $self->{controller};
@@ -314,10 +356,10 @@ L<Linux::Event::HTTP::Response>.
 
 Request and Response are HTTP message objects. Transaction owns the lifecycle
 that connects them, including output progress, cancellation, protocol Upgrade,
-and writable body producers for outgoing messages. It does not own a socket,
-parser, connection pool, redirect chain, or transport output queue. Client and
-server connection implementations advance Transaction state and move produced
-bytes through their transport.
+CONNECT tunnel handoff, and writable body producers for outgoing messages. It
+does not own a socket, parser, connection pool, redirect chain, or transport
+output queue. Client and server connection implementations advance Transaction
+state and move produced bytes through their transport.
 
 Redirects are separate HTTP exchanges and therefore use separate Transaction
 objects.
@@ -403,6 +445,26 @@ Transaction:
     $res->header('Upgrade', 'my-protocol');
     $conn->transaction->upgrade('MyProtocolConnection');
 
+=head2 tunnel
+
+Accepts a valid server-side HTTP/1.1 CONNECT exchange and schedules handoff of
+the same live stream to another Linux::Event stream class:
+
+    if ($req->method eq 'CONNECT') {
+        $conn->transaction->tunnel('MyTunnelConnection');
+    }
+
+The default Response status is 200. Applications may configure another 2xx
+status or additional response headers before calling C<tunnel>. Successful
+CONNECT responses cannot carry an HTTP message body, Content-Length,
+Transfer-Encoding, or C<Connection: close>. The Request must use authority-form
+C<host:port>, have a matching Host field, and contain no HTTP message body or
+message-framing fields.
+
+C<tunnel> only completes the HTTP CONNECT handshake and transfers ownership of
+the accepted stream. Opening or bridging an upstream destination is application
+or higher-protocol policy.
+
 =head2 is_response_started
 
 True after response output has begun. This is exchange/output state, not a
@@ -411,6 +473,10 @@ property of the Response message itself.
 =head2 is_upgrading
 
 True while a protocol Upgrade handoff is pending.
+
+=head2 is_tunneling
+
+True while a successful server-side CONNECT tunnel handoff is pending.
 
 =head2 state
 
