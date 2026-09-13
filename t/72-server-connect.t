@@ -241,9 +241,9 @@ sub failure_case ($name, $wire, $case) {
     );
 
     run_client($loop, $server, $wire, $state, qr/\r\n\r\n\z/);
-    like($state->{wire}, qr/\AHTTP\/1\.1 500 Internal Server Error\r\n/s,
+    like($state->{wire}, qr/\AHTTP\/1\.[01] 500 Internal Server Error\r\n/s,
         "$name fails before successful tunnel response");
-    unlike($state->{wire}, qr/\AHTTP\/1\.1 2[0-9][0-9] /,
+    unlike($state->{wire}, qr/\AHTTP\/1\.[01] 2[0-9][0-9] /,
         "$name never emits a 2xx CONNECT response");
 }
 
