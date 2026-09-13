@@ -43,9 +43,10 @@ WriteMakefile(
         'Test::More' => 0,
     },
     PREREQ_PM => {
-        'HTTP::CookieJar' => '0.014',
-        'Linux::Event'    => '0.113',
-        'URI'             => 0,
+        'HTTP::CookieJar'    => '0.014',
+        'Linux::Event'       => '0.113',
+        'Uniform::HTTP::Auth' => '0.01',
+        'URI'                => 0,
     },
     META_MERGE => {
         'meta-spec' => {
@@ -53,6 +54,7 @@ WriteMakefile(
         },
         no_index => {
             package => [qw(
+                Linux::Event::HTTP::_ClientAuth
                 Linux::Event::HTTP::_HTTP1
                 Linux::Event::HTTP::_HTTP1::Chunked
                 Linux::Event::HTTP::_Upgrade
