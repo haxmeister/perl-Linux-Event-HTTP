@@ -102,9 +102,17 @@ Revision history for Linux-Event-HTTP
       origin while allowing concurrent same-origin requests to use separate connections.
     - Integrate HTTPS through Linux::Event TLS transport policy with the same Client and
       Client::Connection classes and HTTP/1.1-only ALPN advertisement.
+    - Add explicit buffer_body => $max_bytes client response buffering on top of the
+      incremental body path without introducing implicit or unbounded accumulation.
+    - Count the buffer limit against delivered body bytes after HTTP/1 transfer framing;
+      reject known oversized Content-Length bodies before accumulation and unknown-size
+      bodies when decoded accumulation would cross the configured bound.
+    - Keep buffered response metadata committed/read-only, expose the completed scalar
+      through Response->body only after the final message boundary, and close the HTTP/1
+      connection on buffer-limit failure so unread response bytes cannot be reused.
     - Add client tests for scalar request bodies, fixed/chunked/close-delimited responses,
       informational responses, ambiguous framing rejection, cancellation, URL handling,
-      connection reuse, concurrency, and HTTPS.
+      connection reuse, concurrency, HTTPS, and bounded whole-response buffering.
     - Add a forked end-to-end HTTP benchmark harness with persistent connections,
       pipelining, request-body workloads, latency percentiles, JSON output, and optional
       Linux::Event loop profiling.

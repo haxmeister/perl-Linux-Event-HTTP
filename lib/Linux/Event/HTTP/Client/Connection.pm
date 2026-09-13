@@ -73,6 +73,21 @@ sub _byte_string ($operation, $value) {
     return $bytes;
 }
 
+sub _buffer_limit ($value) {
+    croak 'request(): buffer_body must be a positive integer byte limit'
+        if !defined($value) || ref($value) || "$value" !~ /\A[0-9]+\z/;
+
+    my $digits = "$value";
+    $digits =~ s/\A0+(?=\d)//;
+    croak 'request(): buffer_body must be greater than zero'
+        if $digits eq '0';
+    croak 'request(): buffer_body exceeds supported range'
+        if length($digits) > length($MAX_CONTENT_LENGTH)
+        || (length($digits) == length($MAX_CONTENT_LENGTH)
+            && $digits gt $MAX_CONTENT_LENGTH);
+    return 0 + $digits;
+}
+
 sub _serialize_request_head ($request) {
     my $version = $request->version;
     croak "request(): HTTP/1 client supports version 1.0 or 1.1, not $version"
@@ -142,6 +157,11 @@ sub request ($self, $request, %option) {
     croak 'request(): another Transaction is already active on this connection'
         if $self->{_http_client_active_transaction};
 
+    my $buffer_limit;
+    if (exists $option{buffer_body}) {
+        $buffer_limit = _buffer_limit(delete $option{buffer_body});
+    }
+
     my %callback;
     my %known = map { $_ => 1 } qw(
         on_response on_body on_complete on_error on_informational
@@ -156,6 +176,10 @@ sub request ($self, $request, %option) {
             if defined($value) && ref($value) ne 'CODE';
         $callback{$name} = $value if defined $value;
     }
+
+    croak 'request(): buffer_body cannot be combined with on_body'
+        if defined($buffer_limit) && $callback{on_body};
+    $callback{buffer_body} = $buffer_limit if defined $buffer_limit;
 
     my ($head, $body) = _prepare_request($request);
     $request->_mark_committed;
@@ -356,6 +380,23 @@ sub _clear_active_transaction ($self) {
     return;
 }
 
+sub _buffer_response_chunk ($self, $chunk) {
+    my $state = $self->{_http_client_response_state} or return 1;
+    return 1 if !exists $state->{buffer_limit};
+
+    my $new_length = length($state->{buffer}) + length($chunk);
+    if ($new_length > $state->{buffer_limit}) {
+        my $limit = $state->{buffer_limit};
+        $self->_fail_active_transaction(
+            "response body exceeds buffer_body limit of $limit bytes", 1,
+        );
+        return 0;
+    }
+
+    $state->{buffer} .= $chunk;
+    return 1;
+}
+
 sub _finish_active_response ($self) {
     my $transaction = $self->{_http_client_active_transaction} or return;
     my $response = $transaction->response or return;
@@ -364,6 +405,8 @@ sub _finish_active_response ($self) {
     my $callback = $self->{_http_client_callbacks}{on_complete};
     my $keep_alive = $state->{keep_alive} ? 1 : 0;
 
+    $response->_set_received_body($state->{buffer})
+        if exists $state->{buffer_limit};
     $response->_mark_complete;
     $transaction->_mark_complete;
     $self->_clear_active_transaction;
@@ -424,6 +467,10 @@ sub _consume_response_body ($self) {
         my $chunk = substr($self->{_http_client_input}, 0, $take, '');
         $state->{remaining} -= $take;
 
+        if (length($chunk) && exists $state->{buffer_limit}) {
+            return 1 if !$self->_buffer_response_chunk($chunk);
+        }
+
         if (length($chunk) && $self->{_http_client_callbacks}{on_body}) {
             $self->_callback('on_body', $transaction, $response, $chunk);
             return 1 if !$self->_same_active_transaction($transaction);
@@ -437,10 +484,11 @@ sub _consume_response_body ($self) {
         return 0 if !length($self->{_http_client_input});
 
         my ($done, $decoded);
+        my $emit = $self->{_http_client_callbacks}{on_body}
+            || exists($state->{buffer_limit});
         my $ok = eval {
             ($done, $decoded) = $state->{decoder}->feed(
-                $self->{_http_client_input},
-                $self->{_http_client_callbacks}{on_body} ? 1 : 0,
+                $self->{_http_client_input}, $emit ? 1 : 0,
             );
             1;
         };
@@ -450,6 +498,11 @@ sub _consume_response_body ($self) {
                 "malformed HTTP/1 chunked response body: $error", 1,
             );
             return 1;
+        }
+
+        if (defined($decoded) && length($decoded)
+            && exists $state->{buffer_limit}) {
+            return 1 if !$self->_buffer_response_chunk($decoded);
         }
 
         if (defined($decoded) && length($decoded)
@@ -468,6 +521,11 @@ sub _consume_response_body ($self) {
             $self->{_http_client_input}, 0,
             length($self->{_http_client_input}), '',
         );
+
+        if (length($chunk) && exists $state->{buffer_limit}) {
+            return 1 if !$self->_buffer_response_chunk($chunk);
+        }
+
         if (length($chunk) && $self->{_http_client_callbacks}{on_body}) {
             $self->_callback('on_body', $transaction, $response, $chunk);
         }
@@ -552,12 +610,28 @@ sub _drive_http1 ($self) {
                 last;
             }
 
+            my $buffer_limit = $self->{_http_client_callbacks}{buffer_body};
+            if (defined $buffer_limit) {
+                $state->{buffer_limit} = $buffer_limit;
+                $state->{buffer} = '';
+            }
+
             $transaction->_set_response($response);
             $self->{_http_client_response_state} = $state;
 
             $self->_callback('on_response', $transaction, $response)
                 if $self->{_http_client_callbacks}{on_response};
             next if !$self->_same_active_transaction($transaction);
+
+            if (exists($state->{buffer_limit})
+                && $state->{mode} eq 'content-length'
+                && $state->{remaining} > $state->{buffer_limit}) {
+                my $limit = $state->{buffer_limit};
+                $self->_fail_active_transaction(
+                    "response body exceeds buffer_body limit of $limit bytes", 1,
+                );
+                last;
+            }
 
             if ($state->{mode} eq 'none'
                 || ($state->{mode} eq 'content-length'
@@ -660,23 +734,21 @@ Linux::Event::HTTP::Client::Connection - one HTTP/1 client connection
 =head1 DESCRIPTION
 
 C<Linux::Event::HTTP::Client::Connection> is the low-level HTTP/1 execution
-object for one persistent Linux::Event stream socket. It is intentionally not
-the future high-level C<Linux::Event::HTTP::Client>: URL parsing, destination
-selection, connection pooling, redirects, and buffered convenience belong above
-this class.
+object for one persistent Linux::Event stream socket. URL parsing, destination
+selection, connection pooling, redirects, and higher-level convenience belong
+above this class.
 
 The connection executes one L<Linux::Event::HTTP::Transaction> at a time. After
 a persistent response completes, another Transaction may reuse the same socket.
-HTTP/1 client pipelining is deliberately not enabled by this foundation.
+HTTP/1 client pipelining is deliberately not enabled.
 
-Response bodies are incremental-first. C<on_body> receives decoded body bytes;
+Response bodies are incremental-first. C<on_body> receives delivered body bytes;
 when it is absent, body bytes are drained and discarded rather than accumulated
-implicitly into the Response object. This keeps the protocol layer suitable for
-large bodies and bridges.
+implicitly into the Response object. Explicit C<buffer_body> requests bounded
+whole-body accumulation using the same framing/consumption path.
 
-This first client stage supports complete scalar request bodies. Outgoing
-streaming request bodies, CONNECT tunnels, client Upgrade handoff, and the
-high-level HTTPS/connection-pool policy are later layers.
+Outgoing streaming request bodies, CONNECT tunnels, and client Upgrade handoff
+remain later layers.
 
 =head1 METHODS
 
@@ -696,9 +768,12 @@ Returns the currently active Transaction, or undef when the connection is idle.
 =head2 request
 
     my $tx = $conn->request($request,
+        buffer_body      => 1_048_576,
         on_response      => sub ($tx, $res) { ... },
-        on_body          => sub ($tx, $res, $bytes) { ... },
-        on_complete      => sub ($tx) { ... },
+        on_complete      => sub ($tx) {
+            my $bytes = $tx->response->body;
+            ...;
+        },
         on_error         => sub ($tx, $error) { ... },
         on_informational => sub ($tx, $res) { ... },
     );
@@ -716,6 +791,15 @@ body delivery. C<on_informational> receives 1xx responses such as 100 Continue;
 101 Upgrade is not yet supported. C<on_body> receives decoded Content-Length,
 chunked, or close-delimited body bytes. C<on_complete> runs after the complete
 message boundary. C<on_error> reports terminal protocol or transport failure.
+
+C<buffer_body =E<gt> $max_bytes> explicitly requests whole-body buffering with a
+positive byte limit. It cannot be combined with C<on_body>. The limit counts the
+same body bytes that C<on_body> would receive: HTTP/1 chunk framing has already
+been removed. A known Content-Length above the limit fails after C<on_response>
+and before body accumulation. Unknown-length/chunked bodies fail as soon as the
+delivered byte count would cross the limit. Limit failure is a Transaction error
+and closes the connection. On successful completion, C<< $tx->response->body >>
+returns the buffered scalar, including the empty string for a bodyless response.
 
 Cancellation closes the connection because an HTTP/1 response cannot in general
 be abandoned mid-message and then safely reused without consuming its remaining
@@ -740,11 +824,13 @@ make the connection non-reusable.
 
 =back
 
-No implicit whole-body buffer is maintained.
+There is no implicit or unbounded whole-body buffer. Explicit C<buffer_body>
+uses this same framing path and enforces its configured bound.
 
 =head1 SEE ALSO
 
-L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Response>,
-L<Linux::Event::HTTP::Transaction>, L<Linux::Event::IO::Sock::Stream>.
+L<Linux::Event::HTTP::Client>, L<Linux::Event::HTTP::Request>,
+L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Transaction>,
+L<Linux::Event::IO::Sock::Stream>.
 
 =cut
