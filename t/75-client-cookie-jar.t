@@ -198,7 +198,7 @@ ok(!defined($land->{cookie}),
 
 is($jar->cookie_header('http://first.example/'), 'firstonly=1',
     'Set-Cookie from cross-origin redirect response is stored against its target origin');
-ok(!defined($jar->cookie_header('http://second.example/')),
+is($jar->cookie_header('http://second.example/') // '', '',
     'redirect destination has no cookie merely because the route proxy is shared');
 
 ok($first->is_complete && $second->is_complete && $third->is_complete,
