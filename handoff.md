@@ -219,9 +219,15 @@ passed CI #377 / run `34740465706` across Perl 5.36, latest Perl, and latest
 threaded Perl; latest Perl also passed end-to-end smoke and distribution
 integrity.
 
-Documentation commits after that green checkpoint align README, Changes,
+Documentation-complete implementation head
+`6fd3edeee8bb246c54bd0bb43fed91058dd8a0a6` passed CI #382 / run
+`34740672456` across Perl 5.36, latest Perl, and latest threaded Perl; latest
+Perl also passed end-to-end smoke and distribution integrity. README, Changes,
 architecture, Transaction/Server::Connection/top-level POD, MANIFEST, and this
-handoff. Run one final branch-head CI before presenting PR #24 for merge.
+handoff are aligned with the server CONNECT design.
+
+PR #24 is ready for merge review but remains draft until explicit user
+authorization.
 
 ## Existing server response / Upgrade baseline
 
