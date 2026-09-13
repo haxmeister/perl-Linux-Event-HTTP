@@ -2,49 +2,67 @@ Revision history for Linux-Event-HTTP
 
 0.001  UNRELEASED
     - Initial distribution scaffold.
-    - Establish HTTP protocol, transport, and message-layer boundaries.
+    - Establish HTTP protocol, transport, message, and transaction-layer boundaries.
     - Use the flat Linux::Event::HTTP namespace and make the server-side transport
-      class Linux::Event::HTTP::Server::Connection, leaving native Client support
-      for a later feature milestone.
+      class Linux::Event::HTTP::Server::Connection, with native Client support as
+      the next major protocol layer.
+    - Require Linux::Event 0.113 for the Listener, tuning, TLS, and stream APIs used
+      by this distribution.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.
     - Preserve original header spelling, duplicate values, and legal underscore names.
     - Validate HTTP/1 Host, Content-Length, Transfer-Encoding, body framing, and persistence.
     - Reject ambiguous TE/CL framing and unsupported request transfer codings.
-    - Add Response metadata API with native, injection-safe HTTP/1 response-head serialization.
-    - Bind HTTP Server::Connection directly to Linux::Event::IO::Sock::Stream.
-    - Pair every dispatched server Request with a connection-created Response object.
-    - Define Response as the HTTP response message: use Response->body for a complete
-      scalar body and Response->stream_body for an explicit streaming Body::Stream producer.
+    - Define Request and Response as direction-neutral HTTP message classes shared by
+      future client and current server code rather than endpoint-role-specific objects.
+    - Add public locally constructible Request and Response messages while preserving
+      the existing lazy XS-backed representation for parsed server Requests.
+    - Use protocol-neutral message accessors such as version(), while keeping HTTP/1
+      framing and persistence decisions private to the HTTP/1 execution layer.
+    - Add symmetric header APIs including add_header, remove_header, header_values,
+      exact indexed header access, content_length, body, and is_complete.
+    - Add Linux::Event::HTTP::Transaction to represent exactly one Request/Response
+      exchange with coarse lifecycle state, cancellation, completion, and errors.
+    - Keep the server callback shape on_request($conn, $req, $res); expose the active
+      exchange as $conn->transaction rather than adding another callback argument.
+    - Separate Response message completion from server transport-output completion so
+      Response->is_complete describes the HTTP message rather than socket write state.
+    - Define Response->body as a complete scalar byte body declaration.
+    - Move incremental response-body producer ownership from Response to Transaction;
+      use $conn->transaction->response_body for server-side incremental output.
     - Keep Body::Stream writes on Linux::Event's existing ordered-byte output machinery,
       preserving cooperative backpressure and avoiding a second HTTP output queue.
-    - Make stream_body lazy and stable; selecting it does not commit response metadata,
-      while the first body-stream write or completion starts output and freezes metadata.
+    - Make Transaction->response_body lazy and stable; selecting it does not commit
+      response metadata, while the first producer write or completion starts output
+      and freezes metadata.
+    - Keep complete scalar body and incremental producer selection mutually exclusive.
+    - Remove transitional public Response->write, Response->complete, and
+      Response->stream_body methods rather than carrying compatibility aliases in this
+      unreleased distribution.
+    - Expose Request->is_complete at the actual received body boundary and
+      Response->is_complete at the complete scalar/final incremental body boundary.
+    - Lock response status and headers once output begins, not merely when message body
+      completion becomes known.
     - Defer scalar body commit until the enclosing HTTP callback returns so metadata may
       still be configured after body assignment; commit later asynchronous body assignment
       immediately when a Response is waiting.
-    - Remove transitional public Response->write and Response->complete methods rather
-      than carrying compatibility aliases in this unreleased distribution.
-    - Expose Response->is_complete and deliberately omit ambiguous end/is_ended aliases.
-    - Lock response status and headers once output begins.
     - Stream Content-Length request bodies through cached on_body callbacks.
     - Decode chunked request bodies natively with picohttpparser while preserving pipeline bytes.
-    - Add on_request_end transaction completion and body draining when no consumer is installed.
+    - Add on_request_end request completion and body draining when no consumer is installed.
     - Support HTTP/1.1 Expect: 100-continue and reject unsupported expectations with 417.
-    - Add automatic HTTP/1.1 chunked response streaming when Content-Length is unknown.
-    - Fall back to close-delimited streaming for unknown-length HTTP/1.0 responses.
+    - Add automatic HTTP/1.1 chunked framing for incremental response output when
+      Content-Length is unknown.
+    - Fall back to close-delimited output for unknown-length HTTP/1.0 responses.
     - Add HTTP::Server as a thin Listener convenience with retained constructor callbacks,
       application data propagation, and configurable Server::Connection subclasses.
     - Adopt Linux::Event Listener stream recipes for accepted HTTP Connections and remove
       the private acceptance adapter so Listener constructs connection_class directly.
     - Expose Server tuning and TLS deployment policy directly, use stream_tuning class
       defaults, and distinguish accepted-Connection on_error from on_listener_error.
-    - Test against the exact post-0.112 Linux::Event compatibility baseline in CI until
-      those core APIs receive their next released version.
     - Preserve constructor-callback override semantics through Server acceptance without
       allocating per-connection wrapper closures or adding per-request Server dispatch.
-    - Compose HTTP Body::Stream drain/cancellation bookkeeping with custom Connection
+    - Compose HTTP body-producer drain/cancellation bookkeeping with custom Connection
       on_drain and on_close lifecycle callbacks rather than replacing subclass behavior.
     - Integrate HTTPS through Linux::Event declarative TLS policy on the configured
       Server::Connection subclass, including server-handshake validation and HTTP/1.1 ALPN.
@@ -65,9 +83,14 @@ Revision history for Linux-Event-HTTP
       default-final builder into one private Linux::Event::HTTP::_HTTP1 extension.
     - Remove the benchmark-oriented on_request_final public shortcut while retaining its
       useful optimization lesson inside the ordinary Response->body path.
+    - Preserve the native default scalar-response fast path while making it terminate the
+      same Transaction lifecycle as the general response path.
     - Keep a focused response-finalization benchmark for supported callback shapes and
       update the transaction-ladder contract for the callback-return body commit point.
     - Add ordered keep-alive/pipelined request dispatch and deferred response support.
+    - Add focused Transaction tests covering pairing, request/response completion,
+      cancellation, body-producer backpressure, chunking, close delimiting, and the native
+      scalar fast path.
     - Simplify the README around the normal Server callback API, moving Connection
       subclassing, TLS, Upgrade, and implementation details into clearly advanced sections.
     - Add parser benchmarks, provenance documentation, and distribution integrity tests.
