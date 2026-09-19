@@ -15,7 +15,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|state|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless)\z/;
+    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -140,18 +140,24 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 next;
             }
 
-            my $response = Linux::Event::HTTP::Response->new(
-                version => $request->version,
-            );
+            my $fast_constructor
+                = $main::STAGE eq 'fastbound' || $main::STAGE eq 'faststate';
+            my $response = $fast_constructor
+                ? Linux::Event::HTTP::Response
+                    ->_new_server_default($request->version)
+                : Linux::Event::HTTP::Response->new(
+                    version => $request->version,
+                );
 
-            if ($main::STAGE eq 'bound') {
+            if ($main::STAGE eq 'bound' || $main::STAGE eq 'fastbound') {
                 $self->write($self->data->{wire});
                 next;
             }
 
-            my $transaction = $self->_new_bench_transaction(
-                $request, $response,
-            );
+            my $transaction = $main::STAGE eq 'faststate'
+                ? Linux::Event::HTTP::Transaction
+                    ->_new_server_active($request, $response, $self)
+                : $self->_new_bench_transaction($request, $response);
 
             my $body_mode = $request->_http1_body_mode;
             die "bodyless benchmark unexpectedly parsed $body_mode request\n"
@@ -171,7 +177,7 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
                 $self->write("HTTP/1.1 100 Continue\r\n\r\n");
             }
 
-            if ($main::STAGE eq 'state') {
+            if ($main::STAGE eq 'state' || $main::STAGE eq 'faststate') {
                 Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
                 $self->write($self->data->{wire});
                 next;
