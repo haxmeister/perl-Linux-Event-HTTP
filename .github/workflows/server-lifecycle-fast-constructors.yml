@@ -1,0 +1,107 @@
+name: HTTP server lifecycle constructor experiment
+
+on:
+  push:
+    branches:
+      - experiment/http-server-lifecycle-fast-constructors
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out experiment
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
+        with:
+          perl-version: '5'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev
+
+      - name: Install current Linux::Event core
+        run: |
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/b0d5244f42f4c5bf48521406d24dd299341c9770.tar.gz
+
+      - name: Install Uniform and benchmark dependencies
+        run: |
+          cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
+            cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
+          cpanm --notest Feersum
+          cpanm --notest --installdeps .
+
+      - name: Build experiment
+        run: |
+          perl Makefile.PL
+          make
+          make test
+
+      - name: Build main baseline
+        run: |
+          git worktree add /tmp/le-http-main origin/main
+          cd /tmp/le-http-main
+          perl Makefile.PL
+          make
+          make test
+
+      - name: Constructor ladder A/B
+        run: |
+          perl -Mblib bench/run-http-transaction-ladder.pl \
+            --cases=parse,bound,fastbound,state,faststate \
+            --requests=100000 \
+            --warmup=10000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=32 \
+            --repeats=7 \
+            --read-budget-bytes=0 \
+            --json=bench/results/server-fast-constructors-ladder.json
+
+      - name: Full server vs main vs Feersum
+        env:
+          BENCH_MAIN_TREE: /tmp/le-http-main
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_main,linuxevent,feersum \
+            --strict \
+            --requests=50000 \
+            --warmup=5000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=32 \
+            --repeats=7 \
+            --json=bench/results/server-fast-constructors-feersum.json
+
+      - name: Request-body comparison
+        env:
+          BENCH_MAIN_TREE: /tmp/le-http-main
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_main,linuxevent \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --request-body-bytes=4096 \
+            --response-bytes=32 \
+            --repeats=5 \
+            --json=bench/results/server-fast-constructors-body.json
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-fast-constructors
+          path: |
+            bench/results/server-fast-constructors-ladder.json
+            bench/results/server-fast-constructors-feersum.json
+            bench/results/server-fast-constructors-body.json
