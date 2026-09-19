@@ -546,15 +546,10 @@ sub _drive_http1 ($self) {
         my $body_mode = $request->_http1_body_mode;
         my $bodyless = $body_mode eq 'none';
 
-        my $response = Linux::Event::HTTP::Response->new(
-            version => $request->version,
-        );
-        my $transaction = Linux::Event::HTTP::Transaction->_new(
-            request    => $request,
-            controller => $self,
-        );
-        $transaction->_set_response($response);
-        $transaction->_activate;
+        my $response = Linux::Event::HTTP::Response
+            ->_new_server_default($request->version);
+        my $transaction = Linux::Event::HTTP::Transaction
+            ->_new_server_active($request, $response, $self);
 
         my $request_state;
         if ($bodyless) {
