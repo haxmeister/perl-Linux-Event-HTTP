@@ -68,6 +68,20 @@ sub _new ($class, %args) {
     return $class->new(%args);
 }
 
+sub _new_server_default ($class, $version) {
+    return bless {
+        status    => 200,
+        reason    => undef,
+        version   => $version,
+        headers   => $EMPTY_HEADERS,
+        committed => 0,
+        complete  => 0,
+        body_kind => undef,
+        body      => undef,
+    }, $class;
+}
+
+
 sub is_complete ($self) { !!$self->{complete} }
 sub is_mutable ($self) { $self->{committed} ? 0 : 1 }
 sub headers_are_lossless ($self) { 1 }
