@@ -24,11 +24,23 @@ my %case = (
         stage => 'parse',
         description => 'Perl input buffer plus pico parse_request/native Request construction; prebuilt response write',
     },
+    fastbound => {
+        label => '3b-fast + trusted Response construction',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'fastbound',
+        description => 'Parsed native Request plus private trusted default server Response construction',
+    },
     bound => {
         label => '3b + Response construction',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'bound',
         description => 'Parsed Request plus Response construction using the request HTTP version; prebuilt response write',
+    },
+    faststate => {
+        label => '3c-fast + trusted active Transaction',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'faststate',
+        description => 'Trusted default Response plus private trusted active server Transaction construction and bodyless state',
     },
     state => {
         label => '3c + Transaction/body state',
@@ -144,7 +156,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(parse bound state callbacks fused eligibility build mark commit complete checked bodyless http);
+my @names = qw(parse bound fastbound state faststate callbacks fused eligibility build mark commit complete checked bodyless http);
 my @records;
 
 say 'Linux::Event::HTTP transaction lifecycle ladder';
