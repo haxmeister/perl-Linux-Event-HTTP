@@ -71,7 +71,7 @@ jobs:
           BENCH_MAIN_TREE: /tmp/le-http-main
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_main,linuxevent,feersum \
+            --servers=linuxevent_main,linuxevent_legacy_callback,linuxevent,feersum \
             --strict \
             --requests=50000 \
             --warmup=5000 \
@@ -86,7 +86,7 @@ jobs:
           BENCH_MAIN_TREE: /tmp/le-http-main
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_main,linuxevent \
+            --servers=linuxevent_main,linuxevent_legacy_callback,linuxevent \
             --strict \
             --requests=30000 \
             --warmup=3000 \
