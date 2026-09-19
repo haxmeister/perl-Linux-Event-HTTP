@@ -170,25 +170,16 @@ sub _expect_continue ($request) {
 sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
     return 1 if !$handler;
 
-    my $ok;
-    {
-        local $self->{_http_dispatching} = 1;
-        $ok = eval {
+    my $ok = eval {
+        {
+            local $self->{_http_dispatching} = 1;
             $handler->($self, $request, $response, @extra);
-            1;
-        };
-    }
-
-    if (!$ok) {
-        $self->_fail_active_transaction(500, $request, $response);
-        return 0;
-    }
-
-    my $ready = eval {
+        }
         $self->_response_body_ready($response);
         1;
     };
-    if (!$ready) {
+
+    if (!$ok) {
         $self->_fail_active_transaction(500, $request, $response);
         return 0;
     }
