@@ -70,14 +70,9 @@ sub _new ($class, %args) {
 
 sub _new_server_default ($class, $version) {
     return bless {
-        status    => 200,
-        reason    => undef,
-        version   => $version,
-        headers   => $EMPTY_HEADERS,
-        committed => 0,
-        complete  => 0,
-        body_kind => undef,
-        body      => undef,
+        status  => 200,
+        version => $version,
+        headers => $EMPTY_HEADERS,
     }, $class;
 }
 
