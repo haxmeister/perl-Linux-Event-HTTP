@@ -118,6 +118,7 @@ my $repeats = 7;
 my $timeout = 120;
 my $read_budget_bytes = 0;
 my $json_path;
+my $case_list;
 my $smoke = 0;
 my $help = 0;
 
@@ -131,6 +132,7 @@ GetOptions(
     'timeout=f'           => \$timeout,
     'read-budget-bytes=i' => \$read_budget_bytes,
     'json=s'              => \$json_path,
+    'cases=s'             => \$case_list,
     'smoke'               => \$smoke,
     'help'                => \$help,
 ) or usage(2);
@@ -157,6 +159,15 @@ die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
 my @names = qw(parse bound fastbound state faststate callbacks fused eligibility build mark commit complete checked bodyless http);
+if (defined $case_list) {
+    my %known = map { $_ => 1 } @names;
+    my @selected = grep { length } split /,/, $case_list;
+    die "cases must name at least one benchmark case\n" if !@selected;
+    for my $name (@selected) {
+        die "unknown benchmark case '$name'\n" if !$known{$name};
+    }
+    @names = @selected;
+}
 my @records;
 
 say 'Linux::Event::HTTP transaction lifecycle ladder';
@@ -532,6 +543,7 @@ Options:
   --read-budget-bytes=N   Linux::Event Stream read budget (default 0)
   --timeout=N             per-phase timeout seconds (default 120)
   --json=PATH             write machine-readable report
+  --cases=LIST            comma-separated benchmark cases to run
   --smoke                 tiny one-repeat validation run
   --help                  show this help
 
