@@ -78,20 +78,6 @@ jobs:
           perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=30000 --warmup=3000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-raw-get16k.json
           perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=30000 --warmup=3000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-raw-post4k.json
 
-      - name: Raw request body behavior comparisons
-        if: matrix.perl == '5' && matrix.multi_thread == false
-        run: |
-          BODY_SERVERS=linuxevent_body_ignore,linuxevent_body_ignore_native,linuxevent_body_callback,linuxevent_body_callback_native,linuxevent_body_end,linuxevent_body_end_native,linuxevent_body_callback_end,linuxevent_body_callback_end_native
-          perl -Mblib bench/run-http-comparison.pl --servers="$BODY_SERVERS" --requests=10000 --warmup=1000 --repeats=5 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-raw-body-4k.json
-          perl -Mblib bench/run-http-comparison.pl --servers="$BODY_SERVERS" --requests=8000 --warmup=800 --repeats=5 --request-body-bytes=65536 --response-bytes=32 --timeout=180 --json=bench/results/ci-raw-body-64k.json
-
-      - name: Upload raw request body behavior results
-        if: matrix.perl == '5' && matrix.multi_thread == false
-        uses: actions/upload-artifact@v4
-        with:
-          name: raw-http-body-behavior
-          path: bench/results/ci-raw-body-*.json
-
       - name: Upload raw HTTP benchmark results
         if: matrix.perl == '5' && matrix.multi_thread == false
         uses: actions/upload-artifact@v4
