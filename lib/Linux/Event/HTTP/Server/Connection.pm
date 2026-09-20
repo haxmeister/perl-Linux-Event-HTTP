@@ -68,6 +68,8 @@ sub new ($class, %option) {
 
     $option{on_drain} = \&_http_transport_drain;
     $option{on_close} = \&_http_transport_close;
+    $option{on_data} = \&_http_perl_input
+        if !$class->_uses_native_http_input;
 
     my $self = $class->SUPER::new(%option);
     $self->{_http_on_request} = $on_request;
@@ -95,6 +97,8 @@ sub connect ($class, %option) {
     croak 'connect(): HTTP client support is not implemented by Linux::Event::HTTP::Server::Connection';
 }
 
+sub _uses_native_http_input ($class) { 0 }
+
 sub transaction ($self) {
     my $transaction = $self->{_http_active_transaction};
     return $transaction if $transaction;
@@ -112,11 +116,57 @@ sub transaction ($self) {
     return $transaction;
 }
 
-sub on_data ($self, $bytes) {
+sub _http_perl_input ($self, $bytes) {
     return if $self->{_http_closing} || $self->is_closed;
     $self->{_http_input} .= $bytes;
     $self->_drive_http1;
     return;
+}
+
+sub _http_native_protocol_400 ($self) {
+    $self->_protocol_error(400);
+    return 0;
+}
+
+sub _http_native_protocol_431 ($self) {
+    $self->_protocol_error(431);
+    return 0;
+}
+
+sub _http_native_protocol_501 ($self) {
+    $self->_protocol_error(501);
+    return 0;
+}
+
+sub _http_native_fallback_input ($self, $bytes) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+
+    $self->{_http_input} .= $bytes;
+    $self->_drive_http1;
+
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    return 1 if length($self->{_http_input});
+
+    my $state = $self->{_http_request_state};
+    return 1 if $self->{_http_active_request}
+        && $state && !$state->{body_done};
+
+    return 0;
+}
+
+sub _http_native_request ($self, $request) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    croak 'raw HTTP input delivered a new Request while another Request is active'
+        if $self->{_http_active_request};
+
+    my $consumed = $request->_consumed;
+    if ($consumed > $MAX_REQUEST_HEAD) {
+        $self->_protocol_error(431, $request->version);
+        return 0;
+    }
+
+    my $action = $self->_activate_http_request($request);
+    return $action == 2 ? 1 : 0;
 }
 
 sub _http_transport_drain ($self) {
@@ -554,6 +604,84 @@ sub _finalize_transaction ($self) {
     return;
 }
 
+sub _activate_http_request ($self, $request) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    croak 'cannot activate a new HTTP Request while another Request is active'
+        if $self->{_http_active_request};
+
+    my $expect = $request->_expect_continue;
+    if ($expect < 0) {
+        $self->_protocol_error(417, $request->version);
+        return 0;
+    }
+
+    my $body_mode = $request->_http1_body_mode;
+    my $bodyless = $body_mode eq 'none';
+
+    my $response = Linux::Event::HTTP::Response
+        ->_new_server_default($request);
+
+    my $request_state;
+    if ($bodyless) {
+        $request_state = $self->{_http_bodyless_state};
+        if (!$request_state) {
+            $request_state = $self->{_http_bodyless_state} = {
+                mode      => 'none',
+                body_done => $self->{_http_on_request_end} ? 0 : 1,
+            };
+        } elsif ($self->{_http_on_request_end}) {
+            $request_state->{body_done} = 0;
+        }
+    } else {
+        $request_state = _new_request_state($request, $body_mode);
+    }
+
+    $self->{_http_active_request} = $request;
+    $self->{_http_active_response} = $response;
+    $self->{_http_request_state} = $request_state;
+
+    if ($expect && _body_pending($request_state)) {
+        $self->write("HTTP/1.1 100 Continue\r\n\r\n");
+    }
+
+    if (!$self->_invoke_http_callback(
+        $self->{_http_on_request}, $request, $response,
+    )) {
+        return 0;
+    }
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    return 1 if !$self->{_http_active_request};
+
+    if ($bodyless) {
+        if ($self->{_http_on_request_end}) {
+            $request_state->{body_done} = 1;
+            return 0 if !$self->_invoke_http_callback(
+                $self->{_http_on_request_end}, $request, $response,
+            );
+            return 0 if $self->{_http_closing} || $self->is_closed;
+            return 1 if !$self->{_http_active_request};
+        }
+
+        if ($self->{_http_response_output_complete}) {
+            $self->_finalize_transaction;
+            return 0 if $self->{_http_closing} || $self->is_closed;
+            return 1;
+        }
+
+        $self->pause_read if !$self->is_read_paused;
+        return 0;
+    }
+
+    if (!_body_pending($request_state)) {
+        $self->_finish_request_body;
+        return 0 if $self->{_http_closing} || $self->is_closed;
+        return 1 if !$self->{_http_active_request};
+        return 0;
+    }
+
+    return 2;
+}
+
 sub _drive_http1 ($self) {
     return if $self->{_http_driving} || $self->{_http_closing}
         || $self->is_closed;
@@ -607,78 +735,9 @@ sub _drive_http1 ($self) {
         }
         substr($self->{_http_input}, 0, $consumed, '');
 
-        my $expect = $request->_expect_continue;
-        if ($expect < 0) {
-            $self->_protocol_error(417, $request->version);
-            last;
-        }
-
-        my $body_mode = $request->_http1_body_mode;
-        my $bodyless = $body_mode eq 'none';
-
-        my $response = Linux::Event::HTTP::Response
-            ->_new_server_default($request);
-
-        my $request_state;
-        if ($bodyless) {
-            $request_state = $self->{_http_bodyless_state};
-            if (!$request_state) {
-                $request_state = $self->{_http_bodyless_state} = {
-                    mode      => 'none',
-                    body_done => $self->{_http_on_request_end} ? 0 : 1,
-                };
-            } elsif ($self->{_http_on_request_end}) {
-                $request_state->{body_done} = 0;
-            }
-
-            # Native bodyless Requests are intrinsically complete: Request
-            # derives this from the parser's body mode. Do not create a
-            # fieldhash completion override for every ordinary request.
-        } else {
-            $request_state = _new_request_state($request, $body_mode);
-        }
-
-        # A new request is reached only after the previous exchange was
-        # cleared (or on a freshly initialized Connection), so transaction,
-        # response-state, and output-progress fields are already neutral.
-        $self->{_http_active_request} = $request;
-        $self->{_http_active_response} = $response;
-        $self->{_http_request_state} = $request_state;
-
-        if ($expect && _body_pending($request_state)) {
-            $self->write("HTTP/1.1 100 Continue\r\n\r\n");
-        }
-
-        if (!$self->_invoke_http_callback(
-            $self->{_http_on_request}, $request, $response,
-        )) {
-            last;
-        }
-        last if $self->{_http_closing} || $self->is_closed;
-        next if !$self->{_http_active_request};
-
-        if ($bodyless) {
-            if ($self->{_http_on_request_end}) {
-                $request_state->{body_done} = 1;
-                last if !$self->_invoke_http_callback(
-                    $self->{_http_on_request_end}, $request, $response,
-                );
-                last if $self->{_http_closing} || $self->is_closed;
-                next if !$self->{_http_active_request};
-            }
-
-            if ($self->{_http_response_output_complete}) {
-                $self->_finalize_transaction;
-                next;
-            }
-
-            $self->pause_read if !$self->is_read_paused;
-            last;
-        }
-
-        if (!_body_pending($request_state)) {
-            $self->_finish_request_body;
-        }
+        my $action = $self->_activate_http_request($request);
+        last if !$action;
+        next;
     }
 
     return;
