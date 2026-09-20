@@ -205,12 +205,148 @@ my $payload = 'x' x $response_bytes;
     }
 }
 
+{
+    package Linux::Event::HTTP::Bench::BodyIgnoreCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+
+    sub stream_tuning ($class) {
+        return read_budget_bytes => $main::READ_BUDGET_BYTES;
+    }
+
+    sub on_request ($self, $request, $response) {
+        $response->header('Content-Type', 'application/octet-stream');
+        $response->body($self->data->{payload});
+        return;
+    }
+}
+
+{
+    package Linux::Event::HTTP::Bench::BodyCallbackCompareConnection;
+    use parent -norequire, 'Linux::Event::HTTP::Bench::BodyIgnoreCompareConnection';
+
+    sub on_body ($self, $request, $response, $bytes) {
+        return;
+    }
+}
+
+{
+    package Linux::Event::HTTP::Bench::BodyEndCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+
+    sub stream_tuning ($class) {
+        return read_budget_bytes => $main::READ_BUDGET_BYTES;
+    }
+
+    sub on_request ($self, $request, $response) {
+        return;
+    }
+
+    sub on_request_end ($self, $request, $response) {
+        $response->header('Content-Type', 'application/octet-stream');
+        $response->body($self->data->{payload});
+        return;
+    }
+}
+
+{
+    package Linux::Event::HTTP::Bench::BodyCallbackEndCompareConnection;
+    use parent -norequire, 'Linux::Event::HTTP::Bench::BodyEndCompareConnection';
+
+    sub on_body ($self, $request, $response, $bytes) {
+        return;
+    }
+}
+
+{
+    package Linux::Event::HTTP::Bench::RawBodyIgnoreCompareConnection;
+    use parent -norequire, 'Linux::Event::HTTP::Bench::BodyIgnoreCompareConnection';
+    use Linux::Event::Framer ();
+    use Linux::Event::HTTP::_HTTP1 ();
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
+}
+
+{
+    package Linux::Event::HTTP::Bench::RawBodyCallbackCompareConnection;
+    use parent -norequire, 'Linux::Event::HTTP::Bench::BodyCallbackCompareConnection';
+    use Linux::Event::Framer ();
+    use Linux::Event::HTTP::_HTTP1 ();
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
+}
+
+{
+    package Linux::Event::HTTP::Bench::RawBodyEndCompareConnection;
+    use parent -norequire, 'Linux::Event::HTTP::Bench::BodyEndCompareConnection';
+    use Linux::Event::Framer ();
+    use Linux::Event::HTTP::_HTTP1 ();
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
+}
+
+{
+    package Linux::Event::HTTP::Bench::RawBodyCallbackEndCompareConnection;
+    use parent -norequire, 'Linux::Event::HTTP::Bench::BodyCallbackEndCompareConnection';
+    use Linux::Event::Framer ();
+    use Linux::Event::HTTP::_HTTP1 ();
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
+}
+
 my $connection_class = $mode eq 'natural'
     ? 'Linux::Event::HTTP::Bench::NaturalCompareConnection'
     : $mode eq 'content-type'
         ? 'Linux::Event::HTTP::Bench::ContentTypeCompareConnection'
     : $mode eq 'content-type-native'
         ? 'Linux::Event::HTTP::Bench::NativeContentTypeCompareConnection'
+    : $mode eq 'body-ignore'
+        ? 'Linux::Event::HTTP::Bench::BodyIgnoreCompareConnection'
+    : $mode eq 'body-ignore-native'
+        ? 'Linux::Event::HTTP::Bench::RawBodyIgnoreCompareConnection'
+    : $mode eq 'body-callback'
+        ? 'Linux::Event::HTTP::Bench::BodyCallbackCompareConnection'
+    : $mode eq 'body-callback-native'
+        ? 'Linux::Event::HTTP::Bench::RawBodyCallbackCompareConnection'
+    : $mode eq 'body-end'
+        ? 'Linux::Event::HTTP::Bench::BodyEndCompareConnection'
+    : $mode eq 'body-end-native'
+        ? 'Linux::Event::HTTP::Bench::RawBodyEndCompareConnection'
+    : $mode eq 'body-callback-end'
+        ? 'Linux::Event::HTTP::Bench::BodyCallbackEndCompareConnection'
+    : $mode eq 'body-callback-end-native'
+        ? 'Linux::Event::HTTP::Bench::RawBodyCallbackEndCompareConnection'
     : $mode eq 'legacy-ready'
         ? 'Linux::Event::HTTP::Bench::LegacyReadyCompareConnection'
         : $mode eq 'legacy-eligibility'
