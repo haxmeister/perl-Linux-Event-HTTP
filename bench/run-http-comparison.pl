@@ -54,7 +54,7 @@ my %server = (
         linuxevent_mode => 'legacy-callback',
     },
     linuxevent_baseline_content_type => {
-        label => 'Linux::Event::HTTP pre-output-state + Content-Type',
+        label => 'Linux::Event::HTTP pre-general-fastpath + Content-Type',
         command => sub {
             my $tree = $ENV{BENCH_BASE_TREE}
                 // die "BENCH_BASE_TREE is required for linuxevent_baseline_content_type\n";
