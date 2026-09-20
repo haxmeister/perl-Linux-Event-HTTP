@@ -6,9 +6,13 @@ Updated: 2026-09-20 (America/Chicago)
 
 Active branch: `experiment/native-raw-http1-current`.
 
-Current raw-input implementation code commit before this handoff update:
+Raw-input implementation anchor:
 `73576736bd173e1624ff9cdbb575d91d39a38859`
 ("perf: keep raw activation off the ordinary HTTP hot path").
+
+Current validated branch head before this handoff update:
+`a84196b9c4b3e0fa04b4f2be638bfa54727061f7`
+("test: fix raw transition subtest terminator").
 
 Exact pre-raw HTTP baseline:
 `c391b2d8fe6b56b6088569cdadeb86160630be26`
@@ -19,10 +23,14 @@ It is intentionally draft and MUST NOT be merged without explicit authorization.
 Nothing from this experiment has been merged to main. Modify only this HTTP
 repository unless the user explicitly authorizes another repository.
 
-All current tests and measurements use Linux::Event main commit:
-`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`,
+All current tests and measurements use Linux::Event commit:
+`51f2e1eab28f6f1234024a0cf37be03b36780e84`,
 Linux::Event 0.115,
-"Fix reentrant raw-consumer close accounting".
+"Allow native consumer retirement to ordinary Stream input".
+
+That core commit is the direct child of the previously pinned
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55` and adds the transition
+semantics required by raw HTTP Upgrade/CONNECT.
 
 ### Raw native HTTP/1 experiment: completed result
 
@@ -51,14 +59,15 @@ NOT replaced the default HTTP Connection.
 
 ### Correctness validation
 
-GitHub Actions run `35523554541` is green against the pinned Linux::Event core.
+GitHub Actions run `35536933321` is green against Linux::Event
+`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
 
 Candidate suite:
 
 - Perl 5.36: success;
 - latest Perl: success;
 - latest threaded Perl: success;
-- 41 test files / 1,017 tests;
+- 41 test files / 1,019 tests;
 - end-to-end benchmark smoke: success;
 - transaction lifecycle diagnostic smoke: success;
 - distribution integrity / disttest: success.
@@ -66,25 +75,42 @@ Candidate suite:
 The exact pre-raw baseline was also built and tested successfully in the same
 latest-Perl job before the A/B measurements.
 
-New raw-input coverage is in `t/15-native-raw-server.t`.
+Raw-input coverage now includes:
+
+- `t/15-native-raw-server.t`: native parsing, body fallback, return to native
+  parsing, persistent ordering, and reentrant close;
+- `t/42-upgrade.t`: raw native HTTP Upgrade to an ordinary `on_data` target,
+  with post-head bytes retained natively and delivered exactly once after the
+  transition;
+- `t/72-server-connect.t`: raw native CONNECT to an ordinary tunnel target,
+  with same-read post-CONNECT bytes retained and delivered exactly once.
+
+The Upgrade and CONNECT raw tests explicitly count entry through
+`_http_native_request`, so these are not ordinary-path passes accidentally
+masquerading as raw-provider coverage.
 
 ### Final same-run performance result
 
-Run `35523554541`; seven rotated repeats; 100 loopback TCP connections;
-pipeline 1; candidate and exact pre-raw baseline built in the same job; both use
-Linux::Event `1c3de59e395e05e79c735f5d5ef35cd5021e8c55`.
+Current authoritative measurement: run `35536933321`; seven rotated repeats;
+100 loopback TCP connections; pipeline 1; candidate and exact pre-raw baseline
+built in the same job; both use Linux::Event
+`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
 
 All comparison responses include `Content-Type: application/octet-stream`.
 
 | Workload | Exact pre-raw baseline | Ordinary current path | Raw native input | Raw vs baseline |
 | --- | ---: | ---: | ---: | ---: |
-| GET, 32-byte response | 31,165.2 req/s | 31,400.3 req/s | 34,520.8 req/s | +10.8% |
-| GET, 16 KiB response | 23,597.6 req/s | 23,358.5 req/s | 26,986.4 req/s | +14.4% |
-| POST, 4 KiB request / 32-byte response | 19,272.1 req/s | 19,151.7 req/s | 18,194.0 req/s | -5.6% |
+| GET, 32-byte response | 31,383.0 req/s | 31,290.9 req/s | 33,603.3 req/s | +7.1% |
+| GET, 16 KiB response | 22,394.7 req/s | 22,866.8 req/s | 25,718.8 req/s | +14.8% |
+| POST, 4 KiB request / 32-byte response | 18,391.1 req/s | 18,621.0 req/s | 17,739.3 req/s | -3.5% |
 
-The ordinary path is effectively neutral relative to the exact baseline
-(+0.8%, -1.0%, -0.6% respectively), confirming that the final experiment no
-longer penalizes existing users.
+The ordinary path remains effectively neutral relative to the exact baseline
+(-0.3%, +2.1%, +1.3% respectively). The new core transition support therefore
+does not impose a visible ordinary HTTP hot-path cost.
+
+The prior run `35523554541` against core `1c3de59e...` remains useful
+historical confirmation: it measured +10.8% / +14.4% GET gains and -5.6% POST.
+The direction of all three workloads reproduced after the core change.
 
 Conclusion:
 
@@ -100,50 +126,59 @@ whole Perl driver to avoid mirrored activation logic. It removed most of the
 small-response gain and made POST materially worse. Do not restore that design.
 The final branch keeps raw activation off the ordinary HTTP hot path.
 
-### IMPORTANT core transition limitation
+### Core transition blocker: resolved
 
-The previous handoff overstated what the current Linux::Event core change fixed.
+Linux::Event commit
+`51f2e1eab28f6f1234024a0cf37be03b36780e84`
+implements the deliberately narrow transition contract requested by this HTTP
+experiment:
 
-Current Linux::Event DOES support:
+- native-consumer -> different native-consumer remains supported;
+- native-consumer -> ordinary Perl Stream/`on_data` is now supported;
+- unread ordered input remains native until the transition and is re-driven
+  under the target descriptor;
+- provider flush/frame/retain lifetime settling is preserved;
+- ordinary -> native remains intentionally rejected.
 
-- native-consumer provider -> different native-consumer provider during
-  `transition_to()`;
-- preservation/re-driving of unread native input across that provider
-  replacement.
+The raw HTTP tests now prove the two generic HTTP handoffs that were previously
+blocked:
 
-Current Linux::Event still REJECTS:
+1. raw native HTTP -> ordinary Upgrade target;
+2. raw native HTTP -> ordinary CONNECT tunnel target.
 
-- adding native-consumer mode during a live transition;
-- removing native-consumer mode during a live transition.
+In both cases the HTTP request head and the target protocol bytes are sent in
+the same TCP write. The HTTP native consumer consumes only its own request head;
+the target bytes remain in Linux::Event's native ordered-byte buffer and are
+delivered exactly once after `transition_to()` retires the HTTP consumer.
 
-Therefore the old blocker is obsolete specifically for transitions such as
-native HTTP -> native WebSocket. It is NOT obsolete for the generic existing
-HTTP Upgrade/CONNECT contract, because those APIs can transition to ordinary
-Perl `on_data` Stream classes.
-
-This is why passing the existing Upgrade/CONNECT tests on the ordinary HTTP
-input path is not sufficient evidence for making raw HTTP input the default.
+This removes the remaining correctness blocker to making raw native HTTP input
+a production Connection capability.
 
 ### Next action
 
-The next architectural step requires explicit authorization to modify the
-Linux::Event core repository:
+Do NOT modify Linux::Event core further for this item; the required core change
+is complete and validated from HTTP.
 
-1. Generalize `transition_to()` so a live native consumer may transition to a
-   non-native/ordinary Stream target while preserving and re-driving unread
-   ordered bytes correctly.
-2. Add core regression coverage for native-consumer -> ordinary `on_data`
-   transition, including retained bytes and reentrant close/lifetime behavior.
-3. Return to this HTTP branch and run the existing Upgrade and CONNECT suites
-   with the raw HTTP provider actually enabled.
-4. If those are green, evaluate enabling raw HTTP input for the production
-   Connection.
-5. Treat the -5.6% 4 KiB POST result separately: optimize body-bearing raw input
-   only if realistic measurements justify additional complexity.
+The next HTTP-local decision is production enablement of raw input.
 
-Do not modify Linux::Event core from this Project without explicit user
-authorization. Do not merge PR #31 or merge this experiment to main without
-explicit authorization.
+Current evidence:
+
+- bodyless/common GET traffic benefits materially and repeatably;
+- Upgrade and CONNECT to both native-capable and ordinary targets now have a
+  viable core transition contract;
+- the ordinary HTTP path remains performance-neutral when the experiment is
+  present;
+- body-bearing POST still pays a measured fallback penalty (-3.5% in the current
+  run).
+
+Before making raw input the default for every server Connection, investigate
+the body-bearing fallback cost. Prefer removing that penalty without adding
+ordinary read-hot-path bookkeeping. If the fallback cannot be made neutral
+without disproportionate complexity, make an explicit API/default-policy
+decision rather than silently accepting a POST regression.
+
+Do not merge PR #31 or merge this experiment to main without explicit
+authorization.
 
 Everything below is experiment/history context. This section is authoritative.
 
