@@ -630,25 +630,29 @@ sub _drive_http1 ($self) {
 
         my $request_state;
         if ($bodyless) {
-            $request_state = $self->{_http_bodyless_state} //= {
-                mode      => 'none',
-                body_done => 0,
-            };
-            $request_state->{body_done}
-                = $self->{_http_on_request_end} ? 0 : 1;
-            delete $request_state->{close_after_response};
-            $request->_mark_complete;
+            $request_state = $self->{_http_bodyless_state};
+            if (!$request_state) {
+                $request_state = $self->{_http_bodyless_state} = {
+                    mode      => 'none',
+                    body_done => $self->{_http_on_request_end} ? 0 : 1,
+                };
+            } elsif ($self->{_http_on_request_end}) {
+                $request_state->{body_done} = 0;
+            }
+
+            # Native bodyless Requests are intrinsically complete: Request
+            # derives this from the parser's body mode. Do not create a
+            # fieldhash completion override for every ordinary request.
         } else {
             $request_state = _new_request_state($request, $body_mode);
         }
 
-        $self->{_http_active_transaction} = undef;
+        # A new request is reached only after the previous exchange was
+        # cleared (or on a freshly initialized Connection), so transaction,
+        # response-state, and output-progress fields are already neutral.
         $self->{_http_active_request} = $request;
         $self->{_http_active_response} = $response;
         $self->{_http_request_state} = $request_state;
-        $self->{_http_response_state} = undef;
-        $self->{_http_response_output_started} = 0;
-        $self->{_http_response_output_complete} = 0;
 
         if ($expect && _body_pending($request_state)) {
             $self->write("HTTP/1.1 100 Continue\r\n\r\n");
