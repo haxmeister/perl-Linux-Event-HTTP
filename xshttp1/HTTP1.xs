@@ -2,6 +2,7 @@
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
+#include "stream_consumer_abi.h"
 
 #include "../vendor/picohttpparser/picohttpparser.c"
 
@@ -689,6 +690,322 @@ new_request_object(
     return object;
 }
 
+typedef struct {
+    const les_consumer_host_api_v1_t *host;
+    void *host_context;
+    SV *stream;
+    CV *request_cv;
+    CV *fallback_cv;
+    CV *protocol_400_cv;
+    CV *protocol_431_cv;
+    CV *protocol_501_cv;
+    int fallback_input;
+} le_http_raw_consumer_context;
+
+static CV *
+le_http_raw_method_cv(
+    pTHX_
+    le_http_raw_consumer_context *context,
+    CV **slot,
+    const char *method_name
+)
+{
+    GV *gv;
+    CV *cv;
+
+    if (*slot != NULL)
+        return *slot;
+
+    if (!SvROK(context->stream))
+        croak("Linux::Event HTTP raw consumer stream is not an object");
+
+    gv = gv_fetchmethod_autoload(
+        SvSTASH(SvRV(context->stream)),
+        method_name,
+        0
+    );
+    if (gv == NULL || (cv = GvCV(gv)) == NULL)
+        croak("Linux::Event HTTP raw consumer method %s is unavailable",
+            method_name);
+
+    *slot = (CV *)SvREFCNT_inc((SV *)cv);
+    return *slot;
+}
+
+static int
+le_http_raw_call_scalar_int(
+    pTHX_
+    le_http_raw_consumer_context *context,
+    CV **slot,
+    const char *method_name,
+    SV *arg,
+    int store_fallback
+)
+{
+    const les_consumer_host_api_v1_t *host;
+    void *host_context;
+    CV *cv;
+    int result = 0;
+    int count;
+    int jump_status;
+    dJMPENV;
+    dSP;
+
+    host = context->host;
+    host_context = context->host_context;
+    if (!host
+        || host->struct_size < LES_CONSUMER_HOST_V1_RETAIN_REQUIRED_SIZE
+        || !host->retain || !host->release)
+        croak("Linux::Event raw consumer host lifetime extension is unavailable");
+
+    cv = le_http_raw_method_cv(aTHX_ context, slot, method_name);
+
+    if (!host->retain(aTHX_ host_context))
+        croak("Linux::Event raw consumer host is no longer available");
+
+    JMPENV_PUSH(jump_status);
+    if (jump_status == 0) {
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+        XPUSHs(context->stream);
+        if (arg != NULL)
+            XPUSHs(arg);
+        PUTBACK;
+        count = call_sv((SV *)cv, G_SCALAR);
+        SPAGAIN;
+        if (count > 0)
+            result = POPi;
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+        JMPENV_POP;
+    } else {
+        JMPENV_POP;
+        host->release(aTHX_ host_context);
+        JMPENV_JUMP(jump_status);
+    }
+
+    if (store_fallback)
+        context->fallback_input = result ? 1 : 0;
+
+    host->release(aTHX_ host_context);
+    return result;
+}
+
+static void *
+le_http_raw_consumer_create(
+    pTHX_
+    const les_consumer_host_api_v1_t *host,
+    void *host_context,
+    SV *stream
+)
+{
+    le_http_raw_consumer_context *context;
+
+    if (!host
+        || host->abi_version != LES_CONSUMER_ABI_VERSION
+        || host->struct_size < LES_CONSUMER_HOST_V1_RETAIN_REQUIRED_SIZE
+        || !host->retain || !host->release)
+        return NULL;
+
+    Newxz(context, 1, le_http_raw_consumer_context);
+    if (context == NULL)
+        return NULL;
+
+    context->host = host;
+    context->host_context = host_context;
+    context->stream = SvREFCNT_inc(stream);
+    context->fallback_input = 0;
+    return context;
+}
+
+static int
+le_http_raw_consumer_input(
+    pTHX_
+    void *opaque,
+    const char *buf,
+    size_t buffer_len,
+    size_t *host_consumed
+)
+{
+    le_http_raw_consumer_context *context
+        = (le_http_raw_consumer_context *)opaque;
+    const char *method;
+    size_t method_len;
+    const char *path;
+    size_t path_len;
+    int minor_version;
+    struct phr_header headers[LE_HTTP1_MAX_HEADERS];
+    size_t num_headers = 100;
+    int consumed;
+    le_http_request_semantics semantics;
+    const char *detail;
+    int semantic_status;
+    SV *request;
+
+    *host_consumed = 0;
+
+    if (context->fallback_input) {
+        SV *bytes = sv_2mortal(newSVpvn(buf, (STRLEN)buffer_len));
+        *host_consumed = buffer_len;
+        (void)le_http_raw_call_scalar_int(
+            aTHX_ context,
+            &context->fallback_cv,
+            "_http_native_fallback_input",
+            bytes,
+            1
+        );
+        return LES_CONSUMER_CONTINUE;
+    }
+
+    consumed = parse_request_strict(
+        buf,
+        buffer_len,
+        &method,
+        &method_len,
+        &path,
+        &path_len,
+        &minor_version,
+        headers,
+        &num_headers,
+        0
+    );
+
+    if (consumed == -2) {
+        if (buffer_len > 65536) {
+            *host_consumed = buffer_len;
+            (void)le_http_raw_call_scalar_int(
+                aTHX_ context,
+                &context->protocol_431_cv,
+                "_http_native_protocol_431",
+                NULL,
+                0
+            );
+        }
+        return LES_CONSUMER_CONTINUE;
+    }
+
+    if (consumed == -1) {
+        *host_consumed = buffer_len;
+        (void)le_http_raw_call_scalar_int(
+            aTHX_ context,
+            &context->protocol_400_cv,
+            "_http_native_protocol_400",
+            NULL,
+            0
+        );
+        return LES_CONSUMER_CONTINUE;
+    }
+
+    semantic_status = validate_request_semantics(
+        minor_version,
+        headers,
+        num_headers,
+        &semantics,
+        &detail
+    );
+    if (semantic_status != LE_HTTP_SEMANTICS_OK) {
+        *host_consumed = (size_t)consumed;
+        if (semantic_status == LE_HTTP_SEMANTICS_NOT_IMPLEMENTED)
+            (void)le_http_raw_call_scalar_int(
+                aTHX_ context,
+                &context->protocol_501_cv,
+                "_http_native_protocol_501",
+                NULL,
+                0
+            );
+        else
+            (void)le_http_raw_call_scalar_int(
+                aTHX_ context,
+                &context->protocol_400_cv,
+                "_http_native_protocol_400",
+                NULL,
+                0
+            );
+        return LES_CONSUMER_CONTINUE;
+    }
+
+    request = new_request_object(
+        aTHX_
+        buf,
+        consumed,
+        minor_version,
+        method,
+        method_len,
+        path,
+        path_len,
+        headers,
+        num_headers,
+        &semantics
+    );
+
+    *host_consumed = (size_t)consumed;
+    (void)le_http_raw_call_scalar_int(
+        aTHX_ context,
+        &context->request_cv,
+        "_http_native_request",
+        sv_2mortal(request),
+        1
+    );
+    return LES_CONSUMER_CONTINUE;
+}
+
+static void
+le_http_raw_consumer_event(
+    pTHX_
+    void *opaque,
+    uint32_t event,
+    int error,
+    const char *message
+)
+{
+    PERL_UNUSED_ARG(opaque);
+    PERL_UNUSED_ARG(event);
+    PERL_UNUSED_ARG(error);
+    PERL_UNUSED_ARG(message);
+    PERL_UNUSED_CONTEXT;
+}
+
+static void
+le_http_raw_consumer_destroy(pTHX_ void *opaque)
+{
+    le_http_raw_consumer_context *context
+        = (le_http_raw_consumer_context *)opaque;
+
+    PERL_UNUSED_CONTEXT;
+
+    if (context == NULL)
+        return;
+
+    if (context->request_cv != NULL)
+        SvREFCNT_dec((SV *)context->request_cv);
+    if (context->fallback_cv != NULL)
+        SvREFCNT_dec((SV *)context->fallback_cv);
+    if (context->protocol_400_cv != NULL)
+        SvREFCNT_dec((SV *)context->protocol_400_cv);
+    if (context->protocol_431_cv != NULL)
+        SvREFCNT_dec((SV *)context->protocol_431_cv);
+    if (context->protocol_501_cv != NULL)
+        SvREFCNT_dec((SV *)context->protocol_501_cv);
+    if (context->stream != NULL)
+        SvREFCNT_dec(context->stream);
+    Safefree(context);
+}
+
+static const les_consumer_ops_v1_t le_http_raw_consumer_ops = {
+    LES_CONSUMER_ABI_VERSION,
+    sizeof(les_consumer_ops_v1_t),
+    "Linux::Event::HTTP::_HTTP1 raw input",
+    LES_CONSUMER_F_RAW_INPUT,
+    le_http_raw_consumer_create,
+    NULL,
+    le_http_raw_consumer_event,
+    le_http_raw_consumer_destroy,
+    NULL,
+    le_http_raw_consumer_input
+};
+
 static const char *
 default_reason_phrase(int status)
 {
@@ -1270,6 +1587,13 @@ response_build_simple_scalar_final(
 
 MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::_HTTP1
 PROTOTYPES: DISABLE
+
+UV
+_raw_consumer_operations_address()
+  CODE:
+    RETVAL = PTR2UV(&le_http_raw_consumer_ops);
+  OUTPUT:
+    RETVAL
 
 const char *
 pico_version(CLASS)
