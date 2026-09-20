@@ -9,6 +9,10 @@ on:
       - docs/**
   workflow_dispatch:
 
+concurrency:
+  group: http-realistic-scalar-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -18,6 +22,8 @@ jobs:
     steps:
       - name: Check out experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Perl
         uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
@@ -37,16 +43,26 @@ jobs:
           cpanm --notest Feersum
           cpanm --notest --installdeps .
 
-      - name: Build and test
+      - name: Build and test experiment
         run: |
           perl Makefile.PL
           make
           make test
 
-      - name: Default vs Content-Type vs Feersum
+      - name: Build exact pre-output-state baseline
+        run: |
+          git worktree add /tmp/le-http-before f2fd072f3a88a82d6682c95766aa4537284ec8b7
+          cd /tmp/le-http-before
+          perl Makefile.PL
+          make
+          make test
+
+      - name: 32-byte realistic scalar A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent,linuxevent_content_type,feersum \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent,feersum \
             --strict \
             --requests=50000 \
             --warmup=5000 \
@@ -56,10 +72,12 @@ jobs:
             --repeats=7 \
             --json=bench/results/realistic-content-type.json
 
-      - name: 16 KiB default vs Content-Type vs Feersum
+      - name: 16 KiB realistic scalar A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent,linuxevent_content_type,feersum \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent,feersum \
             --strict \
             --requests=30000 \
             --warmup=3000 \
