@@ -335,6 +335,31 @@ not spend more time micro-optimizing `_clear_transaction`. The earlier
 framing validation, Content-Length generation, and wire construction out of
 the Perl hot path.
 
+## Current lifecycle after scalar-final work
+
+Latest-core lifecycle ladder, run `35488914267`, Linux::Event main
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`, all tests green:
+
+- C1 parse + prebuilt Content-Type write: 65,195.3 req/s;
+- C2 + trusted sparse Response: 55,189.2 (-15.4%);
+- C3 + Content-Type header setter: 50,349.7 (-8.8%);
+- C4 + scalar body setter: 46,114.7 (-8.4%);
+- C5 + generated Content-Length metadata: 43,374.3 (-5.9%);
+- C6 + native Response head serialization: 39,853.7 (-8.1%);
+- C7 + active bodyless exchange / guarded application callback:
+  28,239.3 (-29.1%);
+- C8 + current scalar-final send/completion: 26,940.6 (-4.6%);
+- C9 + production request checks: 24,163.9 (-10.3%);
+- C10 production Connection driver: 22,592.7 (-6.5%);
+- C11 full Server wrapper: 22,722.7 (+0.6%).
+
+The scalar-final item is therefore largely resolved: the send/completion step is
+now only about 4.6%. The next large HTTP-local target is the combined active
+bodyless exchange/application-dispatch stage. Earlier callback-fusion testing
+showed only about a 1% effect, so split this stage before changing callback
+semantics: separately measure exchange activation/request-completion bookkeeping
+and the actual guarded application call.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
