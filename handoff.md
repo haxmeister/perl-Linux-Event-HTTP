@@ -6,6 +6,8 @@ Updated: 2026-09-20 (America/Chicago)
 
 Canonical branch: `main`.
 
+Active research branch: `experiment/raw-chunked-body`.
+
 Current main integration commit:
 
 `c51b8fe2450e2943f267fd1b04f89ec957f42505`
@@ -191,30 +193,68 @@ GET materially. It was fully reverted before the main squash merge.
 
 Do not revive the nested inline-tail design without new evidence.
 
+### Chunked request-body baseline
+
+Branch-only benchmark support now allows the same decoded request body to be
+sent either with Content-Length or HTTP/1.1 chunked transfer coding. No
+production chunked semantics were changed for this measurement.
+
+GitHub Actions run `35539717584` is green and measured the existing generic
+raw chunked fallback with 4 KiB wire chunks, five rotated repeats, 100
+connections, and pipeline 1.
+
+Median throughput:
+
+| Body | Behavior | Ordinary req/s | Raw req/s | Raw change |
+| --- | --- | ---: | ---: | ---: |
+| 4 KiB | drain / early response | 34,446.9 | 32,571.8 | -5.4% |
+| 4 KiB | on_body / early response | 32,255.0 | 30,708.0 | -4.8% |
+| 4 KiB | drain / request-end response | 35,367.0 | 32,752.3 | -7.4% |
+| 4 KiB | on_body / request-end response | 32,160.6 | 31,103.4 | -3.3% |
+| 64 KiB | drain / early response | 19,479.5 | 18,314.1 | -6.0% |
+| 64 KiB | on_body / early response | 16,685.0 | 15,230.5 | -8.7% |
+| 64 KiB | drain / request-end response | 20,277.6 | 19,215.4 | -5.2% |
+| 64 KiB | on_body / request-end response | 17,379.4 | 16,803.6 | -3.3% |
+
+Paired-repeat median deltas were also negative in all eight cases: roughly
+-4.5% to -8.4% at 4 KiB and -2.7% to -8.0% at 64 KiB.
+
+Because the drain/no-on_body cases regress as well as the callback cases, the
+application body callback is not the dominant cost. Because both early-response
+and request-end-response shapes regress, response timing is not the dominant
+cost either. The common extra work is the generic raw fallback: materialize the
+entire borrowed native window as a Perl SV, append it to `_http_input`, and
+re-enter the general Perl HTTP driver/chunk decoder.
+
+This is sufficient evidence for a narrowly scoped native chunked-body prototype.
+It is not evidence to change the production default yet.
+
 ### Next useful work
 
-The remaining input-mode question before considering raw input as the production
-Server::Connection default is chunked request bodies.
+Prototype a native chunked-body mode inside the existing raw provider while
+leaving the ordinary Stream path untouched.
 
-Measure ordinary vs raw chunked requests under the same application shapes used
-for Content-Length:
+Keep the scope narrow:
 
-1. body ignored/drained with response generated in `on_request`;
-2. body delivered through `on_body` with response generated in `on_request`;
-3. body ignored/drained with response generated in `on_request_end`;
-4. body delivered through `on_body` with response generated in
-   `on_request_end`;
-5. at least 4 KiB and 64 KiB decoded body sizes.
+1. Reuse picohttpparser's existing persistent chunked decoder state.
+2. Copy only the borrowed encoded raw window into mutable native scratch because
+   pico's decoder mutates its input.
+3. For drain/no-on_body, decode without creating a Perl body SV.
+4. For on_body, materialize only decoded payload bytes and feed them directly
+   into the existing HTTP callback lifecycle.
+5. When the terminating chunk is found, consume only the encoded chunked-body
+   prefix so same-read following request bytes remain in the native ordered-byte
+   buffer and are parsed as the next request.
+6. Preserve trailers, malformed-body 400 handling, reentrant close safety, and
+   provider retain/release rules.
 
-Keep the existing generic chunked fallback during the first measurement. Do not
-specialize chunked parsing merely for symmetry with Content-Length. If the
-fallback is already competitive, retain the simpler implementation. If there is
-a repeatable material penalty, isolate whether it comes from native-window
-materialization, the generic Perl fallback, chunk decoding, or callback
-boundaries before changing production semantics.
+Add focused correctness coverage before benchmarking. Then rerun the exact
+4 KiB/64 KiB eight-case matrix. Keep the specialization only if it materially
+improves the existing raw fallback without reducing the already validated
+bodyless GET or Content-Length gains.
 
-After chunked-body evidence is complete, make an explicit decision about whether
-raw native input should become the default production Server::Connection mode.
+Do not make raw input the production Server::Connection default until this
+chunked result is resolved.
 
 Everything below is experiment/history context. This section is authoritative.
 
