@@ -213,7 +213,7 @@ sub _response_body_ready ($self, $response) {
     return if $self->{_http_response_output_complete};
 
     my $transaction = $self->{_http_active_transaction};
-    if ($response->{_server_default_final}
+    if ((($response->{_server_flags} // 0) & 1)
         && ($response->{body_kind} // '') eq 'scalar') {
         return if $self->_try_native_default_final(
             $transaction, $response->{body},
@@ -304,11 +304,12 @@ sub _try_native_default_final ($self, $transaction, $body) {
         ? $transaction->{response}
         : $self->{_http_active_response};
     return 0 if !$response;
-    return 0 if !$response->{_server_default_final};
-    return 0 if ($response->{status} // 0) != 200;
+    return 0 if !(($response->{_server_flags} // 0) & 1);
+    return 0 if (($response->{status} // 200) != 200);
     return 0 if defined $response->{reason};
     my $headers = $response->{headers};
-    return 0 if ref($headers) ne 'ARRAY' || @$headers;
+    return 0 if defined($headers)
+        && (ref($headers) ne 'ARRAY' || @$headers);
     return 0 if $self->{_http_response_state};
 
     my $request_state = $self->{_http_request_state} or return 0;
@@ -616,7 +617,7 @@ sub _drive_http1 ($self) {
         my $bodyless = $body_mode eq 'none';
 
         my $response = Linux::Event::HTTP::Response
-            ->_new_server_default($request->version);
+            ->_new_server_default($request);
 
         my $request_state;
         if ($bodyless) {
