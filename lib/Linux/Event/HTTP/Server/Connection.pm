@@ -586,37 +586,22 @@ sub _drive_http1 ($self) {
 
         last if !length($self->{_http_input});
 
-        my $request;
-        my $parsed = eval {
-            $request = $PARSER->parse_request(
-                $self->{_http_input}, 0, $MAX_HEADERS,
-            );
-            1;
-        };
-
-        if (!$parsed) {
-            my $failure = "$@";
-            my $status = $failure =~ /semantic error \(501\)/ ? 501 : 400;
-            $self->_protocol_error($status);
-            last;
-        }
+        my $request = $PARSER->_parse_server_request(
+            $self->{_http_input}, $MAX_REQUEST_HEAD, $MAX_HEADERS,
+        );
 
         if (!defined $request) {
-            if (length($self->{_http_input}) > $MAX_REQUEST_HEAD) {
-                $self->_protocol_error(431);
-            }
+            last;
+        }
+        if (!ref $request) {
+            $self->_protocol_error(0 + $request);
             last;
         }
 
         my $consumed = $request->_consumed;
-        if ($consumed > $MAX_REQUEST_HEAD) {
-            $self->_protocol_error(431, $request->version);
-            last;
-        }
-
         substr($self->{_http_input}, 0, $consumed, '');
 
-        my $expect = _expect_continue($request);
+        my $expect = $request->_expect_continue;
         if ($expect < 0) {
             $self->_protocol_error(417, $request->version);
             last;
