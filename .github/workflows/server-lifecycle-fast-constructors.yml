@@ -1,16 +1,16 @@
-name: HTTP realistic scalar response benchmark
+name: HTTP general scalar final fast-path experiment
 
 on:
   push:
     branches:
-      - experiment/http-server-lifecycle-fast-constructors
+      - experiment/scalar-final-general-fastpath
     paths-ignore:
       - handoff.md
       - docs/**
   workflow_dispatch:
 
 concurrency:
-  group: http-realistic-scalar-${{ github.ref }}
+  group: http-general-scalar-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -49,15 +49,15 @@ jobs:
           make
           make test
 
-      - name: Build exact pre-output-state baseline
+      - name: Build exact pre-fast-path baseline
         run: |
-          git worktree add /tmp/le-http-before f2fd072f3a88a82d6682c95766aa4537284ec8b7
+          git worktree add /tmp/le-http-before 9663590bdbfab9e705c0760efa06a118c08f310c
           cd /tmp/le-http-before
           perl Makefile.PL
           make
           make test
 
-      - name: 32-byte realistic scalar A/B
+      - name: 32-byte Content-Type scalar A/B
         env:
           BENCH_BASE_TREE: /tmp/le-http-before
         run: |
@@ -70,9 +70,9 @@ jobs:
             --pipeline=1 \
             --response-bytes=32 \
             --repeats=7 \
-            --json=bench/results/realistic-content-type.json
+            --json=bench/results/general-scalar-content-type.json
 
-      - name: 16 KiB realistic scalar A/B
+      - name: 16 KiB Content-Type scalar A/B
         env:
           BENCH_BASE_TREE: /tmp/le-http-before
         run: |
@@ -85,12 +85,29 @@ jobs:
             --pipeline=1 \
             --response-bytes=16384 \
             --repeats=5 \
-            --json=bench/results/realistic-content-type-16k.json
+            --json=bench/results/general-scalar-content-type-16k.json
+
+      - name: 4 KiB POST Content-Type A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --request-body-bytes=4096 \
+            --response-bytes=32 \
+            --repeats=5 \
+            --json=bench/results/general-scalar-content-type-post4k.json
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: realistic-content-type
+          name: general-scalar-final
           path: |
-            bench/results/realistic-content-type.json
-            bench/results/realistic-content-type-16k.json
+            bench/results/general-scalar-content-type.json
+            bench/results/general-scalar-content-type-16k.json
+            bench/results/general-scalar-content-type-post4k.json
