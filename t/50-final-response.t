@@ -27,6 +27,8 @@ use Linux::Event::HTTP::Server;
         } elsif (($state->{mode} // '') eq 'custom-header') {
             $response->header('X-Fastpath-Fallback', 'yes');
             $response->body($state->{response_body});
+        } elsif (($state->{mode} // '') eq 'early-body') {
+            $response->body($state->{response_body});
         } elsif (($state->{mode} // '') ne 'body') {
             $response->body($state->{response_body});
         }
@@ -34,8 +36,15 @@ use Linux::Event::HTTP::Server;
     }
 
     sub on_body ($self, $request, $response, $bytes) {
-        ++$self->data->{body_hits};
-        $self->data->{body} .= $bytes;
+        my $state = $self->data;
+        ++$state->{body_hits};
+        $state->{body} .= $bytes;
+        if (($state->{mode} // '') eq 'early-body') {
+            my $transaction = $self->transaction;
+            $state->{early_transaction} = $transaction;
+            $state->{early_started_in_body}
+                = $transaction->is_response_started ? 1 : 0;
+        }
         return;
     }
 
@@ -44,6 +53,12 @@ use Linux::Event::HTTP::Server;
         ++$state->{request_end_hits};
         if (($state->{mode} // '') eq 'body') {
             $response->body('post:' . $state->{body} . "\n");
+        } elsif (($state->{mode} // '') eq 'early-body') {
+            my $transaction = $self->transaction;
+            $state->{early_started_at_end}
+                = $transaction->is_response_started ? 1 : 0;
+            $state->{early_complete_at_end}
+                = $transaction->is_complete ? 1 : 0;
         }
         return;
     }
@@ -133,6 +148,32 @@ like(
     'ordinary on_request plus Response->body completes eligible scalar response',
 );
 is($state->{request_hits}, 1, 'ordinary request callback runs once');
+
+$state = new_state(
+    mode => 'early-body',
+    response_body => "early\n",
+);
+$wire = run_exchange(
+    "POST /early HTTP/1.1\r\n" .
+        "Host: example.test\r\n" .
+        "Content-Length: 4\r\n\r\n" .
+        "data",
+    $state,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 200 OK\r\nContent-Length: 6\r\n\r\nearly\n\z/s,
+    'scalar response may complete before request body consumption finishes',
+);
+is($state->{body}, 'data', 'early response still drains the complete request body');
+ok($state->{early_started_in_body},
+    'late-materialized Transaction inherits response-started state');
+ok($state->{early_started_at_end},
+    'Transaction remains response-started at request-end callback');
+ok(!$state->{early_complete_at_end},
+    'Transaction completes only after request-end callback returns');
+ok($state->{early_transaction}->is_complete,
+    'late-materialized Transaction reaches complete after exchange finalization');
 
 $state = new_state(mode => 'custom-status', response_body => "created\n");
 $wire = run_exchange(
