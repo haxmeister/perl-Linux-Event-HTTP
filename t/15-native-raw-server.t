@@ -43,6 +43,11 @@ use Linux::Event::HTTP::Server::Connection;
         return $self->SUPER::_http_native_content_length_body($bytes, $done);
     }
 
+    sub _http_native_chunked_body ($self, $bytes, $done) {
+        $self->data->{native_chunked_body_hits}++;
+        return $self->SUPER::_http_native_chunked_body($bytes, $done);
+    }
+
     sub on_request ($self, $request, $response) {
         my $state = $self->data;
         push @{$state->{paths}}, $request->target;
@@ -176,6 +181,11 @@ subtest 'raw native head parsing shares the current request lifecycle' => sub {
         return $self->SUPER::_http_native_content_length_complete;
     }
 
+    sub _http_native_chunked_complete ($self) {
+        $self->data->{native_chunked_complete_hits}++;
+        return $self->SUPER::_http_native_chunked_complete;
+    }
+
     sub on_request ($self, $request, $response) {
         push @{$self->data->{paths}}, $request->target;
         return;
@@ -253,7 +263,7 @@ subtest 'raw Content-Length drain stays native through a pipelined next head' =>
         'drained Content-Length body never enters generic fallback');
 };
 
-subtest 'chunked bodies deliberately retain the generic fallback' => sub {
+subtest 'raw chunked body delivery stays native through a pipelined next head' => sub {
     my $loop = Linux::Event::Loop->new;
     my $state = {
         wire => '',
@@ -262,6 +272,7 @@ subtest 'chunked bodies deliberately retain the generic fallback' => sub {
         raw_request_hits => 0,
         fallback_hits => 0,
         native_body_hits => 0,
+        native_chunked_body_hits => 0,
     };
     my $server = Linux::Event::HTTP::Server->new(
         loop => $loop,
@@ -275,7 +286,7 @@ subtest 'chunked bodies deliberately retain the generic fallback' => sub {
         loop => $loop,
         after => 2,
         on_timer => sub ($timer) {
-            die "raw chunked fallback test timed out\n";
+            die "raw chunked body test timed out\n";
         },
     );
 
@@ -288,12 +299,15 @@ subtest 'chunked bodies deliberately retain the generic fallback' => sub {
                 "POST /upload HTTP/1.1\r\n" .
                 "Host: example.test\r\n" .
                 "Transfer-Encoding: chunked\r\n\r\n" .
-                "4\r\nDATA\r\n0\r\n\r\n"
+                "4\r\nDATA\r\n0\r\n\r\n" .
+                "GET /after HTTP/1.1\r\n" .
+                "Host: example.test\r\n\r\n"
             );
         },
         on_data => sub ($stream, $bytes) {
             $state->{wire} .= $bytes;
-            if ($state->{wire} =~ /HTTP\/1\.1 200 OK/) {
+            my $responses = () = $state->{wire} =~ /HTTP\/1\.1 200 OK/g;
+            if ($responses >= 2) {
                 $guard->cancel;
                 $stream->close;
                 $server->close;
@@ -301,18 +315,170 @@ subtest 'chunked bodies deliberately retain the generic fallback' => sub {
             }
         },
         on_error => sub ($stream, $error) {
-            die "raw chunked fallback client failed: $error\n";
+            die "raw chunked body client failed: $error\n";
         },
     );
 
     $loop->run;
 
-    is($state->{body}, 'DATA', 'chunked body still reaches on_body');
-    cmp_ok($state->{fallback_hits}, '>=', 1,
-        'chunked request exercises the generic fallback');
-    is($state->{native_body_hits}, 0,
-        'chunked request does not use the Content-Length direct path');
+    is($state->{body}, 'DATA', 'chunked body reaches on_body directly');
+    is_deeply($state->{paths}, [ '/upload', '/after' ],
+        'chunked body boundary preserves the pipelined next request');
+    is($state->{raw_request_hits}, 2,
+        'both request heads parse through the raw provider');
+    cmp_ok($state->{native_chunked_body_hits}, '>=', 1,
+        'chunked body used direct native-provider body delivery');
+    is($state->{fallback_hits}, 0,
+        'chunked body does not enter the generic Perl input fallback');
 };
+
+subtest 'raw chunked drain consumes trailers and preserves next request' => sub {
+    my $loop = Linux::Event::Loop->new;
+    my $state = {
+        wire => '',
+        paths => [],
+        raw_request_hits => 0,
+        fallback_hits => 0,
+        native_complete_hits => 0,
+        native_chunked_complete_hits => 0,
+    };
+    my $server = Linux::Event::HTTP::Server->new(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => 0,
+        data => $state,
+        connection_class => 'T::RawDrainConnection',
+    );
+
+    my $guard = Linux::Event::Kernel::Timer->new(
+        loop => $loop,
+        after => 2,
+        on_timer => sub ($timer) {
+            die "raw chunked drain test timed out\n";
+        },
+    );
+
+    Linux::Event::IO::Sock::Stream->connect(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => $server->port,
+        on_ready => sub ($stream) {
+            $stream->write(
+                "POST /drain HTTP/1.1\r\n" .
+                "Host: example.test\r\n" .
+                "Transfer-Encoding: chunked\r\n\r\n" .
+                "4\r\nDATA\r\n0\r\nX-Trailer: yes\r\n\r\n" .
+                "GET /next HTTP/1.1\r\n" .
+                "Host: example.test\r\n\r\n"
+            );
+        },
+        on_data => sub ($stream, $bytes) {
+            $state->{wire} .= $bytes;
+            my $responses = () = $state->{wire} =~ /HTTP\/1\.1 200 OK/g;
+            if ($responses >= 2) {
+                $guard->cancel;
+                $stream->close;
+                $server->close;
+                $loop->stop;
+            }
+        },
+        on_error => sub ($stream, $error) {
+            die "raw chunked drain client failed: $error\n";
+        },
+    );
+
+    $loop->run;
+
+    is_deeply($state->{paths}, [ '/drain', '/next' ],
+        'chunked trailers end before the pipelined next request');
+    is($state->{raw_request_hits}, 2,
+        'both request heads remain on the raw native parser');
+    is($state->{native_chunked_complete_hits}, 1,
+        'drained chunked body notifies Perl only at completion');
+    is($state->{fallback_hits}, 0,
+        'drained chunked body never enters generic fallback');
+};
+
+{
+    package T::RawChunkedErrorConnection;
+    use parent -norequire, 'T::RawHTTPConnection';
+
+    sub _http_native_chunked_error ($self) {
+        $self->data->{chunked_error_hits}++;
+        return $self->SUPER::_http_native_chunked_error;
+    }
+}
+
+subtest 'malformed raw chunked body fails the active request with 400' => sub {
+    my $loop = Linux::Event::Loop->new;
+    my $state = {
+        wire => '',
+        body => '',
+        paths => [],
+        raw_request_hits => 0,
+        fallback_hits => 0,
+        native_body_hits => 0,
+        native_chunked_body_hits => 0,
+        chunked_error_hits => 0,
+    };
+    my $server = Linux::Event::HTTP::Server->new(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => 0,
+        data => $state,
+        connection_class => 'T::RawChunkedErrorConnection',
+    );
+
+    my $guard = Linux::Event::Kernel::Timer->new(
+        loop => $loop,
+        after => 2,
+        on_timer => sub ($timer) {
+            die "raw malformed chunked test timed out\n";
+        },
+    );
+
+    Linux::Event::IO::Sock::Stream->connect(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => $server->port,
+        on_ready => sub ($stream) {
+            $stream->write(
+                "POST /upload HTTP/1.1\r\n" .
+                "Host: example.test\r\n" .
+                "Transfer-Encoding: chunked\r\n\r\n" .
+                "Z\r\nBAD\r\n"
+            );
+        },
+        on_data => sub ($stream, $bytes) {
+            $state->{wire} .= $bytes;
+            if ($state->{wire} =~ /HTTP\/1\.1 400 /) {
+                $guard->cancel;
+                $stream->close;
+                $server->close;
+                $loop->stop;
+            }
+        },
+        on_eof => sub ($stream) {
+            $guard->cancel;
+            $stream->close;
+            $server->close;
+            $loop->stop;
+        },
+        on_error => sub ($stream, $error) {
+            die "raw malformed chunked client failed: $error\n";
+        },
+    );
+
+    $loop->run;
+
+    is($state->{chunked_error_hits}, 1,
+        'native chunked decoder reports malformed input through HTTP lifecycle');
+    like($state->{wire}, qr/\AHTTP\/1\.1 400 /,
+        'malformed native chunked body produces a 400 response');
+    is($state->{fallback_hits}, 0,
+        'malformed chunked body does not enter generic fallback');
+};
+
 
 {
     package T::RawBodyCloseConnection;
@@ -417,6 +583,56 @@ subtest 'reentrant close is safe inside direct raw Content-Length on_body' => su
         return;
     }
 }
+
+subtest 'reentrant close is safe inside direct raw chunked on_body' => sub {
+    my $loop = Linux::Event::Loop->new;
+    my $state = { body_hits => 0 };
+    my $server = Linux::Event::HTTP::Server->new(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => 0,
+        data => $state,
+        connection_class => 'T::RawBodyCloseConnection',
+    );
+
+    my $guard = Linux::Event::Kernel::Timer->new(
+        loop => $loop,
+        after => 2,
+        on_timer => sub ($timer) {
+            die "raw chunked reentrant-close test timed out\n";
+        },
+    );
+
+    Linux::Event::IO::Sock::Stream->connect(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => $server->port,
+        on_ready => sub ($stream) {
+            $stream->write(
+                "POST /close-chunked HTTP/1.1\r\n" .
+                "Host: example.test\r\n" .
+                "Transfer-Encoding: chunked\r\n\r\n" .
+                "4\r\nDATA\r\n0\r\n\r\n"
+            );
+        },
+        on_data => sub ($stream, $bytes) {
+            return;
+        },
+        on_eof => sub ($stream) {
+            $guard->cancel;
+            $stream->close;
+            $server->close;
+            $loop->stop;
+        },
+        on_error => sub ($stream, $error) {
+            die "raw chunked close client failed: $error\n";
+        },
+    );
+
+    $loop->run;
+    is($state->{body_hits}, 1,
+        'direct raw chunked body callback closed the Stream once');
+};
 
 subtest 'reentrant close is safe inside raw-provider application callback' => sub {
     my $loop = Linux::Event::Loop->new;
