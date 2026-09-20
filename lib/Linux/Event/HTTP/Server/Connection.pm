@@ -225,6 +225,10 @@ sub _send_http_response ($self, $transaction) {
 sub _try_native_default_final ($self, $transaction, $body) {
     my $response = $transaction->{response} or return 0;
     return 0 if !$response->{_server_default_final};
+    return 0 if ($response->{status} // 0) != 200;
+    return 0 if defined $response->{reason};
+    my $headers = $response->{headers};
+    return 0 if ref($headers) ne 'ARRAY' || @$headers;
     return 0 if $self->{_http_response_state};
 
     my $request_state = $self->{_http_request_state} or return 0;
