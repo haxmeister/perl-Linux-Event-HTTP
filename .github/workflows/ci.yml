@@ -44,7 +44,7 @@ jobs:
 
       - name: Install pinned current Linux::Event core
         run: |
-          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/1c3de59e395e05e79c735f5d5ef35cd5021e8c55.tar.gz
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/51f2e1eab28f6f1234024a0cf37be03b36780e84.tar.gz
 
       - name: Install Uniform::HTTP release dependency
         run: |
