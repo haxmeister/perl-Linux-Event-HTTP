@@ -219,8 +219,8 @@ sub _response_body_ready ($self, $response) {
         );
     }
 
-    return if !$response->_has_scalar_body;
-    my $body = $response->_scalar_body;
+    return if ($response->{body_kind} // '') ne 'scalar';
+    my $body = $response->{body};
     return if $self->_try_simple_scalar_final($response, $body);
     $self->_write_response(
         $response, $body, 1, 'send_response',
@@ -274,9 +274,12 @@ sub _try_simple_scalar_final ($self, $response, $body) {
     }
 
     if (!defined($content_length) && !$body_forbidden) {
-        my @headers = @$headers;
-        push @headers, [ 'Content-Length', '' . length($body) ];
-        $response->{headers} = \@headers;
+        my $pair = [ 'Content-Length', '' . length($body) ];
+        if (@$headers) {
+            push @$headers, $pair;
+        } else {
+            $response->{headers} = [ $pair ];
+        }
     }
 
     my $head = $response->_serialize_head('1.1');
@@ -318,9 +321,9 @@ sub _send_http_response ($self, $transaction) {
     my $response = $transaction->response
         or croak 'send_response(): Transaction has no Response';
     croak 'send_response(): Response does not have a complete scalar body'
-        if !$response->_has_scalar_body;
+        if ($response->{body_kind} // '') ne 'scalar';
 
-    my $body = $response->_scalar_body;
+    my $body = $response->{body};
     return 1 if $self->_try_native_default_final($transaction, $body);
     return 1 if $self->_try_simple_scalar_final($response, $body);
 
