@@ -694,7 +694,9 @@ enum {
     LE_HTTP_RAW_INPUT_REQUEST = 0,
     LE_HTTP_RAW_INPUT_FALLBACK = 1,
     LE_HTTP_RAW_INPUT_CONTENT_LENGTH_DRAIN = 2,
-    LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY = 3
+    LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY = 3,
+    LE_HTTP_RAW_INPUT_CHUNKED_DRAIN = 4,
+    LE_HTTP_RAW_INPUT_CHUNKED_BODY = 5
 };
 
 typedef struct {
@@ -705,11 +707,15 @@ typedef struct {
     CV *fallback_cv;
     CV *content_length_body_cv;
     CV *content_length_complete_cv;
+    CV *chunked_body_cv;
+    CV *chunked_complete_cv;
+    CV *chunked_error_cv;
     CV *protocol_400_cv;
     CV *protocol_431_cv;
     CV *protocol_501_cv;
     int input_mode;
     UV content_length_remaining;
+    struct phr_chunked_decoder chunked_decoder;
 } le_http_raw_consumer_context;
 
 static CV *
@@ -861,7 +867,7 @@ le_http_raw_call_request(
     }
 
     if (result < LE_HTTP_RAW_INPUT_REQUEST
-        || result > LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY)
+        || result > LE_HTTP_RAW_INPUT_CHUNKED_BODY)
         croak("Linux::Event HTTP raw consumer returned invalid input mode");
 
     context->input_mode = result;
@@ -869,6 +875,12 @@ le_http_raw_call_request(
         = (result == LE_HTTP_RAW_INPUT_CONTENT_LENGTH_DRAIN
             || result == LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY)
         ? content_length : 0;
+
+    if (result == LE_HTTP_RAW_INPUT_CHUNKED_DRAIN
+        || result == LE_HTTP_RAW_INPUT_CHUNKED_BODY) {
+        Zero(&context->chunked_decoder, 1, struct phr_chunked_decoder);
+        context->chunked_decoder.consume_trailer = 1;
+    }
 
     host->release(aTHX_ host_context);
     return result;
@@ -902,6 +914,72 @@ le_http_raw_call_content_length_body(
         aTHX_ context,
         &context->content_length_body_cv,
         "_http_native_content_length_body"
+    );
+
+    if (!host->retain(aTHX_ host_context))
+        croak("Linux::Event raw consumer host is no longer available");
+
+    if (done)
+        context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
+
+    JMPENV_PUSH(jump_status);
+    if (jump_status == 0) {
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+        XPUSHs(context->stream);
+        XPUSHs(bytes);
+        mPUSHi(done ? 1 : 0);
+        PUTBACK;
+        count = call_sv((SV *)cv, G_SCALAR);
+        SPAGAIN;
+        if (count > 0)
+            result = POPi;
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+        JMPENV_POP;
+    } else {
+        JMPENV_POP;
+        host->release(aTHX_ host_context);
+        JMPENV_JUMP(jump_status);
+    }
+
+    if (!result)
+        context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
+
+    host->release(aTHX_ host_context);
+    return result;
+}
+
+static int
+le_http_raw_call_chunked_body(
+    pTHX_
+    le_http_raw_consumer_context *context,
+    SV *bytes,
+    int done
+)
+{
+    const les_consumer_host_api_v1_t *host;
+    void *host_context;
+    CV *cv;
+    int result = 0;
+    int count;
+    int jump_status;
+    dJMPENV;
+    dSP;
+
+    host = context->host;
+    host_context = context->host_context;
+    if (!host
+        || host->struct_size < LES_CONSUMER_HOST_V1_RETAIN_REQUIRED_SIZE
+        || !host->retain || !host->release)
+        croak("Linux::Event raw consumer host lifetime extension is unavailable");
+
+    cv = le_http_raw_method_cv(
+        aTHX_ context,
+        &context->chunked_body_cv,
+        "_http_native_chunked_body"
     );
 
     if (!host->retain(aTHX_ host_context))
@@ -1025,6 +1103,74 @@ le_http_raw_consumer_input(
                 aTHX_ context,
                 &context->content_length_complete_cv,
                 "_http_native_content_length_complete",
+                NULL,
+                0
+            );
+        }
+        return LES_CONSUMER_CONTINUE;
+    }
+
+    if (context->input_mode == LE_HTTP_RAW_INPUT_CHUNKED_DRAIN
+        || context->input_mode == LE_HTTP_RAW_INPUT_CHUNKED_BODY) {
+        char *scratch;
+        size_t decoded_len = buffer_len;
+        ssize_t result;
+        size_t leftover = 0;
+        int emit = context->input_mode == LE_HTTP_RAW_INPUT_CHUNKED_BODY;
+        int done;
+
+        Newx(scratch, buffer_len ? buffer_len : 1, char);
+        if (buffer_len)
+            Copy(buf, scratch, buffer_len, char);
+
+        result = phr_decode_chunked(
+            &context->chunked_decoder,
+            scratch,
+            &decoded_len
+        );
+
+        if (result == -1) {
+            Safefree(scratch);
+            *host_consumed = buffer_len;
+            context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
+            (void)le_http_raw_call_scalar_int(
+                aTHX_ context,
+                &context->chunked_error_cv,
+                "_http_native_chunked_error",
+                NULL,
+                0
+            );
+            return LES_CONSUMER_CONTINUE;
+        }
+
+        done = result >= 0 ? 1 : 0;
+        if (done) {
+            leftover = (size_t)result;
+            if (leftover > buffer_len)
+                croak("Linux::Event HTTP raw chunked decoder returned invalid leftover");
+            *host_consumed = buffer_len - leftover;
+            context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
+        } else {
+            *host_consumed = buffer_len;
+        }
+
+        if (emit) {
+            SV *bytes = sv_2mortal(newSVpvn(scratch, (STRLEN)decoded_len));
+            Safefree(scratch);
+            (void)le_http_raw_call_chunked_body(
+                aTHX_ context,
+                bytes,
+                done
+            );
+            return LES_CONSUMER_CONTINUE;
+        }
+
+        Safefree(scratch);
+        if (done) {
+            (void)le_http_raw_call_scalar_int(
+                aTHX_ context,
+                &context->chunked_complete_cv,
+                "_http_native_chunked_complete",
                 NULL,
                 0
             );
@@ -1170,6 +1316,12 @@ le_http_raw_consumer_destroy(pTHX_ void *opaque)
         SvREFCNT_dec((SV *)context->content_length_body_cv);
     if (context->content_length_complete_cv != NULL)
         SvREFCNT_dec((SV *)context->content_length_complete_cv);
+    if (context->chunked_body_cv != NULL)
+        SvREFCNT_dec((SV *)context->chunked_body_cv);
+    if (context->chunked_complete_cv != NULL)
+        SvREFCNT_dec((SV *)context->chunked_complete_cv);
+    if (context->chunked_error_cv != NULL)
+        SvREFCNT_dec((SV *)context->chunked_error_cv);
     if (context->protocol_400_cv != NULL)
         SvREFCNT_dec((SV *)context->protocol_400_cv);
     if (context->protocol_431_cv != NULL)

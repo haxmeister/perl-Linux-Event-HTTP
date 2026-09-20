@@ -164,8 +164,57 @@ sub _http_native_request ($self, $request) {
     my $action = $self->_activate_native_http_request($request);
     return 0 if $action != 2;
 
-    return 1 if $request->_http1_body_mode eq 'chunked';
+    return $self->{_http_on_body} ? 5 : 4
+        if $request->_http1_body_mode eq 'chunked';
     return $self->{_http_on_body} ? 3 : 2;
+}
+
+sub _http_native_chunked_body ($self, $bytes, $done) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+
+    my $request = $self->{_http_active_request} or return 0;
+    my $response = $self->{_http_active_response} or return 0;
+    my $state = $self->{_http_request_state} or return 0;
+
+    croak 'raw chunked body delivery has wrong request state'
+        if $state->{body_done} || $state->{mode} ne 'chunked';
+
+    if (length($bytes) && !$self->_invoke_http_callback(
+        $self->{_http_on_body}, $request, $response, $bytes,
+    )) {
+        return 0;
+    }
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    return 0 if !$self->{_http_active_request};
+
+    if ($done) {
+        $self->_finish_request_body;
+        return 0;
+    }
+
+    return 1;
+}
+
+sub _http_native_chunked_complete ($self) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+
+    my $state = $self->{_http_request_state} or return 0;
+    croak 'raw chunked drain has wrong request state'
+        if $state->{body_done} || $state->{mode} ne 'chunked';
+    croak 'raw chunked drain cannot bypass an on_body callback'
+        if $self->{_http_on_body};
+
+    $self->_finish_request_body;
+    return 0;
+}
+
+sub _http_native_chunked_error ($self) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+
+    my $request = $self->{_http_active_request} or return 0;
+    my $response = $self->{_http_active_response} or return 0;
+    $self->_fail_active_transaction(400, $request, $response);
+    return 0;
 }
 
 sub _http_native_content_length_body ($self, $bytes, $done) {
@@ -682,6 +731,11 @@ sub _activate_native_http_request ($self, $request) {
         } elsif ($self->{_http_on_request_end}) {
             $request_state->{body_done} = 0;
         }
+    } elsif ($body_mode eq 'chunked') {
+        $request_state = {
+            mode      => 'chunked',
+            body_done => 0,
+        };
     } else {
         $request_state = _new_request_state($request, $body_mode);
     }

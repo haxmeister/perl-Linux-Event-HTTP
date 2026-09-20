@@ -16,8 +16,12 @@ Revision history for Linux-Event-HTTP
     - Keep Content-Length request bodies in the raw native input path: drain
       unconsumed bodies without Perl materialization, deliver on_body chunks
       directly without staging through the generic input buffer, and return to
-      native request-head parsing at the exact body boundary. Chunked request
-      bodies retain the existing generic fallback.
+      native request-head parsing at the exact body boundary.
+    - Keep chunked request bodies in the raw native input path with a persistent
+      picohttpparser chunk decoder. Decode borrowed encoded windows through
+      mutable native scratch, drain without Perl body materialization, deliver
+      only decoded payload to on_body, consume trailers, and preserve same-read
+      bytes after the terminating chunk for native request-head parsing.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.

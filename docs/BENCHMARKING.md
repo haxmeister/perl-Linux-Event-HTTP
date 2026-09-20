@@ -165,12 +165,37 @@ perl -Mblib bench/run-http-comparison.pl \
   --request-body-bytes=65536 --response-bytes=32 --repeats=5
 ```
 
+To send the same decoded body using HTTP/1.1 chunked transfer coding:
+
+```sh
+perl -Mblib bench/run-http-comparison.pl \
+  --servers=linuxevent_body_ignore,linuxevent_body_ignore_native,linuxevent_body_callback,linuxevent_body_callback_native,linuxevent_body_end,linuxevent_body_end_native,linuxevent_body_callback_end,linuxevent_body_callback_end_native \
+  --request-body-bytes=65536 \
+  --request-body-framing=chunked \
+  --request-chunk-bytes=4096 \
+  --response-bytes=32 --repeats=5
+```
+
+`--request-body-bytes` always means decoded application body bytes.
+`--request-chunk-bytes` controls only the payload size of each chunk on the
+wire; the harness adds hexadecimal chunk lengths, CRLF delimiters, and the final
+zero chunk.
+
 The current raw Content-Length path consumes drained body bytes directly from the
 native ordered-byte buffer and delivers requested `on_body` chunks directly to
-the existing HTTP callback lifecycle. Chunked request bodies deliberately remain
-on the generic fallback path. A following request head that shares the same read
-with the end of a Content-Length body must therefore remain native input and be
-parsed by the raw request-head consumer.
+the existing HTTP callback lifecycle.
+
+Chunked request bodies also remain on the raw native path. The provider keeps a
+persistent pico chunk decoder and copies each borrowed encoded input window only
+into mutable native scratch because pico's decoder rewrites its input. Drained
+chunked bodies do not materialize body bytes in Perl; when `on_body` is present,
+only decoded payload bytes cross into Perl. Trailers are consumed by the decoder,
+and any bytes following the terminating chunk remain in Linux::Event's native
+ordered-byte buffer for request-head parsing.
+
+A following request head that shares the same read with either a Content-Length
+body boundary or a completed chunked body must therefore remain native input and
+be parsed by the raw request-head consumer.
 
 The comparison is a protocol-stack comparison, not an attempt to make each
 framework perform an identical amount of application-layer work. Each adapter
