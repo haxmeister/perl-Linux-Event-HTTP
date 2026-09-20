@@ -193,6 +193,9 @@ subtest 'reentrant close is safe inside raw-provider application callback' => su
                 "GET /close HTTP/1.1\r\nHost: example.test\r\n\r\n"
             );
         },
+        on_data => sub ($stream, $bytes) {
+            return;
+        },
         on_eof => sub ($stream) {
             $guard->cancel;
             $stream->close;
