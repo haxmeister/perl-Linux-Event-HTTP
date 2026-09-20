@@ -1,15 +1,15 @@
-name: HTTP Response mutation end-to-end validation
+name: HTTP scalar-final completion experiment
 
 on:
   push:
     branches:
-      - experiment/response-mutation-fastpath
+      - experiment/scalar-final-completion-fastpath
     paths-ignore:
       - handoff.md
       - docs/**
 
 concurrency:
-  group: http-response-mutation-${{ github.ref }}
+  group: http-scalar-final-completion-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
