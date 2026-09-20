@@ -1,6 +1,42 @@
 # Linux::Event::HTTP handoff
 
-Updated: 2026-09-13 (America/Chicago)
+Updated: 2026-09-19 (America/Chicago)
+
+## Active server lifecycle constructor experiment
+
+Branch: `experiment/http-server-lifecycle-fast-constructors`.
+
+This branch keeps the public Response and Transaction constructors strict, but
+adds private trusted constructors for the server executor, which is creating
+values it already validated/produced itself.
+
+GitHub Actions run `35476298230` built and tested both the experiment and an
+untouched `main` worktree on the same runner. Both suites passed all 971 tests.
+
+Constructor ladder medians:
+
+- parsed Request + ordinary Response construction: 64,538.7 req/s;
+- parsed Request + trusted Response construction: 73,389.5 req/s (+13.7%);
+- ordinary Transaction/body state: 45,756.8 req/s;
+- trusted active Transaction/body state: 55,959.0 req/s (+22.3%).
+
+Same-run full server, 100 persistent connections, pipeline depth 1, 32-byte
+response:
+
+- main: 27,168.3 req/s;
+- trusted constructors: 31,214.7 req/s (+14.9%);
+- Feersum native HTTP: 97,252.8 req/s.
+
+The 4 KiB request-body workload also improved:
+
+- main: 14,116.1 req/s;
+- trusted constructors: 15,495.8 req/s (+9.8%).
+
+Conclusion: private trusted server-side construction is a successful
+optimization. The public validation API remains unchanged. The remaining
+Feersum gap is still large (about 3.1x on this runner), so the next HTTP-local
+targets remain callback/eval boundaries, fast-path eligibility checks, and
+transaction completion bookkeeping.
 
 ## Repository state
 
