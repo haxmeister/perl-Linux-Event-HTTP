@@ -231,60 +231,11 @@ sub _response_body_ready ($self, $response) {
 
 sub _try_simple_scalar_final ($self, $response, $body) {
     my $request = $self->{_http_active_request} or return 0;
-    return 0 if $request->version ne '1.1';
-    return 0 if !$request->_http1_keep_alive;
     return 0 if $self->{_http_response_state};
 
-    my $status = $response->{status};
-    croak 'send_response(): informational responses require a future interim-response API'
-        if $status >= 100 && $status < 200;
-
-    my $body_len = length($body);
-    my $method = $request->method;
-    my $head_request = $method eq 'HEAD';
-    my $body_forbidden = $status == 204 || $status == 304;
-    croak 'send_response(): this response status cannot carry a message body'
-        if $body_forbidden && $body_len;
-
-    my $headers = $response->{headers};
-    return 0 if ref($headers) ne 'ARRAY';
-
-    my ($content_length, $content_length_count);
-    for my $pair (@$headers) {
-        return 0 if ref($pair) ne 'ARRAY' || @$pair != 2;
-        my ($name, $value) = @$pair;
-        return 0 if !defined($name) || ref($name)
-            || !defined($value) || ref($value);
-
-        my $lower = lc $name;
-        return 0 if $lower eq 'transfer-encoding';
-        return 0 if $lower eq 'connection';
-
-        if ($lower eq 'content-length') {
-            ++$content_length_count;
-            return 0 if $content_length_count > 1;
-            $content_length = _canonical_decimal($value);
-            return 0 if !defined $content_length;
-        }
-    }
-
-    if (defined($content_length)
-        && !$head_request && !$body_forbidden
-        && _compare_count($body_len, $content_length) != 0) {
-        croak 'send_response(): Content-Length does not match scalar body length';
-    }
-
-    if (!defined($content_length) && !$body_forbidden) {
-        my $pair = [ 'Content-Length', "$body_len" ];
-        if (@$headers) {
-            push @$headers, $pair;
-        } else {
-            $response->{headers} = [ $pair ];
-        }
-    }
-
-    my $head = $response->_serialize_head('1.1');
-    $response->{committed} = 1;
+    my $wire = Linux::Event::HTTP::_HTTP1
+        ->build_simple_scalar_final($request, $response, $body);
+    return 0 if !defined $wire;
 
     $self->{_http_response_output_started} = 1;
     $self->{_http_response_output_complete} = 1;
@@ -293,8 +244,6 @@ sub _try_simple_scalar_final ($self, $response, $body) {
         $transaction->{response_output_complete} = 1;
     }
 
-    my $wire = $head;
-    $wire .= $body if !$head_request && !$body_forbidden;
     $self->write($wire);
 
     my $request_state = $self->{_http_request_state};
