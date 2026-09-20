@@ -273,6 +273,46 @@ correctness suite. The remaining same-response Feersum gap is about 2.8x on
 these runs. The next measured costs are active callback/exchange setup and
 scalar-final send/completion bookkeeping rather than Response mutation.
 
+## Scalar-final completion optimization
+
+Branch: `experiment/scalar-final-completion-fastpath`.
+
+All current HTTP testing on this branch is pinned to the current Linux::Event
+`main` commit:
+
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`
+(`Fix reentrant raw-consumer close accounting`, Linux::Event 0.115).
+
+This current core also includes native-consumer provider replacement during
+`transition_to()`, so the older raw-HTTP Upgrade/CONNECT blocker described
+earlier in this handoff is no longer a core limitation. Revisit raw HTTP input
+after the current HTTP-local lifecycle work rather than carrying the old
+restriction forward.
+
+The common trusted persistent HTTP/1.1 scalar-response path now performs its
+request eligibility checks, ordinary-header validation, generated
+Content-Length metadata insertion, response-head construction, HEAD/body
+suppression, and body concatenation in the existing HTTP XS unit. Public
+Response semantics remain unchanged. Responses with explicit framing or
+Connection headers continue to fall back to the general response state machine.
+
+Same-run validation, GitHub Actions run `35488509750`, exact pre-completion
+baseline commit `2ba493944588aad15256c0456845d67e0ce252db`, all tests green
+for both trees against the same current Linux::Event core:
+
+- 32-byte GET + Content-Type:
+  27,706.6 -> 31,548.0 req/s (+13.9%);
+  Feersum 76,319.7 req/s.
+- 16 KiB GET + Content-Type:
+  22,439.9 -> 25,358.1 req/s (+13.0%);
+  Feersum 65,054.2 req/s.
+- 4 KiB POST + Content-Type / 32-byte response:
+  21,604.2 -> 24,582.6 req/s (+13.8%).
+
+Conclusion: keep the native common scalar-final builder. The remaining work in
+this item is to isolate Connection-side output/completion bookkeeping now that
+wire/framing validation has been removed from that Perl hot path.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
