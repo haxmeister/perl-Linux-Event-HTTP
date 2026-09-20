@@ -49,12 +49,12 @@ jobs:
       - name: Current lifecycle ladder
         run: |
           perl -Mblib bench/run-http-transaction-ladder.pl \
-            --requests=100000 \
-            --warmup=10000 \
+            --requests=50000 \
+            --warmup=5000 \
             --connections=100 \
             --pipeline=1 \
             --response-bytes=32 \
-            --repeats=7 \
+            --repeats=5 \
             --read-budget-bytes=0 \
             --json=bench/results/current-lifecycle.json
 
