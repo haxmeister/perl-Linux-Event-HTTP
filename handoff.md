@@ -6,17 +6,16 @@ Updated: 2026-09-20 (America/Chicago)
 
 Canonical branch: `main`.
 
-Active research branch: `experiment/raw-chunked-body`.
-
 Current main integration commit:
 
-`c51b8fe2450e2943f267fd1b04f89ec957f42505`
-"Optimize raw Content-Length request bodies"
+`ef35194edddbff15413ca45695331f70284dfb1e`
+"Keep chunked request bodies on raw native input"
 
 PR #31 previously squash-merged the optimized HTTP lifecycle and raw native
-request-head capability. PR #34 then squash-merged the validated native
-Content-Length request-body specialization on 2026-09-20. Rejected experiment
-history remains off main.
+request-head capability. PR #34 squash-merged the validated native
+Content-Length request-body specialization. PR #35 then squash-merged the
+validated native chunked request-body specialization on 2026-09-20. Rejected
+experiment history remains off main.
 
 Modify only this HTTP repository unless the user explicitly authorizes another
 repository.
@@ -329,29 +328,27 @@ production source changed after that gate.
 
 ### Next useful work
 
-The native chunked specialization is worth keeping. PR #35 is the clean merge
-candidate from this branch to main. Its final cross-Perl gate is green:
+All demonstrated common server input shapes now have a validated raw-native
+path:
 
-- Perl 5.36;
-- latest Perl;
-- latest threaded Perl;
-- full test suite;
-- existing raw GET / Content-Length comparisons;
-- disttest.
+- bodyless request heads;
+- Content-Length request bodies;
+- chunked request bodies;
+- Upgrade;
+- CONNECT.
 
-Squash-merge PR #35 to main.
+The next architectural decision is whether raw native HTTP/1 input should become
+the default production `Server::Connection` behavior instead of remaining an
+opt-in internal capability.
 
-After that merge, all demonstrated common server input shapes have a validated
-raw-native path: bodyless request heads, Content-Length bodies, chunked bodies,
-Upgrade, and CONNECT. The next architectural decision is therefore whether to
-make raw native HTTP/1 input the default production
-`Server::Connection` behavior rather than an opt-in internal capability.
-
-Before flipping that default, audit the public subclassing contract carefully:
-the current experimental raw subclasses hide inherited `on_data` from
+Before changing that default, audit the public subclassing contract carefully.
+The experimental raw subclasses currently hide inherited `on_data` from
 Linux::Event descriptor discovery. Determine the clean production class/API
 shape that enables the native provider without breaking applications that
-subclass `Server::Connection` and implement ordinary `on_data` intentionally.
+subclass `Server::Connection` and intentionally implement ordinary `on_data`.
+
+Do not change Linux::Event core or any other repository for this decision unless
+the user explicitly authorizes it.
 
 Everything below is experiment/history context. This section is authoritative.
 
