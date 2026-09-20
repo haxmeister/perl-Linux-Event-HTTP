@@ -24,7 +24,7 @@ Nothing from this experiment has been merged to main. Modify only this HTTP
 repository unless the user explicitly authorizes another repository.
 
 All current tests and measurements use Linux::Event commit:
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`,
+`007db40e22374c6d7bf8e056b2d354681d20c852`,
 Linux::Event 0.115,
 "Allow native consumer retirement to ordinary Stream input".
 
@@ -60,7 +60,7 @@ NOT replaced the default HTTP Connection.
 ### Correctness validation
 
 GitHub Actions run `35536933321` is green against Linux::Event
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
+`007db40e22374c6d7bf8e056b2d354681d20c852`.
 
 Candidate suite:
 
@@ -94,7 +94,7 @@ masquerading as raw-provider coverage.
 Current authoritative measurement: run `35536933321`; seven rotated repeats;
 100 loopback TCP connections; pipeline 1; candidate and exact pre-raw baseline
 built in the same job; both use Linux::Event
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
+`007db40e22374c6d7bf8e056b2d354681d20c852`.
 
 All comparison responses include `Content-Type: application/octet-stream`.
 
@@ -148,7 +148,7 @@ the rejected experiment.
 ### Core transition blocker: resolved
 
 Linux::Event commit
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`
+`007db40e22374c6d7bf8e056b2d354681d20c852`
 implements the deliberately narrow transition contract requested by this HTTP
 experiment:
 
@@ -216,7 +216,7 @@ Current distribution metadata requires Linux::Event 0.116 because the
 shipped HTTP raw-input capability and transition regressions depend on the
 raw-consumer ABI and native-consumer retirement semantics. Until Linux::Event
 0.116 is released, CI pins exact core commit
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
+`007db40e22374c6d7bf8e056b2d354681d20c852`.
 
 Everything below is experiment/history context. This section is authoritative.
 
