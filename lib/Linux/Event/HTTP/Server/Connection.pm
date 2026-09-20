@@ -114,11 +114,7 @@ sub transaction ($self) {
 
 sub on_data ($self, $bytes) {
     return if $self->{_http_closing} || $self->is_closed;
-    if (length($self->{_http_input})) {
-        $self->{_http_input} .= $bytes;
-    } else {
-        $self->{_http_input} = $bytes;
-    }
+    $self->{_http_input} .= $bytes;
     $self->_drive_http1;
     return;
 }
@@ -154,7 +150,7 @@ sub _http_native_fallback_input ($self, $bytes) {
     return 0;
 }
 
-sub _http_native_request ($self, $request, $bytes = undef) {
+sub _http_native_request ($self, $request) {
     return 0 if $self->{_http_closing} || $self->is_closed;
     croak 'raw HTTP input delivered a new Request while another Request is active'
         if $self->{_http_active_request};
@@ -166,11 +162,7 @@ sub _http_native_request ($self, $request, $bytes = undef) {
     }
 
     my $action = $self->_activate_native_http_request($request);
-    return 0 if $action != 2;
-    return 1 if !defined($bytes) || !length($bytes);
-
-    my $fallback = $self->_http_native_fallback_input($bytes);
-    return 2 | ($fallback ? 1 : 0);
+    return $action == 2 ? 1 : 0;
 }
 
 sub _http_transport_drain ($self) {
