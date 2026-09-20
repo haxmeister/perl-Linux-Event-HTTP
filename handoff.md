@@ -19,6 +19,21 @@ replacement during `transition_to()`. The earlier raw-HTTP blocker for
 same-object Upgrade/CONNECT is therefore obsolete. Raw native HTTP input should
 be revisited after the current HTTP-local lifecycle work.
 
+Current continuation (2026-09-20):
+
+- Refreshed lifecycle diagnostic uses the actual native server request-check and
+  fused scalar-final builder. The old ladder separately generated Content-Length
+  in Perl and serialized the generic head, then accumulated legacy state resets;
+  those percentages do not isolate today's production builder.
+- New contract-9 default stages: public mutation + prebuilt diagnostic wire;
+  actual native scalar-final builder; minimal three active exchange fields;
+  actual guarded callback/readiness/send; unmodified Connection; full Server.
+  Historical cases remain available explicitly through --cases.
+- Local threaded Perl 5.38.2 exposed four XS helpers missing pTHX_/aTHX_
+  interpreter context. Fixed the helpers without changing HTTP semantics. Use
+  this same compile fix on both A/B trees. Core is the exact commit above.
+- Measurement and full validation are in progress; no new performance claim yet.
+
 Cumulative validated HTTP-local optimizations now present in this branch lineage:
 
 - trusted/lazy Transaction materialization;

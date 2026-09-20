@@ -205,6 +205,28 @@ my %case = (
     },
 );
 
+# Contract 9: isolate current fused wire construction and minimal active fields.
+# Historical cases remain explicitly selectable for reproducing old evidence.
+my @production_stages = (
+    [prod_api => 'P1 parse + public Response mutation + prebuilt write',
+        'Native server request checks, compact Response, public Content-Type/body setters; prebuilt wire (diagnostic only)'],
+    [prod_wire => 'P2 + production native scalar wire builder',
+        'P1 plus actual build_simple_scalar_final validation, Content-Length metadata, commit and wire construction'],
+    [prod_active => 'P3 + minimal active exchange fields',
+        'P2 plus current three live exchange fields and their retirement; no legacy resets or Request completion mark'],
+    [prod_dispatch => 'P4 production callback and scalar send',
+        'P3 with actual _invoke_http_callback, readiness, scalar-final output and retirement instead of inline mutation/build/write'],
+    [prod_connection => 'P5 unmodified production Connection',
+        'Actual Server::Connection driver through raw Listener; no copied request lifecycle'],
+);
+for my $stage (@production_stages) {
+    my ($name, $label, $description) = @$stage;
+    $case{$name} = {
+        label => $label, description => $description, stage => $name,
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-production-stage.pl"],
+    };
+}
+
 my $requests = 100_000;
 my $warmup = 10_000;
 my $connections = 100;
@@ -254,9 +276,9 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(current_parse current_response_empty current_response_flagged current_response current_header current_api current_frame current_head current_exchange_minimal current_exchange_nomark current_exchange current_callback current_send current_checked current_bodyless current_http);
+my @names = ((map { $_->[0] } @production_stages), 'current_http');
 if (defined $case_list) {
-    my %known = map { $_ => 1 } @names;
+    my %known = map { $_ => 1 } keys %case;
     my @selected = grep { length } split /,/, $case_list;
     die "cases must name at least one benchmark case\n" if !@selected;
     for my $name (@selected) {
@@ -314,11 +336,11 @@ for my $i (1 .. $#summary) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my %contract = map { $_ => $case{$_}{description} } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; current stages decompose the current lazy-Transaction/Connection-output-state/general-scalar architecture under a Content-Type response; current_bodyless uses the production Server::Connection through a raw Listener; current_http adds the Server wrapper';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; prod stages isolate the actual fused scalar-final builder and current minimal exchange state; prod_dispatch calls production callback/readiness/send; prod_connection uses the unmodified production Connection; current_http adds the Server wrapper; prebuilt wire is a diagnostic only, not an optimization';
 
     my $report = {
         benchmark => 'linux-event-http-transaction-ladder',
-        benchmark_contract_version => 8,
+        benchmark_contract_version => 9,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",

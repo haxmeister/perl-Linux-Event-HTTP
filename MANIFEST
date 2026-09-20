@@ -87,3 +87,4 @@ vendor/picohttpparser/picohttpparser.c
 vendor/picohttpparser/picohttpparser.h
 xshttp1/HTTP1.xs
 xshttp1/Makefile.PL
+bench/servers/linuxevent-production-stage.pl

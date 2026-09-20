@@ -794,14 +794,14 @@ response_hv_from_object(pTHX_ SV *self)
 }
 
 static int
-response_hv_true(HV *hv, const char *key, I32 key_len)
+response_hv_true(pTHX_ HV *hv, const char *key, I32 key_len)
 {
     SV **value = hv_fetch(hv, key, key_len, 0);
     return value != NULL && SvTRUE(*value);
 }
 
 static UV
-response_server_flags(HV *hv)
+response_server_flags(pTHX_ HV *hv)
 {
     SV **value = hv_fetch(
         hv,
@@ -813,7 +813,7 @@ response_server_flags(HV *hv)
 }
 
 static void
-response_clear_server_flags(HV *hv, UV mask)
+response_clear_server_flags(pTHX_ HV *hv, UV mask)
 {
     SV **value = hv_fetch(
         hv,
@@ -858,6 +858,7 @@ response_input_bytes(
 
 static SV *
 response_header_pair_sv(
+    pTHX_
     const char *name,
     STRLEN name_len,
     const char *value,
@@ -924,7 +925,7 @@ response_set_header_native(
     SSize_t i;
     int framing_header = 0;
 
-    if (response_hv_true(hv, "committed", 9))
+    if (response_hv_true(aTHX_ hv, "committed", 9))
         croak("response metadata cannot change after message commit");
 
     name = response_input_bytes(
@@ -966,13 +967,14 @@ response_set_header_native(
         AV *new_headers = newAV();
         av_push(
             new_headers,
-            response_header_pair_sv(name, name_len, value, value_len)
+            response_header_pair_sv(aTHX_ name, name_len, value, value_len)
         );
         hv_store(
             hv, "headers", 7,
             newRV_noinc((SV *)new_headers), 0
         );
         response_clear_server_flags(
+            aTHX_
             hv,
             framing_header
                 ? LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
@@ -999,13 +1001,13 @@ response_set_header_native(
     if (matches == 0) {
         av_push(
             headers,
-            response_header_pair_sv(name, name_len, value, value_len)
+            response_header_pair_sv(aTHX_ name, name_len, value, value_len)
         );
     } else if (matches == 1) {
         av_store(
             headers,
             first,
-            response_header_pair_sv(name, name_len, value, value_len)
+            response_header_pair_sv(aTHX_ name, name_len, value, value_len)
         );
     } else {
         AV *new_headers = newAV();
@@ -1029,6 +1031,7 @@ response_set_header_native(
                     av_push(
                         new_headers,
                         response_header_pair_sv(
+                            aTHX_
                             name, name_len, value, value_len
                         )
                     );
@@ -1047,6 +1050,7 @@ response_set_header_native(
     }
 
     response_clear_server_flags(
+        aTHX_
         hv,
         framing_header
             ? LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
@@ -1064,7 +1068,7 @@ response_set_body_native(pTHX_ SV *self, SV *body_sv)
     STRLEN body_len;
     const char *body;
 
-    if (response_hv_true(hv, "committed", 9))
+    if (response_hv_true(aTHX_ hv, "committed", 9))
         croak("response metadata cannot change after message commit");
 
     kind_ptr = hv_fetch(hv, "body_kind", 9, 0);
@@ -1111,7 +1115,7 @@ response_build_simple_scalar_final(
     request_state = request_state_from_object(aTHX_ request);
     hv = response_hv_from_object(aTHX_ response);
 
-    if (!(response_server_flags(hv)
+    if (!(response_server_flags(aTHX_ hv)
             & LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE))
         return NULL;
 
@@ -1855,7 +1859,7 @@ _serialize_head(self, http_version = "1.1")
 
     status_ptr = hv_fetch(hv, "status", 6, 0);
     if (status_ptr == NULL) {
-        if (!response_server_flags(hv))
+        if (!response_server_flags(aTHX_ hv))
             croak("response status is required");
         status = 200;
     } else {
@@ -1878,7 +1882,7 @@ _serialize_head(self, http_version = "1.1")
 
     headers_ptr = hv_fetch(hv, "headers", 7, 0);
     if (headers_ptr == NULL) {
-        if (!response_server_flags(hv))
+        if (!response_server_flags(aTHX_ hv))
             croak("response headers storage is invalid");
         headers = NULL;
     } else {
