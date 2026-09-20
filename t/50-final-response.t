@@ -113,8 +113,13 @@ sub run_exchange ($request_wire, $state, $expected_wire_body = undef) {
         return if $head_end < 0;
         my $head_len = $head_end + 4;
         my $head = substr($state->{wire}, 0, $head_len);
-        return if $head !~ /\r\nContent-Length:\s*(\d+)\r\n/i;
-        my $body_len = defined($expected_wire_body) ? $expected_wire_body : 0 + $1;
+        my $body_len;
+        if (defined $expected_wire_body) {
+            $body_len = $expected_wire_body;
+        } else {
+            return if $head !~ /\r\nContent-Length:\s*(\d+)\r\n/i;
+            $body_len = 0 + $1;
+        }
         return if length($state->{wire}) < $head_len + $body_len;
 
         $done = 1;
