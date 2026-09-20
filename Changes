@@ -11,6 +11,13 @@ Revision history for Linux-Event-HTTP
     - Require Linux::Event 0.116 for the ordered-byte raw-consumer ABI,
       native-consumer transition semantics, Listener, tuning, TLS, and stream APIs
       used by this distribution.
+    - Add the raw native HTTP/1 server input path and preserve same-read bytes
+      across Upgrade and CONNECT protocol transitions.
+    - Keep Content-Length request bodies in the raw native input path: drain
+      unconsumed bodies without Perl materialization, deliver on_body chunks
+      directly without staging through the generic input buffer, and return to
+      native request-head parsing at the exact body boundary. Chunked request
+      bodies retain the existing generic fallback.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.
