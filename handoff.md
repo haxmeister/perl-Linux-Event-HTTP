@@ -415,6 +415,40 @@ parser exception trapping/status decoding, request-head limits, and Expect
 policy. The active experiment moves those checks into the existing HTTP native
 parser without changing public Request parsing behavior.
 
+## Native server request-check fast path
+
+Branch: `experiment/server-request-check-fastpath`.
+
+The production server parser now has an internal native result path that:
+
+- returns incomplete without throwing;
+- returns protocol status 400/501 for malformed/semantic failures;
+- applies the incomplete-head 431 limit natively;
+- records Expect policy in the native Request during semantic scanning;
+- exposes the supported/unsupported Expect result without materializing header
+  value lists in Perl.
+
+The public `parse_request` behavior remains unchanged. The rare successfully
+parsed over-limit head still returns a Request so Connection can preserve the
+original HTTP/1.0 vs HTTP/1.1 response version for 431.
+
+Same-run validation, run `35495433344`, exact pre-request-check baseline
+`d8e73f1fc37b629c129e0cfcdb0bba41c8bccef6`, current Linux::Event main
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`, both full suites green:
+
+- 32-byte GET + Content-Type:
+  34,727.3 -> 37,523.4 req/s (+8.1%);
+  Feersum 76,390.7 req/s.
+- 4 KiB POST + Content-Type / 32-byte response:
+  24,649.8 -> 26,265.7 req/s (+6.6%).
+
+Added direct coverage for native server parse status, incomplete heads,
+malformed 400, unsupported-transfer 501, incomplete-head 431, valid
+100-continue, unsupported expectations, and HTTP/1.0 Expect rejection.
+
+Conclusion: keep the native server request-check path. The next largest measured
+HTTP-local stage remains trusted sparse Response construction.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
