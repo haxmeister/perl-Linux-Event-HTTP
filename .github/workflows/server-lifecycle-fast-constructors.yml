@@ -1,15 +1,15 @@
-name: HTTP production response A/B
+name: HTTP raw native input A/B
 
 on:
   push:
     branches:
-      - experiment/sparse-response-construction
+      - experiment/native-raw-http1-current
     paths-ignore:
       - handoff.md
       - docs/**
 
 concurrency:
-  group: http-production-response-${{ github.ref }}
+  group: http-raw-native-input-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -49,21 +49,21 @@ jobs:
           make
           make test
 
-      - name: Build and test exact production baseline
+      - name: Build and test exact pre-raw baseline
         run: |
-          git fetch --depth=1 origin 2245560e8a3dfddd88a4974d52d2168da4cbbbc3
+          git fetch --depth=1 origin c391b2d8fe6b56b6088569cdadeb86160630be26
           git worktree add --detach "$RUNNER_TEMP/http-baseline" FETCH_HEAD
           cd "$RUNNER_TEMP/http-baseline"
           perl Makefile.PL
           make
           make test
 
-      - name: Same-run production comparisons
+      - name: Same-run raw native input comparisons
         run: |
           export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=100000 --warmup=10000 --repeats=7 --response-bytes=32 --json=bench/results/ci-production-get32.json
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-production-get16k.json
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-production-post4k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=100000 --warmup=10000 --repeats=7 --response-bytes=32 --json=bench/results/ci-raw-get32.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=50000 --warmup=5000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-raw-get16k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=50000 --warmup=5000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-raw-post4k.json
 
       - name: Production diagnostic smoke
         run: perl -Mblib bench/run-http-transaction-ladder.pl --smoke
@@ -71,5 +71,5 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: production-response-threaded-${{ matrix.threaded }}
-          path: bench/results/ci-production-*.json
+          name: raw-http-input-threaded-${{ matrix.threaded }}
+          path: bench/results/ci-raw-*.json
