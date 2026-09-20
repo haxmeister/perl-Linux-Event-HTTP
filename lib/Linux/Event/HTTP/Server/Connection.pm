@@ -68,8 +68,6 @@ sub new ($class, %option) {
 
     $option{on_drain} = \&_http_transport_drain;
     $option{on_close} = \&_http_transport_close;
-    $option{on_data} = \&_http_perl_input
-        if !$class->_uses_native_http_input;
 
     my $self = $class->SUPER::new(%option);
     $self->{_http_on_request} = $on_request;
@@ -97,8 +95,6 @@ sub connect ($class, %option) {
     croak 'connect(): HTTP client support is not implemented by Linux::Event::HTTP::Server::Connection';
 }
 
-sub _uses_native_http_input ($class) { 0 }
-
 sub transaction ($self) {
     my $transaction = $self->{_http_active_transaction};
     return $transaction if $transaction;
@@ -114,6 +110,10 @@ sub transaction ($self) {
         if $self->{_http_response_output_complete};
     $self->{_http_active_transaction} = $transaction;
     return $transaction;
+}
+
+sub on_data ($self, $bytes) {
+    return $self->_http_perl_input($bytes);
 }
 
 sub _http_perl_input ($self, $bytes) {
