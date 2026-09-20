@@ -734,6 +734,255 @@ request_method_is_head(le_http_request_state *state)
         memEQ(state->bytes + state->method_offset, "HEAD", 4);
 }
 
+static HV *
+response_hv_from_object(pTHX_ SV *self)
+{
+    if (!SvROK(self) ||
+        !sv_derived_from(self, "Linux::Event::HTTP::Response") ||
+        SvTYPE(SvRV(self)) != SVt_PVHV)
+        croak("not a Linux::Event::HTTP::Response object");
+
+    return (HV *)SvRV(self);
+}
+
+static int
+response_hv_true(HV *hv, const char *key, I32 key_len)
+{
+    SV **value = hv_fetch(hv, key, key_len, 0);
+    return value != NULL && SvTRUE(*value);
+}
+
+static const char *
+response_input_bytes(
+    pTHX_
+    SV *input,
+    const char *label,
+    SV **temporary,
+    STRLEN *length
+)
+{
+    if (!SvOK(input) || SvROK(input))
+        croak("%s must be a defined scalar byte string", label);
+
+    *temporary = NULL;
+
+    if (SvPOK(input) && !SvUTF8(input) && !SvGMAGICAL(input))
+        return SvPVbyte(input, *length);
+
+    *temporary = sv_2mortal(newSVsv(input));
+    if (SvUTF8(*temporary) &&
+        !sv_utf8_downgrade(*temporary, TRUE))
+        croak("%s contains wide characters; encode it to bytes first", label);
+
+    return SvPVbyte(*temporary, *length);
+}
+
+static SV *
+response_header_pair_sv(
+    const char *name,
+    STRLEN name_len,
+    const char *value,
+    STRLEN value_len
+)
+{
+    AV *pair = newAV();
+    av_extend(pair, 1);
+    av_push(pair, newSVpvn(name, name_len));
+    av_push(pair, newSVpvn(value, value_len));
+    return newRV_noinc((SV *)pair);
+}
+
+static int
+response_header_row_matches(
+    pTHX_
+    SV *row_ref,
+    const char *wanted,
+    STRLEN wanted_len
+)
+{
+    AV *row;
+    SV **name_ptr;
+    STRLEN name_len;
+    const char *name;
+
+    if (!SvROK(row_ref) || SvTYPE(SvRV(row_ref)) != SVt_PVAV)
+        croak("response header entry is invalid");
+
+    row = (AV *)SvRV(row_ref);
+    name_ptr = av_fetch(row, 0, 0);
+    if (name_ptr == NULL || !SvOK(*name_ptr) || SvROK(*name_ptr))
+        croak("response header entry requires a scalar name");
+
+    name = SvPVbyte(*name_ptr, name_len);
+    return ascii_equal_ci(
+        name,
+        (size_t)name_len,
+        wanted,
+        (size_t)wanted_len
+    );
+}
+
+static void
+response_set_header_native(
+    pTHX_
+    SV *self,
+    SV *name_sv,
+    SV *value_sv
+)
+{
+    HV *hv = response_hv_from_object(aTHX_ self);
+    SV *name_tmp;
+    SV *value_tmp;
+    STRLEN name_len;
+    STRLEN value_len;
+    const char *name;
+    const char *value;
+    SV **headers_ptr;
+    AV *headers;
+    SSize_t max_index;
+    SSize_t first = -1;
+    UV matches = 0;
+    SSize_t i;
+
+    if (response_hv_true(hv, "committed", 9))
+        croak("response metadata cannot change after message commit");
+
+    name = response_input_bytes(
+        aTHX_ name_sv, "response header field name",
+        &name_tmp, &name_len
+    );
+    if (!valid_field_name(name, (size_t)name_len))
+        croak("invalid response header field name");
+
+    value = response_input_bytes(
+        aTHX_ value_sv, "response header field value",
+        &value_tmp, &value_len
+    );
+    if (!valid_output_field_value(value, (size_t)value_len))
+        croak("response header field value contains invalid control characters");
+
+    headers_ptr = hv_fetch(hv, "headers", 7, 0);
+    if (headers_ptr == NULL ||
+        !SvROK(*headers_ptr) ||
+        SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
+        croak("response headers storage is invalid");
+
+    headers = (AV *)SvRV(*headers_ptr);
+    max_index = av_len(headers);
+
+    /*
+     * Fresh server Responses share one immutable empty array. Never append to
+     * it in place: replace the hash slot with a private one-element array.
+     */
+    if (max_index < 0) {
+        AV *new_headers = newAV();
+        av_push(
+            new_headers,
+            response_header_pair_sv(name, name_len, value, value_len)
+        );
+        hv_store(
+            hv, "headers", 7,
+            newRV_noinc((SV *)new_headers), 0
+        );
+        hv_delete(hv, "_server_default_final", 21, G_DISCARD);
+        return;
+    }
+
+    for (i = 0; i <= max_index; ++i) {
+        SV **row_ptr = av_fetch(headers, i, 0);
+        if (row_ptr == NULL)
+            croak("response header entry is missing");
+
+        if (response_header_row_matches(
+                aTHX_ *row_ptr, name, name_len
+            )) {
+            if (matches == 0)
+                first = i;
+            ++matches;
+        }
+    }
+
+    if (matches == 0) {
+        av_push(
+            headers,
+            response_header_pair_sv(name, name_len, value, value_len)
+        );
+    } else if (matches == 1) {
+        av_store(
+            headers,
+            first,
+            response_header_pair_sv(name, name_len, value, value_len)
+        );
+    } else {
+        AV *new_headers = newAV();
+        int inserted = 0;
+
+        av_extend(new_headers, max_index - (SSize_t)matches + 1);
+
+        for (i = 0; i <= max_index; ++i) {
+            SV **row_ptr = av_fetch(headers, i, 0);
+            int is_match;
+
+            if (row_ptr == NULL)
+                croak("response header entry is missing");
+
+            is_match = response_header_row_matches(
+                aTHX_ *row_ptr, name, name_len
+            );
+
+            if (is_match) {
+                if (!inserted) {
+                    av_push(
+                        new_headers,
+                        response_header_pair_sv(
+                            name, name_len, value, value_len
+                        )
+                    );
+                    inserted = 1;
+                }
+                continue;
+            }
+
+            av_push(new_headers, SvREFCNT_inc(*row_ptr));
+        }
+
+        hv_store(
+            hv, "headers", 7,
+            newRV_noinc((SV *)new_headers), 0
+        );
+    }
+
+    hv_delete(hv, "_server_default_final", 21, G_DISCARD);
+}
+
+static void
+response_set_body_native(pTHX_ SV *self, SV *body_sv)
+{
+    HV *hv = response_hv_from_object(aTHX_ self);
+    SV **kind_ptr;
+    SV *body_tmp;
+    STRLEN body_len;
+    const char *body;
+
+    if (response_hv_true(hv, "committed", 9))
+        croak("response metadata cannot change after message commit");
+
+    kind_ptr = hv_fetch(hv, "body_kind", 9, 0);
+    if (kind_ptr != NULL && SvOK(*kind_ptr) &&
+        strEQ(SvPV_nolen(*kind_ptr), "stream"))
+        croak("body(): response already has an incremental body producer");
+
+    body = response_input_bytes(
+        aTHX_ body_sv, "body(): body",
+        &body_tmp, &body_len
+    );
+
+    hv_store(hv, "body", 4, newSVpvn(body, body_len), 0);
+    hv_store(hv, "body_kind", 9, newSVpvs("scalar"), 0);
+    hv_store(hv, "complete", 8, newSViv(1), 0);
+}
+
+
 MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::_HTTP1
 PROTOTYPES: DISABLE
 
@@ -1140,254 +1389,6 @@ DESTROY(self)
     Safefree(state);
     sv_setiv(inner, 0);
 
-
-static HV *
-response_hv_from_object(pTHX_ SV *self)
-{
-    if (!SvROK(self) ||
-        !sv_derived_from(self, "Linux::Event::HTTP::Response") ||
-        SvTYPE(SvRV(self)) != SVt_PVHV)
-        croak("not a Linux::Event::HTTP::Response object");
-
-    return (HV *)SvRV(self);
-}
-
-static int
-response_hv_true(HV *hv, const char *key, I32 key_len)
-{
-    SV **value = hv_fetch(hv, key, key_len, 0);
-    return value != NULL && SvTRUE(*value);
-}
-
-static const char *
-response_input_bytes(
-    pTHX_
-    SV *input,
-    const char *label,
-    SV **temporary,
-    STRLEN *length
-)
-{
-    if (!SvOK(input) || SvROK(input))
-        croak("%s must be a defined scalar byte string", label);
-
-    *temporary = NULL;
-
-    if (SvPOK(input) && !SvUTF8(input) && !SvGMAGICAL(input))
-        return SvPVbyte(input, *length);
-
-    *temporary = sv_2mortal(newSVsv(input));
-    if (SvUTF8(*temporary) &&
-        !sv_utf8_downgrade(*temporary, TRUE))
-        croak("%s contains wide characters; encode it to bytes first", label);
-
-    return SvPVbyte(*temporary, *length);
-}
-
-static SV *
-response_header_pair_sv(
-    const char *name,
-    STRLEN name_len,
-    const char *value,
-    STRLEN value_len
-)
-{
-    AV *pair = newAV();
-    av_extend(pair, 1);
-    av_push(pair, newSVpvn(name, name_len));
-    av_push(pair, newSVpvn(value, value_len));
-    return newRV_noinc((SV *)pair);
-}
-
-static int
-response_header_row_matches(
-    pTHX_
-    SV *row_ref,
-    const char *wanted,
-    STRLEN wanted_len
-)
-{
-    AV *row;
-    SV **name_ptr;
-    STRLEN name_len;
-    const char *name;
-
-    if (!SvROK(row_ref) || SvTYPE(SvRV(row_ref)) != SVt_PVAV)
-        croak("response header entry is invalid");
-
-    row = (AV *)SvRV(row_ref);
-    name_ptr = av_fetch(row, 0, 0);
-    if (name_ptr == NULL || !SvOK(*name_ptr) || SvROK(*name_ptr))
-        croak("response header entry requires a scalar name");
-
-    name = SvPVbyte(*name_ptr, name_len);
-    return ascii_equal_ci(
-        name,
-        (size_t)name_len,
-        wanted,
-        (size_t)wanted_len
-    );
-}
-
-static void
-response_set_header_native(
-    pTHX_
-    SV *self,
-    SV *name_sv,
-    SV *value_sv
-)
-{
-    HV *hv = response_hv_from_object(aTHX_ self);
-    SV *name_tmp;
-    SV *value_tmp;
-    STRLEN name_len;
-    STRLEN value_len;
-    const char *name;
-    const char *value;
-    SV **headers_ptr;
-    AV *headers;
-    SSize_t max_index;
-    SSize_t first = -1;
-    UV matches = 0;
-    SSize_t i;
-
-    if (response_hv_true(hv, "committed", 9))
-        croak("response metadata cannot change after message commit");
-
-    name = response_input_bytes(
-        aTHX_ name_sv, "response header field name",
-        &name_tmp, &name_len
-    );
-    if (!valid_field_name(name, (size_t)name_len))
-        croak("invalid response header field name");
-
-    value = response_input_bytes(
-        aTHX_ value_sv, "response header field value",
-        &value_tmp, &value_len
-    );
-    if (!valid_output_field_value(value, (size_t)value_len))
-        croak("response header field value contains invalid control characters");
-
-    headers_ptr = hv_fetch(hv, "headers", 7, 0);
-    if (headers_ptr == NULL ||
-        !SvROK(*headers_ptr) ||
-        SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
-        croak("response headers storage is invalid");
-
-    headers = (AV *)SvRV(*headers_ptr);
-    max_index = av_len(headers);
-
-    /*
-     * Fresh server Responses share one immutable empty array. Never append to
-     * it in place: replace the hash slot with a private one-element array.
-     */
-    if (max_index < 0) {
-        AV *new_headers = newAV();
-        av_push(
-            new_headers,
-            response_header_pair_sv(name, name_len, value, value_len)
-        );
-        hv_store(
-            hv, "headers", 7,
-            newRV_noinc((SV *)new_headers), 0
-        );
-        hv_delete(hv, "_server_default_final", 21, G_DISCARD);
-        return;
-    }
-
-    for (i = 0; i <= max_index; ++i) {
-        SV **row_ptr = av_fetch(headers, i, 0);
-        if (row_ptr == NULL)
-            croak("response header entry is missing");
-
-        if (response_header_row_matches(
-                aTHX_ *row_ptr, name, name_len
-            )) {
-            if (matches == 0)
-                first = i;
-            ++matches;
-        }
-    }
-
-    if (matches == 0) {
-        av_push(
-            headers,
-            response_header_pair_sv(name, name_len, value, value_len)
-        );
-    } else if (matches == 1) {
-        av_store(
-            headers,
-            first,
-            response_header_pair_sv(name, name_len, value, value_len)
-        );
-    } else {
-        AV *new_headers = newAV();
-        int inserted = 0;
-
-        av_extend(new_headers, max_index - (SSize_t)matches + 1);
-
-        for (i = 0; i <= max_index; ++i) {
-            SV **row_ptr = av_fetch(headers, i, 0);
-            int is_match;
-
-            if (row_ptr == NULL)
-                croak("response header entry is missing");
-
-            is_match = response_header_row_matches(
-                aTHX_ *row_ptr, name, name_len
-            );
-
-            if (is_match) {
-                if (!inserted) {
-                    av_push(
-                        new_headers,
-                        response_header_pair_sv(
-                            name, name_len, value, value_len
-                        )
-                    );
-                    inserted = 1;
-                }
-                continue;
-            }
-
-            av_push(new_headers, SvREFCNT_inc(*row_ptr));
-        }
-
-        hv_store(
-            hv, "headers", 7,
-            newRV_noinc((SV *)new_headers), 0
-        );
-    }
-
-    hv_delete(hv, "_server_default_final", 21, G_DISCARD);
-}
-
-static void
-response_set_body_native(pTHX_ SV *self, SV *body_sv)
-{
-    HV *hv = response_hv_from_object(aTHX_ self);
-    SV **kind_ptr;
-    SV *body_tmp;
-    STRLEN body_len;
-    const char *body;
-
-    if (response_hv_true(hv, "committed", 9))
-        croak("response metadata cannot change after message commit");
-
-    kind_ptr = hv_fetch(hv, "body_kind", 9, 0);
-    if (kind_ptr != NULL && SvOK(*kind_ptr) &&
-        strEQ(SvPV_nolen(*kind_ptr), "stream"))
-        croak("body(): response already has an incremental body producer");
-
-    body = response_input_bytes(
-        aTHX_ body_sv, "body(): body",
-        &body_tmp, &body_len
-    );
-
-    hv_store(hv, "body", 4, newSVpvn(body, body_len), 0);
-    hv_store(hv, "body_kind", 9, newSVpvs("scalar"), 0);
-    hv_store(hv, "complete", 8, newSViv(1), 0);
-}
 
 MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::Response
 
