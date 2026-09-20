@@ -42,10 +42,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libssl-dev
 
-      - name: Install Linux::Event release dependency
+      - name: Install pinned current Linux::Event core
         run: |
-          cpanm --notest 'Linux::Event@0.113' || \
-            cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v.113.tar.gz
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/1c3de59e395e05e79c735f5d5ef35cd5021e8c55.tar.gz
 
       - name: Install Uniform::HTTP release dependency
         run: |
@@ -60,6 +59,31 @@ jobs:
           perl Makefile.PL
           make
           make test
+
+      - name: Build exact pre-raw baseline
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          git fetch --depth=1 origin c391b2d8fe6b56b6088569cdadeb86160630be26
+          git worktree add --detach "$RUNNER_TEMP/http-baseline" FETCH_HEAD
+          cd "$RUNNER_TEMP/http-baseline"
+          perl Makefile.PL
+          make
+          make test
+
+      - name: Same-run raw HTTP input comparisons
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=50000 --warmup=5000 --repeats=7 --response-bytes=32 --json=bench/results/ci-raw-get32.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=30000 --warmup=3000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-raw-get16k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=30000 --warmup=3000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-raw-post4k.json
+
+      - name: Upload raw HTTP benchmark results
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-http-current-lifecycle
+          path: bench/results/ci-raw-*.json
 
       - name: End-to-end benchmark smoke
         if: matrix.perl == '5' && matrix.multi_thread == false
