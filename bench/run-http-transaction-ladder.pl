@@ -48,6 +48,18 @@ my %case = (
         stage => 'current_frame',
         description => 'Public Content-Type/body API plus production-style internal generated Content-Length append; prebuilt response write',
     },
+    current_exchange_minimal => {
+        label => 'C7a + minimal bodyless active fields',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_exchange_minimal',
+        description => 'Native head path plus only active Request/Response/request-state assignment and cleanup; no native Request completion mark',
+    },
+    current_exchange_nomark => {
+        label => 'C7b + full fields, no Request mark',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_exchange_nomark',
+        description => 'Production bodyless active-field setup and cleanup without native Request _mark_complete',
+    },
     current_exchange => {
         label => 'C7 + active bodyless exchange state',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
@@ -230,7 +242,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(current_parse current_response current_header current_api current_frame current_head current_exchange current_callback current_send current_checked current_bodyless current_http);
+my @names = qw(current_parse current_response current_header current_api current_frame current_head current_exchange_minimal current_exchange_nomark current_exchange current_callback current_send current_checked current_bodyless current_http);
 if (defined $case_list) {
     my %known = map { $_ => 1 } @names;
     my @selected = grep { length } split /,/, $case_list;
