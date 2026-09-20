@@ -1,4 +1,4 @@
-name: HTTP exchange-state split benchmark
+name: HTTP bodyless exchange bookkeeping benchmark
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - docs/**
 
 concurrency:
-  group: http-exchange-state-split-${{ github.ref }}
+  group: http-bodyless-exchange-bookkeeping-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -45,10 +45,10 @@ jobs:
           make
           make test
 
-      - name: Exchange activation vs callback dispatch
+      - name: Bodyless exchange bookkeeping split
         run: |
           perl -Mblib bench/run-http-transaction-ladder.pl \
-            --cases=current_head,current_exchange,current_callback,current_send \
+            --cases=current_head,current_exchange_minimal,current_exchange_nomark,current_exchange \
             --requests=50000 \
             --warmup=5000 \
             --connections=100 \
@@ -56,10 +56,10 @@ jobs:
             --response-bytes=32 \
             --repeats=7 \
             --read-budget-bytes=0 \
-            --json=bench/results/exchange-state-split.json
+            --json=bench/results/bodyless-exchange-bookkeeping.json
 
       - name: Upload benchmark result
         uses: actions/upload-artifact@v4
         with:
-          name: exchange-state-split
-          path: bench/results/exchange-state-split.json
+          name: bodyless-exchange-bookkeeping
+          path: bench/results/bodyless-exchange-bookkeeping.json
