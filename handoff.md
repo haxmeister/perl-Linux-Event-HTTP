@@ -182,6 +182,32 @@ Content-Length rejection, explicit Connection: close fallback, late
 Transaction materialization after an early response, plus the existing
 streaming/Upgrade/CONNECT suites.
 
+Current-architecture lifecycle ladder, run `35484049649`, all green:
+
+- C1 parse + prebuilt Content-Type write: 64,632.1 req/s;
+- C2 + trusted sparse Response: 58,052.7 req/s (-10.2%);
+- C3 + public Content-Type header/body API: 43,417.7 req/s (-25.2%);
+- C4 + generated Content-Length metadata: 36,797.4 req/s (-15.3%);
+- C5 + guarded application callback: 35,332.1 req/s (-4.0%);
+- C6 + native Response head serialization: 35,214.7 req/s (-0.3%);
+- C7 + current scalar-final send/completion: 26,774.4 req/s (-24.0%);
+- C8 + production request checks: 25,365.8 req/s (-5.3%);
+- C9 production Connection driver: 24,132.3 req/s (-4.9%);
+- C10 full Server wrapper: 24,177.8 req/s (+0.2%).
+
+Interpretation: the Server wrapper and native head serializer are effectively
+free, and callback protection is now a minor cost. The three dominant remaining
+HTTP-local costs are public Response header/body mutation, Content-Length
+metadata insertion, and scalar-final send/completion bookkeeping. The parser
+plus prebuilt write ceiling remains about 64.6k req/s on this run, so a second
+transport/buffer-side ceiling also remains above the HTTP object/lifecycle
+costs.
+
+Do not compare the ladder's 24.2k full-Server figure directly with the earlier
+35.2k Content-Type comparison run because they were separate GitHub jobs with
+different cumulative-stage benchmark mechanics. Use the ladder's relative
+stage deltas diagnostically.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
