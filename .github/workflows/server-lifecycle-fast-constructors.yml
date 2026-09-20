@@ -49,9 +49,9 @@ jobs:
           make test
           perl -MLinux::Event -e 'print "Linux::Event=$Linux::Event::VERSION\n"'
 
-      - name: Build exact pre-completion baseline
+      - name: Build exact pre-direct-retire baseline
         run: |
-          git worktree add /tmp/le-http-before 2ba493944588aad15256c0456845d67e0ce252db
+          git worktree add /tmp/le-http-before 02de3b566039c6d1fdde77e7997cf488bddc47c1
           cd /tmp/le-http-before
           perl Makefile.PL
           make
