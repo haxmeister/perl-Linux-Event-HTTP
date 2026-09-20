@@ -1406,8 +1406,6 @@ _parse_server_request(CLASS, buffer, max_head = 65536, max_headers = 100)
             XSRETURN_UNDEF;
     } else if (consumed == -1) {
         RETVAL = newSViv(400);
-    } else if ((UV)consumed > max_head) {
-        RETVAL = newSViv(431);
     } else {
         semantic_status = validate_request_semantics(
             minor_version,
