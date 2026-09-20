@@ -449,6 +449,45 @@ malformed 400, unsupported-transfer 501, incomplete-head 431, valid
 Conclusion: keep the native server request-check path. The next largest measured
 HTTP-local stage remains trusted sparse Response construction.
 
+## Compact server Response
+
+Branch: `experiment/sparse-response-construction`.
+
+A focused lower-bound benchmark proved that Response object allocation itself is
+nearly free; the previous server cost came from eagerly populating default hash
+fields.
+
+Run `35495614308`, current Linux::Event main
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`:
+
+- parse + prebuilt Content-Type write: 120,227.4 req/s;
+- + empty blessed Response hash: 119,423.2 (-0.7%);
+- + one compact server flag key: 118,580.3 (-0.7%);
+- + prior trusted sparse Response defaults: 104,014.0 (-12.3%).
+
+The production server Response now carries only one compact native-created
+`_server_flags` key until application mutation requires real metadata storage.
+Status 200, request HTTP version, and empty headers are implicit. Public
+Response behavior is unchanged; mutation materializes storage as needed.
+HTTP/1.0 version identity is retained in the compact flags.
+
+End-to-end validation run `35495843785`, exact pre-compact baseline
+`6005c2f64ebf120f0dbc01ed8145a0d8275adf37`, both full suites green:
+
+- 32-byte GET + Content-Type:
+  68,855.7 -> 71,633.6 req/s (+4.0%);
+  Feersum 144,417.2 req/s.
+- 16 KiB GET + Content-Type:
+  56,819.7 -> 59,467.2 req/s (+4.7%);
+  Feersum 114,457.5 req/s.
+- 4 KiB POST + Content-Type / 32-byte response:
+  46,424.4 -> 48,017.7 req/s (+3.4%).
+
+Conclusion: keep compact server Response construction. It removes a real local
+cost while preserving the public message API, but the end-to-end gain is now
+small enough that further Response-constructor micro-optimization is not the
+next priority.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
