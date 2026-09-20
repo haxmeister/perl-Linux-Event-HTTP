@@ -308,8 +308,9 @@ been removed. The permanent comparison harness retains the useful
 
 ### Next useful work
 
-The native chunked specialization is worth keeping. Open a clean PR from this
-branch to main and use normal repository CI as the final cross-Perl gate:
+The native chunked specialization is worth keeping. PR #35 is the clean merge
+candidate from this branch to main. Use normal repository CI as the final
+cross-Perl gate:
 
 - Perl 5.36;
 - latest Perl;
@@ -318,7 +319,7 @@ branch to main and use normal repository CI as the final cross-Perl gate:
 - existing raw GET / Content-Length comparisons;
 - disttest.
 
-If that gate is green, squash-merge the chunked specialization to main.
+If PR #35's gate is green, squash-merge the chunked specialization to main.
 
 After that merge, all demonstrated common server input shapes have a validated
 raw-native path: bodyless request heads, Content-Length bodies, chunked bodies,
