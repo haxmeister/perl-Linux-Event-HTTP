@@ -8,7 +8,7 @@ Revision history for Linux-Event-HTTP
       client-operation boundaries.
     - Use the flat Linux::Event::HTTP namespace and make the server-side transport
       class Linux::Event::HTTP::Server::Connection.
-    - Require Linux::Event 0.115 for the ordered-byte raw-consumer ABI,
+    - Require Linux::Event 0.116 for the ordered-byte raw-consumer ABI,
       native-consumer transition semantics, Listener, tuning, TLS, and stream APIs
       used by this distribution.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
