@@ -15,7 +15,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response_empty|current_response|current_header|current_api|current_frame|current_exchange_minimal|current_exchange_nomark|current_exchange|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
+    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response_empty|current_response_flagged|current_response|current_header|current_api|current_frame|current_exchange_minimal|current_exchange_nomark|current_exchange|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -158,6 +158,14 @@ my $wire_ct = "HTTP/1.1 200 OK\r\n"
 
             if ($main::STAGE eq 'current_response_empty') {
                 my $response = bless {}, 'Linux::Event::HTTP::Response';
+                $self->write($self->data->{wire_ct});
+                next;
+            }
+
+            if ($main::STAGE eq 'current_response_flagged') {
+                my $response = bless {
+                    _server_flags => 3,
+                }, 'Linux::Event::HTTP::Response';
                 $self->write($self->data->{wire_ct});
                 next;
             }
