@@ -15,7 +15,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response|current_api|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
+    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response|current_api|current_frame|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -133,6 +133,7 @@ my $wire_ct = "HTTP/1.1 200 OK\r\n"
             }
 
             if ($main::STAGE eq 'current_api'
+                || $main::STAGE eq 'current_frame'
                 || $main::STAGE eq 'current_head') {
                 $response->header(
                     'Content-Type', 'application/octet-stream',
@@ -140,6 +141,14 @@ my $wire_ct = "HTTP/1.1 200 OK\r\n"
                 $response->body($self->data->{payload});
 
                 if ($main::STAGE eq 'current_api') {
+                    $self->write($self->data->{wire_ct});
+                    next;
+                }
+
+                $response->header(
+                    'Content-Length', length($self->data->{payload}),
+                );
+                if ($main::STAGE eq 'current_frame') {
                     $self->write($self->data->{wire_ct});
                 } else {
                     my $head = $response->_serialize_head('1.1');
