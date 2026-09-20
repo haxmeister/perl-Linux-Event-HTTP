@@ -1,4 +1,4 @@
-name: HTTP scalar-final completion experiment
+name: HTTP bodyless completion microbenchmark
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - docs/**
 
 concurrency:
-  group: http-scalar-final-completion-${{ github.ref }}
+  group: http-bodyless-retire-v2-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -39,7 +39,6 @@ jobs:
           cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/1c3de59e395e05e79c735f5d5ef35cd5021e8c55.tar.gz
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
-          cpanm --notest Feersum
           cpanm --notest --installdeps .
 
       - name: Build and test experiment
@@ -47,7 +46,6 @@ jobs:
           perl Makefile.PL
           make
           make test
-          perl -MLinux::Event -e 'print "Linux::Event=$Linux::Event::VERSION\n"'
 
       - name: Build exact pre-direct-retire baseline
         run: |
@@ -57,37 +55,7 @@ jobs:
           make
           make test
 
-      - name: 32-byte Content-Type A/B vs Feersum
-        env:
-          BENCH_BASE_TREE: /tmp/le-http-before
-        run: |
-          perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline_content_type,linuxevent_content_type,feersum \
-            --strict \
-            --requests=50000 \
-            --warmup=5000 \
-            --connections=100 \
-            --pipeline=1 \
-            --response-bytes=32 \
-            --repeats=7 \
-            --json=bench/results/scalar-final-xs-32.json
-
-      - name: 16 KiB Content-Type A/B vs Feersum
-        env:
-          BENCH_BASE_TREE: /tmp/le-http-before
-        run: |
-          perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline_content_type,linuxevent_content_type,feersum \
-            --strict \
-            --requests=30000 \
-            --warmup=3000 \
-            --connections=100 \
-            --pipeline=1 \
-            --response-bytes=16384 \
-            --repeats=5 \
-            --json=bench/results/scalar-final-xs-16k.json
-
-      - name: 4 KiB POST Content-Type A/B
+      - name: Focused bodyless Content-Type A/B
         env:
           BENCH_BASE_TREE: /tmp/le-http-before
         run: |
@@ -98,16 +66,12 @@ jobs:
             --warmup=3000 \
             --connections=100 \
             --pipeline=1 \
-            --request-body-bytes=4096 \
             --response-bytes=32 \
-            --repeats=5 \
-            --json=bench/results/scalar-final-xs-post4k.json
+            --repeats=7 \
+            --json=bench/results/bodyless-retire.json
 
-      - name: Upload benchmark results
+      - name: Upload benchmark result
         uses: actions/upload-artifact@v4
         with:
-          name: scalar-final-xs
-          path: |
-            bench/results/scalar-final-xs-32.json
-            bench/results/scalar-final-xs-16k.json
-            bench/results/scalar-final-xs-post4k.json
+          name: bodyless-retire
+          path: bench/results/bodyless-retire.json
