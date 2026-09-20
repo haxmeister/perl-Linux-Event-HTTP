@@ -161,6 +161,30 @@ my $payload = 'x' x $response_bytes;
 }
 
 {
+    package Linux::Event::HTTP::Bench::NativeContentTypeCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+    use Linux::Event::Framer ();
+    use Linux::Event::HTTP::_HTTP1 ();
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+
+    sub _uses_native_http_input ($class) { 1 }
+
+    sub stream_tuning ($class) {
+        return read_budget_bytes => $main::READ_BUDGET_BYTES;
+    }
+
+    sub on_request ($self, $request, $response) {
+        $response->header('Content-Type', 'application/octet-stream');
+        $response->body($self->data->{payload});
+        return;
+    }
+}
+
+{
     package Linux::Event::HTTP::Bench::RequestEndCompareConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
@@ -182,6 +206,8 @@ my $connection_class = $mode eq 'natural'
     ? 'Linux::Event::HTTP::Bench::NaturalCompareConnection'
     : $mode eq 'content-type'
         ? 'Linux::Event::HTTP::Bench::ContentTypeCompareConnection'
+    : $mode eq 'content-type-native'
+        ? 'Linux::Event::HTTP::Bench::NativeContentTypeCompareConnection'
     : $mode eq 'legacy-ready'
         ? 'Linux::Event::HTTP::Bench::LegacyReadyCompareConnection'
         : $mode eq 'legacy-eligibility'
