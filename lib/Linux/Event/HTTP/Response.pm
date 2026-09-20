@@ -126,9 +126,8 @@ sub version ($self, @args) {
 }
 
 sub header ($self, $name, @args) {
-    $name = _validate_name($name);
-
     if (!@args) {
+        $name = _validate_name($name);
         my $wanted = lc $name;
         for my $pair (@{$self->{headers}}) {
             return $pair->[1] if lc($pair->[0]) eq $wanted;
@@ -137,53 +136,9 @@ sub header ($self, $name, @args) {
     }
 
     die 'header setter accepts exactly one value' if @args != 1;
-    die 'response metadata cannot change after message commit'
-        if $self->{committed};
-    my $value = _validate_value($args[0]);
-    my $headers = $self->{headers};
-
-    # Fresh server Responses normally set one or more distinct fields. An
-    # empty list cannot contain a replacement target, so avoid case folding
-    # and the replacement scan entirely.
-    if (!@$headers) {
-        $self->{headers} = [ [ $name, $value ] ];
-        delete $self->{_server_default_final};
-        return $self;
-    }
-
-    my $wanted = lc $name;
-
-    # For non-empty lists, scan first so an absent distinct field can append
-    # in place without cloning every existing lossless header pair.
-    my $first = -1;
-    my $matches = 0;
-    for my $i (0 .. $#$headers) {
-        next if lc($headers->[$i][0]) ne $wanted;
-        $first = $i if !$matches;
-        ++$matches;
-    }
-
-    if (!$matches) {
-        push @$headers, [ $name, $value ];
-    } elsif ($matches == 1) {
-        $headers->[$first] = [ $name, $value ];
-    } else {
-        my @kept;
-        my $inserted = 0;
-        for my $pair (@$headers) {
-            if (lc($pair->[0]) eq $wanted) {
-                if (!$inserted) {
-                    push @kept, [ $name, $value ];
-                    $inserted = 1;
-                }
-                next;
-            }
-            push @kept, $pair;
-        }
-        $self->{headers} = \@kept;
-    }
-
-    delete $self->{_server_default_final};
+    Linux::Event::HTTP::Response::_set_header_native(
+        $self, $name, $args[0],
+    );
     return $self;
 }
 
@@ -267,23 +222,9 @@ sub body ($self, @args) {
     return $self->{body} if !@args;
 
     die 'body accepts exactly one value' if @args != 1;
-    die 'response metadata cannot change after message commit'
-        if $self->{committed};
-    die 'body(): response already has an incremental body producer'
-        if ($self->{body_kind} // '') eq 'stream';
-
-    my $body = $args[0];
-    die 'body(): body must be a defined scalar byte string'
-        if !defined($body) || ref($body);
-    my $bytes = "$body";
-    if (utf8::is_utf8($bytes)) {
-        die 'body(): body contains wide characters; encode it to bytes first'
-            if !utf8::downgrade($bytes, 1);
-    }
-
-    $self->{body} = $bytes;
-    $self->{body_kind} = 'scalar';
-    $self->{complete} = 1;
+    Linux::Event::HTTP::Response::_set_body_native(
+        $self, $args[0],
+    );
     return $self;
 }
 
