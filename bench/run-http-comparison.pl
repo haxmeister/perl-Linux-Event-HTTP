@@ -227,6 +227,8 @@ my $warmup = 2_000;
 my $connections = 100;
 my $pipeline = 1;
 my $request_body_bytes = 0;
+my $request_body_framing = 'content-length';
+my $request_chunk_bytes = 4096;
 my $response_bytes = 32;
 my $repeats = 5;
 my $timeout = 120;
@@ -241,8 +243,10 @@ GetOptions(
     'warmup=i'             => \$warmup,
     'connections=i'        => \$connections,
     'pipeline=i'           => \$pipeline,
-    'request-body-bytes=i' => \$request_body_bytes,
-    'response-bytes=i'     => \$response_bytes,
+    'request-body-bytes=i'   => \$request_body_bytes,
+    'request-body-framing=s'  => \$request_body_framing,
+    'request-chunk-bytes=i'   => \$request_chunk_bytes,
+    'response-bytes=i'        => \$response_bytes,
     'repeats=i'            => \$repeats,
     'timeout=f'            => \$timeout,
     'strict!'              => \$strict,
@@ -267,6 +271,10 @@ die "warmup must be >= 0\n" if $warmup < 0;
 die "connections must be > 0\n" if $connections <= 0;
 die "pipeline must be > 0\n" if $pipeline <= 0;
 die "request-body-bytes must be >= 0\n" if $request_body_bytes < 0;
+die "request-body-framing must be content-length or chunked\n"
+    if $request_body_framing ne 'content-length'
+    && $request_body_framing ne 'chunked';
+die "request-chunk-bytes must be > 0\n" if $request_chunk_bytes <= 0;
 die "response-bytes must be >= 0\n" if $response_bytes < 0;
 die "repeats must be > 0\n" if $repeats <= 0;
 die "timeout must be > 0\n" if $timeout <= 0;
@@ -290,13 +298,17 @@ for my $name (@available) {
     $server{$name}{prepare}->() if $server{$name}{prepare};
 }
 
-my $request_wire = make_request($request_body_bytes);
+my $request_wire = make_request(
+    $request_body_bytes,
+    $request_body_framing,
+    $request_chunk_bytes,
+);
 my @records;
 
 say 'Linux::Event::HTTP cross-server comparison';
 say 'servers=' . join(',', @available);
 say 'skipped=' . join(',', @skipped) if @skipped;
-say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats";
+say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes request_body_framing=$request_body_framing request_chunk_bytes=$request_chunk_bytes response_bytes=$response_bytes repeats=$repeats";
 say 'mode=single-process single-execution-slot loopback-tcp shared-client';
 
 for my $repeat (1 .. $repeats) {
@@ -360,6 +372,8 @@ if (defined $json_path) {
             connections => $connections,
             pipeline => $pipeline,
             request_body_bytes => $request_body_bytes,
+            request_body_framing => $request_body_framing,
+            request_chunk_bytes => $request_chunk_bytes,
             response_bytes => $response_bytes,
             repeats => $repeats,
             timeout => $timeout,
@@ -617,11 +631,36 @@ sub write_all ($fh, $bytes) {
     }
 }
 
-sub make_request ($body_bytes) {
+sub make_request ($body_bytes, $framing, $chunk_bytes) {
+    return "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n"
+        if !$body_bytes;
+
     my $body = 'b' x $body_bytes;
-    return $body_bytes
-        ? "POST /bench HTTP/1.1\r\nHost: benchmark.test\r\nContent-Length: $body_bytes\r\nContent-Type: application/octet-stream\r\n\r\n$body"
-        : "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
+    if ($framing eq 'content-length') {
+        return "POST /bench HTTP/1.1\r\n"
+            . "Host: benchmark.test\r\n"
+            . "Content-Length: $body_bytes\r\n"
+            . "Content-Type: application/octet-stream\r\n"
+            . "\r\n"
+            . $body;
+    }
+
+    my $wire = "POST /bench HTTP/1.1\r\n"
+        . "Host: benchmark.test\r\n"
+        . "Transfer-Encoding: chunked\r\n"
+        . "Content-Type: application/octet-stream\r\n"
+        . "\r\n";
+    my $offset = 0;
+    while ($offset < $body_bytes) {
+        my $length = $body_bytes - $offset;
+        $length = $chunk_bytes if $length > $chunk_bytes;
+        $wire .= sprintf("%X\r\n", $length);
+        $wire .= substr($body, $offset, $length);
+        $wire .= "\r\n";
+        $offset += $length;
+    }
+    $wire .= "0\r\n\r\n";
+    return $wire;
 }
 
 sub percentile_us ($values, $percent) {
@@ -714,8 +753,10 @@ usage: bench/run-http-comparison.pl [options]
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)
   --pipeline=N             max outstanding requests per connection (default 1)
-  --request-body-bytes=N   fixed request body bytes (default 0)
-  --response-bytes=N       fixed response body bytes (default 32)
+  --request-body-bytes=N   decoded request body bytes (default 0)
+  --request-body-framing=S  content-length or chunked (default content-length)
+  --request-chunk-bytes=N   chunk payload bytes for chunked requests (default 4096)
+  --response-bytes=N        fixed response body bytes (default 32)
   --repeats=N              rotated benchmark repeats (default 5)
   --timeout=SECONDS        server/client phase timeout (default 120)
   --strict                 fail instead of skipping unavailable competitors
