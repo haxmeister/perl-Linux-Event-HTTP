@@ -81,6 +81,8 @@ Cumulative same-run comparison, run `35479723733`:
 The cumulative result confirms that the HTTP lifecycle work is material and
 not an artifact of comparing separate GitHub runners.
 
+Early native-final experiment commit: `012522ac0b0af1c1b955c83919795ba336475b9f`.
+
 Current experiment: permit the existing native default-final response builder
 to serve an HTTP/1.1 keep-alive request before its request body has finished
 arriving. The generic response path already supports response-before-request-
