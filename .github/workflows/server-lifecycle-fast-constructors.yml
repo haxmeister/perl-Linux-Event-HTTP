@@ -1,4 +1,4 @@
-name: HTTP general scalar final fast-path experiment
+name: HTTP current lifecycle ladder
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: http-general-scalar-${{ github.ref }}
+  group: http-current-lifecycle-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,8 +22,6 @@ jobs:
     steps:
       - name: Check out experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
 
       - name: Set up Perl
         uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
@@ -40,79 +38,28 @@ jobs:
           cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/b0d5244f42f4c5bf48521406d24dd299341c9770.tar.gz
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
-          cpanm --notest Feersum
           cpanm --notest --installdeps .
 
-      - name: Build and test experiment
+      - name: Build and test
         run: |
           perl Makefile.PL
           make
           make test
 
-      - name: Build exact pre-fast-path baseline
-        if: github.event_name == 'workflow_dispatch'
+      - name: Current lifecycle ladder
         run: |
-          git worktree add /tmp/le-http-before 9663590bdbfab9e705c0760efa06a118c08f310c
-          cd /tmp/le-http-before
-          perl Makefile.PL
-          make
-          make test
-
-      - name: 32-byte Content-Type scalar A/B
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          BENCH_BASE_TREE: /tmp/le-http-before
-        run: |
-          perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent,feersum \
-            --strict \
-            --requests=50000 \
-            --warmup=5000 \
+          perl -Mblib bench/run-http-transaction-ladder.pl \
+            --requests=100000 \
+            --warmup=10000 \
             --connections=100 \
             --pipeline=1 \
             --response-bytes=32 \
             --repeats=7 \
-            --json=bench/results/general-scalar-content-type.json
+            --read-budget-bytes=0 \
+            --json=bench/results/current-lifecycle.json
 
-      - name: 16 KiB Content-Type scalar A/B
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          BENCH_BASE_TREE: /tmp/le-http-before
-        run: |
-          perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent,feersum \
-            --strict \
-            --requests=30000 \
-            --warmup=3000 \
-            --connections=100 \
-            --pipeline=1 \
-            --response-bytes=16384 \
-            --repeats=5 \
-            --json=bench/results/general-scalar-content-type-16k.json
-
-      - name: 4 KiB POST Content-Type A/B
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          BENCH_BASE_TREE: /tmp/le-http-before
-        run: |
-          perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline_content_type,linuxevent_content_type \
-            --strict \
-            --requests=30000 \
-            --warmup=3000 \
-            --connections=100 \
-            --pipeline=1 \
-            --request-body-bytes=4096 \
-            --response-bytes=32 \
-            --repeats=5 \
-            --json=bench/results/general-scalar-content-type-post4k.json
-
-      - name: Upload benchmark results
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload benchmark result
         uses: actions/upload-artifact@v4
         with:
-          name: general-scalar-final
-          path: |
-            bench/results/general-scalar-content-type.json
-            bench/results/general-scalar-content-type-16k.json
-            bench/results/general-scalar-content-type-post4k.json
+          name: current-lifecycle
+          path: bench/results/current-lifecycle.json
