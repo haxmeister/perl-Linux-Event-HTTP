@@ -47,6 +47,7 @@ t/11-native-request.t
 t/12-http1-framing.t
 t/13-chunked-decoder.t
 t/14-native-response-fastpath.t
+t/15-native-raw-server.t
 t/19-request-message.t
 t/20-response.t
 t/21-response-body-stream-unit.t
@@ -86,5 +87,6 @@ vendor/picohttpparser/UPSTREAM
 vendor/picohttpparser/picohttpparser.c
 vendor/picohttpparser/picohttpparser.h
 xshttp1/HTTP1.xs
+xshttp1/stream_consumer_abi.h
 xshttp1/Makefile.PL
 bench/servers/linuxevent-production-stage.pl
