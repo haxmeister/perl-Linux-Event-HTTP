@@ -74,6 +74,7 @@ sub _new_server_default ($class, $version) {
         version               => $version,
         headers               => $EMPTY_HEADERS,
         _server_default_final => 1,
+        _server_scalar_simple => 1,
     }, $class;
 }
 
@@ -150,6 +151,7 @@ sub add_header ($self, $name, $value) {
         if refaddr($self->{headers}) == refaddr($EMPTY_HEADERS);
     push @{$self->{headers}}, [ $name, $value ];
     delete $self->{_server_default_final};
+    delete $self->{_server_scalar_simple};
     return $self;
 }
 
@@ -160,6 +162,7 @@ sub remove_header ($self, $name) {
     my @kept = grep { lc($_->[0]) ne $wanted } @{$self->{headers}};
     $self->{headers} = \@kept;
     delete $self->{_server_default_final};
+    delete $self->{_server_scalar_simple};
     return $self;
 }
 
@@ -249,6 +252,7 @@ sub _begin_stream_body ($self) {
     $self->{body_kind} = 'stream';
     $self->{complete} = 0;
     delete $self->{_server_default_final};
+    delete $self->{_server_scalar_simple};
     return $self;
 }
 
