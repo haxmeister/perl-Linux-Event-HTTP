@@ -126,6 +126,25 @@ whole Perl driver to avoid mirrored activation logic. It removed most of the
 small-response gain and made POST materially worse. Do not restore that design.
 The final branch keeps raw activation off the ordinary HTTP hot path.
 
+
+A second rejected body-fallback experiment ended at
+`d842ea4816f1a6dbcc84877e950dcf21e36210c7`. It attempted to pass body bytes
+already present after a parsed request head through the same retained raw-provider
+callback, avoiding one outer core provider re-drive. Correctness remained green,
+but run `35537248202` measured:
+
+- GET 32 bytes: 31,262.0 baseline -> 33,580.1 raw (+7.4%);
+- GET 16 KiB: 23,465.9 baseline -> 26,509.7 raw (+13.0%);
+- POST 4 KiB: 18,861.1 baseline -> 17,582.4 raw (-6.8%).
+
+The POST result was worse than the already validated fallback design, while GET
+did not gain. The candidate was reverted. Do not revive the nested inline-tail
+approach without new evidence.
+
+The code after the revert is functionally back to the validated raw-input design
+from `12e12753bbd43b6fc3735f9da35b7ebdcdaf7789`, plus commit history documenting
+the rejected experiment.
+
 ### Core transition blocker: resolved
 
 Linux::Event commit
@@ -172,10 +191,23 @@ Current evidence:
   run).
 
 Before making raw input the default for every server Connection, investigate
-the body-bearing fallback cost. Prefer removing that penalty without adding
-ordinary read-hot-path bookkeeping. If the fallback cannot be made neutral
-without disproportionate complexity, make an explicit API/default-policy
-decision rather than silently accepting a POST regression.
+the body-bearing fallback cost. The first attempt to collapse provider re-entry
+was negative and has been reverted.
+
+Next, measure body-bearing traffic by application behavior rather than optimizing
+the current discard-style POST benchmark in isolation. At minimum distinguish:
+
+- request body ignored/drained;
+- request body delivered through `on_body`;
+- response generated from `on_request_end` after body completion;
+- more than one representative body size.
+
+Use that evidence to determine whether the remaining penalty is byte-copy cost,
+callback/lifecycle cost, or mainly an artifact of the current POST benchmark.
+Prefer removing a demonstrated general cost without adding ordinary read-hot-path
+bookkeeping. If the fallback cannot be made neutral without disproportionate
+complexity, make an explicit API/default-policy decision rather than silently
+accepting a body-bearing regression.
 
 Do not merge PR #31 or merge this experiment to main without explicit
 authorization.
