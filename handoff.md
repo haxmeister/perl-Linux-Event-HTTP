@@ -389,6 +389,32 @@ The POST neutrality is expected: body-bearing requests genuinely need request
 body lifecycle state. Keep this optimization specifically as a bodyless hot
 path simplification.
 
+## Lifecycle after lean bodyless activation
+
+Current-core lifecycle run `35495214087`, Linux::Event main
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`, all tests green:
+
+- parse + prebuilt Content-Type write: 67,782.3 req/s;
+- + trusted sparse Response: 57,884.0 (-14.6%);
+- + Content-Type setter: 54,636.4 (-5.6%);
+- + scalar body setter: 52,785.3 (-3.4%);
+- + Content-Length metadata: 51,030.9 (-3.3%);
+- + native head serialization: 48,219.5 (-5.5%);
+- + minimal bodyless active fields: 44,213.4 (-8.3%);
+- + full fields without Request mark: 44,064.7 (-0.3%);
+- + legacy Request completion mark: 40,179.2 (-8.8%);
+- + guarded application callback: 38,438.4 (-4.3%);
+- + scalar-final send: 37,020.9 (-3.7%);
+- + production request checks: 34,644.9 (-6.4%);
+- production Connection: 35,152.9;
+- full Server: 36,226.7.
+
+The production bodyless path no longer performs the legacy Request completion
+mark, so the next measured HTTP-local target is the request-check boundary:
+parser exception trapping/status decoding, request-head limits, and Expect
+policy. The active experiment moves those checks into the existing HTTP native
+parser without changing public Request parsing behavior.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
