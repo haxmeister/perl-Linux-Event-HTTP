@@ -1002,6 +1002,185 @@ response_set_body_native(pTHX_ SV *self, SV *body_sv)
     hv_store(hv, "complete", 8, newSViv(1), 0);
 }
 
+static SV *
+response_build_simple_scalar_final(
+    pTHX_
+    SV *request,
+    SV *response,
+    SV *body_sv
+)
+{
+    le_http_request_state *request_state;
+    HV *hv;
+    SV **status_ptr;
+    SV **reason_ptr;
+    SV **headers_ptr;
+    AV *headers;
+    SSize_t max_index;
+    SSize_t i;
+    IV status;
+    const char *reason;
+    STRLEN reason_len;
+    SV *body_tmp;
+    STRLEN body_len;
+    const char *body;
+    int head_request;
+    int body_forbidden;
+    SV *wire;
+
+    request_state = request_state_from_object(aTHX_ request);
+    hv = response_hv_from_object(aTHX_ response);
+
+    if (!response_hv_true(
+            hv,
+            "_server_scalar_simple",
+            (I32)(sizeof("_server_scalar_simple") - 1)
+        ))
+        return NULL;
+
+    if (request_state->minor_version != 1 || !request_state->keep_alive)
+        return NULL;
+
+    status_ptr = hv_fetch(hv, "status", 6, 0);
+    if (status_ptr == NULL || !SvOK(*status_ptr))
+        return NULL;
+
+    status = SvIV(*status_ptr);
+    if (status < 100 || status > 999)
+        return NULL;
+
+    if (status >= 100 && status < 200)
+        croak("send_response(): informational responses require a future interim-response API");
+
+    body = response_input_bytes(
+        aTHX_ body_sv, "send_response(): body",
+        &body_tmp, &body_len
+    );
+
+    head_request = request_method_is_head(request_state);
+    body_forbidden = status == 204 || status == 304;
+    if (body_forbidden && body_len != 0)
+        croak("send_response(): this response status cannot carry a message body");
+
+    reason_ptr = hv_fetch(hv, "reason", 6, 0);
+    if (reason_ptr != NULL && SvOK(*reason_ptr)) {
+        reason = SvPVbyte(*reason_ptr, reason_len);
+        if (!valid_reason_phrase(reason, (size_t)reason_len))
+            return NULL;
+    } else {
+        reason = default_reason_phrase((int)status);
+        reason_len = (STRLEN)strlen(reason);
+    }
+
+    headers_ptr = hv_fetch(hv, "headers", 7, 0);
+    if (headers_ptr == NULL ||
+        !SvROK(*headers_ptr) ||
+        SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
+        return NULL;
+
+    headers = (AV *)SvRV(*headers_ptr);
+    max_index = av_len(headers);
+
+    /*
+     * The marker is maintained by the public server Response mutation path,
+     * but validate the actual header storage anyway. Direct hash tampering
+     * must fall back to the general response state machine rather than turn
+     * the fast path into a second, weaker protocol implementation.
+     */
+    for (i = 0; i <= max_index; ++i) {
+        SV **row_ptr = av_fetch(headers, i, 0);
+        AV *row;
+        SV **name_ptr;
+        SV **value_ptr;
+        const char *name;
+        const char *value;
+        STRLEN name_len;
+        STRLEN value_len;
+
+        if (row_ptr == NULL ||
+            !SvROK(*row_ptr) ||
+            SvTYPE(SvRV(*row_ptr)) != SVt_PVAV)
+            return NULL;
+
+        row = (AV *)SvRV(*row_ptr);
+        if (av_len(row) != 1)
+            return NULL;
+
+        name_ptr = av_fetch(row, 0, 0);
+        value_ptr = av_fetch(row, 1, 0);
+        if (name_ptr == NULL || value_ptr == NULL ||
+            !SvOK(*name_ptr) || !SvOK(*value_ptr) ||
+            SvROK(*name_ptr) || SvROK(*value_ptr))
+            return NULL;
+
+        name = SvPVbyte(*name_ptr, name_len);
+        value = SvPVbyte(*value_ptr, value_len);
+        if (!valid_field_name(name, (size_t)name_len) ||
+            !valid_output_field_value(value, (size_t)value_len))
+            return NULL;
+
+        if (ascii_equal_ci(name, (size_t)name_len, "Content-Length", 14) ||
+            ascii_equal_ci(name, (size_t)name_len, "Transfer-Encoding", 17) ||
+            ascii_equal_ci(name, (size_t)name_len, "Connection", 10))
+            return NULL;
+    }
+
+    wire = newSVpvf(
+        "HTTP/1.1 %03" IVdf " ",
+        status
+    );
+    sv_catpvn(wire, reason, reason_len);
+    sv_catpvn(wire, "\r\n", 2);
+
+    for (i = 0; i <= max_index; ++i) {
+        SV **row_ptr = av_fetch(headers, i, 0);
+        AV *row = (AV *)SvRV(*row_ptr);
+        SV **name_ptr = av_fetch(row, 0, 0);
+        SV **value_ptr = av_fetch(row, 1, 0);
+        STRLEN name_len;
+        STRLEN value_len;
+        const char *name = SvPVbyte(*name_ptr, name_len);
+        const char *value = SvPVbyte(*value_ptr, value_len);
+
+        sv_catpvn(wire, name, name_len);
+        sv_catpvn(wire, ": ", 2);
+        sv_catpvn(wire, value, value_len);
+        sv_catpvn(wire, "\r\n", 2);
+    }
+
+    if (!body_forbidden) {
+        AV *pair = newAV();
+        SV *length_sv = newSVpvf("%" UVuf, (UV)body_len);
+
+        av_extend(pair, 1);
+        av_push(pair, newSVpvs("Content-Length"));
+        av_push(pair, SvREFCNT_inc(length_sv));
+
+        if (max_index < 0) {
+            AV *new_headers = newAV();
+            av_push(new_headers, newRV_noinc((SV *)pair));
+            hv_store(
+                hv, "headers", 7,
+                newRV_noinc((SV *)new_headers), 0
+            );
+        } else {
+            av_push(headers, newRV_noinc((SV *)pair));
+        }
+
+        sv_catpvs(wire, "Content-Length: ");
+        sv_catsv(wire, length_sv);
+        sv_catpvn(wire, "\r\n", 2);
+        SvREFCNT_dec(length_sv);
+    }
+
+    sv_catpvn(wire, "\r\n", 2);
+    if (!head_request && !body_forbidden)
+        sv_catpvn(wire, body, body_len);
+
+    hv_store(hv, "committed", 9, newSViv(1), 0);
+    return wire;
+}
+
 
 MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::_HTTP1
 PROTOTYPES: DISABLE
@@ -1117,6 +1296,25 @@ parse_request(CLASS, buffer, last_len = 0, max_headers = 100)
         num_headers,
         &semantics
     );
+  OUTPUT:
+    RETVAL
+
+SV *
+build_simple_scalar_final(CLASS, request, response, body)
+    const char *CLASS
+    SV *request
+    SV *response
+    SV *body
+  PREINIT:
+    SV *wire;
+  CODE:
+    (void)CLASS;
+    wire = response_build_simple_scalar_final(
+        aTHX_ request, response, body
+    );
+    if (wire == NULL)
+        XSRETURN_UNDEF;
+    RETVAL = wire;
   OUTPUT:
     RETVAL
 
