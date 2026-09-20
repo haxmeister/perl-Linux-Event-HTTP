@@ -23,18 +23,17 @@ repository.
 
 Linux::Event::HTTP now requires Linux::Event 0.116.
 
-The currently validated pre-release core commit is:
+The currently validated Linux::Event 0.116 main commit is:
 
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`
-"Allow native consumer retirement to ordinary Stream input"
+`007db40e22374c6d7bf8e056b2d354681d20c852`
+"Finalize 0.116 release handoff [skip ci]"
 
-That code still reports 0.115 internally because the Linux::Event release/version
-bump has not yet landed, but the user has established that these capabilities
-will ship as Linux::Event 0.116. Until 0.116 is released, CI installs the exact
-commit above and installs the remaining HTTP dependencies explicitly rather than
-asking cpanm to satisfy the unreleased 0.116 version from CPAN.
+Linux::Event 0.116 now reports the correct version internally and contains the
+native-consumer retirement support required by the raw HTTP Upgrade/CONNECT
+path. HTTP CI pins that exact 0.116 main commit for reproducibility and can use
+normal dependency resolution again.
 
-Do not lower the published Linux::Event dependency back to 0.115.
+Do not lower the published Linux::Event dependency below 0.116.
 
 ### Raw native HTTP/1 state
 
@@ -80,7 +79,7 @@ HTTP production use.
 
 Final pre-merge gate: GitHub Actions run `35538048184`.
 
-Against exact Linux::Event commit
+Against the pre-release implementation commit
 `51f2e1eab28f6f1234024a0cf37be03b36780e84`:
 
 - Perl 5.36: success;
@@ -92,6 +91,10 @@ Against exact Linux::Event commit
 - end-to-end benchmark smoke: success;
 - transaction lifecycle smoke: success;
 - distribution integrity / disttest: success.
+
+The dependency/CI pin was subsequently advanced to released-version main commit
+`007db40e22374c6d7bf8e056b2d354681d20c852`; no HTTP behavior change is expected
+from that bookkeeping-only core advance.
 
 ### Raw-input performance evidence
 
