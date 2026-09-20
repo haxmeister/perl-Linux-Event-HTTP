@@ -57,6 +57,53 @@ my $payload = 'x' x $response_bytes;
 }
 
 {
+    package Linux::Event::HTTP::Bench::LegacyEligibilityCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+    use Scalar::Util qw(refaddr);
+
+    sub stream_tuning ($class) {
+        return read_budget_bytes => $main::READ_BUDGET_BYTES;
+    }
+
+    sub on_request ($self, $request, $response) {
+        $response->body($self->data->{payload});
+        return;
+    }
+
+    sub _try_native_default_final ($self, $transaction, $body) {
+        my $response = $transaction->response or return 0;
+        return 0 if ref($response) ne 'Linux::Event::HTTP::Response';
+        return 0 if $response->status != 200 || defined($response->reason);
+        return 0 if $response->header_count;
+        return 0 if $self->{_http_closing} || $self->is_closed;
+        return 0 if $self->{_http_response_state};
+
+        my $active = $self->{_http_active_transaction} or return 0;
+        return 0 if refaddr($active) != refaddr($transaction);
+
+        my $request = $transaction->request or return 0;
+        my $request_state = $self->{_http_request_state} or return 0;
+        return 0 if !$request_state->{body_done};
+
+        my $wire = Linux::Event::HTTP::_HTTP1
+            ->build_default_final($request, $body);
+        return 0 if !defined $wire;
+
+        $response->_commit;
+        $transaction->_mark_response_started;
+        $transaction->_mark_response_output_complete;
+        $self->{_http_response_state} = undef;
+
+        $self->write($wire);
+        $self->_complete_active_transaction_state;
+        $self->_clear_transaction;
+
+        $self->resume_read if $self->is_read_paused;
+        return 1;
+    }
+}
+
+{
     package Linux::Event::HTTP::Bench::NaturalCompareConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
@@ -90,6 +137,8 @@ my $payload = 'x' x $response_bytes;
 
 my $connection_class = $mode eq 'natural'
     ? 'Linux::Event::HTTP::Bench::NaturalCompareConnection'
+    : $mode eq 'legacy-eligibility'
+        ? 'Linux::Event::HTTP::Bench::LegacyEligibilityCompareConnection'
     : $mode eq 'legacy-callback'
         ? 'Linux::Event::HTTP::Bench::LegacyCallbackCompareConnection'
         : $mode eq 'request-end'
