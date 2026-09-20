@@ -26,6 +26,7 @@ typedef struct {
     int body_mode;
     int keep_alive;
     int has_content_length;
+    int expect_mode;
     UV content_length;
 } le_http_request_semantics;
 
@@ -35,6 +36,7 @@ typedef struct {
     int body_mode;
     int keep_alive;
     int has_content_length;
+    int expect_mode;
     UV content_length;
     size_t method_offset;
     size_t method_length;
@@ -427,6 +429,40 @@ parse_transfer_encoding_field(
 }
 
 static int
+parse_expect_field(const char *value, size_t len)
+{
+    size_t pos = 0;
+    int members = 0;
+
+    while (1) {
+        size_t start;
+        size_t end;
+
+        while (pos < len && is_ows((unsigned char)value[pos]))
+            ++pos;
+
+        start = pos;
+        while (pos < len && value[pos] != ',')
+            ++pos;
+        end = pos;
+
+        while (end > start && is_ows((unsigned char)value[end - 1]))
+            --end;
+
+        if (end == start ||
+            !ascii_equal_ci(value + start, end - start, "100-continue", 12))
+            return -1;
+
+        ++members;
+        if (pos == len)
+            break;
+        ++pos;
+    }
+
+    return members ? 1 : -1;
+}
+
+static int
 validate_request_semantics(
     int minor_version,
     const struct phr_header *headers,
@@ -490,6 +526,12 @@ validate_request_semantics(
                 &saw_close,
                 &saw_keep_alive
             );
+        } else if (ascii_equal_ci(name, name_len, "Expect", 6)) {
+            int expect = parse_expect_field(value, value_len);
+            if (minor_version != 1 || expect < 0)
+                semantics->expect_mode = -1;
+            else if (semantics->expect_mode >= 0)
+                semantics->expect_mode = 1;
         }
     }
 
@@ -613,6 +655,7 @@ new_request_object(
     state->body_mode = semantics->body_mode;
     state->keep_alive = semantics->keep_alive;
     state->has_content_length = semantics->has_content_length;
+    state->expect_mode = semantics->expect_mode;
     state->content_length = semantics->content_length;
     state->method_offset = (size_t)(method - buf);
     state->method_length = method_len;
@@ -1319,6 +1362,82 @@ build_simple_scalar_final(CLASS, request, response, body)
     RETVAL
 
 SV *
+_parse_server_request(CLASS, buffer, max_head = 65536, max_headers = 100)
+    const char *CLASS
+    SV *buffer
+    UV max_head
+    UV max_headers
+  PREINIT:
+    STRLEN buffer_len;
+    const char *buf;
+    const char *method;
+    size_t method_len;
+    const char *path;
+    size_t path_len;
+    int minor_version;
+    struct phr_header headers[LE_HTTP1_MAX_HEADERS];
+    size_t num_headers;
+    int consumed;
+    le_http_request_semantics semantics;
+    const char *detail;
+    int semantic_status;
+  CODE:
+    (void)CLASS;
+    buf = SvPVbyte(buffer, buffer_len);
+    validate_limits(buffer_len, 0, max_headers);
+    num_headers = (size_t)max_headers;
+    consumed = parse_request_strict(
+        buf,
+        (size_t)buffer_len,
+        &method,
+        &method_len,
+        &path,
+        &path_len,
+        &minor_version,
+        headers,
+        &num_headers,
+        0
+    );
+
+    if (consumed == -2) {
+        if ((UV)buffer_len > max_head)
+            RETVAL = newSViv(431);
+        else
+            XSRETURN_UNDEF;
+    } else if (consumed == -1) {
+        RETVAL = newSViv(400);
+    } else if ((UV)consumed > max_head) {
+        RETVAL = newSViv(431);
+    } else {
+        semantic_status = validate_request_semantics(
+            minor_version,
+            headers,
+            num_headers,
+            &semantics,
+            &detail
+        );
+        if (semantic_status != LE_HTTP_SEMANTICS_OK) {
+            RETVAL = newSViv(semantic_status);
+        } else {
+            RETVAL = new_request_object(
+                aTHX_
+                buf,
+                consumed,
+                minor_version,
+                method,
+                method_len,
+                path,
+                path_len,
+                headers,
+                num_headers,
+                &semantics
+            );
+        }
+    }
+  OUTPUT:
+    RETVAL
+
+SV *
 parse_request_offsets(CLASS, buffer, last_len = 0, max_headers = 100)
     const char *CLASS
     SV *buffer
@@ -1577,6 +1696,17 @@ header_values(self, name)
             )));
         }
     }
+
+int
+_expect_continue(self)
+    SV *self
+  PREINIT:
+    le_http_request_state *state;
+  CODE:
+    state = request_state_from_object(aTHX_ self);
+    RETVAL = state->expect_mode;
+  OUTPUT:
+    RETVAL
 
 IV
 _consumed(self)
