@@ -85,7 +85,7 @@ sub has_buffered_body ($self) { ($self->{body_kind} // '') eq 'scalar' ? 1 : 0 }
 
 sub _assert_mutable ($self) {
     die 'response metadata cannot change after message commit'
-        if !$self->is_mutable;
+        if $self->{committed};
     return;
 }
 
@@ -140,23 +140,42 @@ sub header ($self, $name, @args) {
     $self->_assert_mutable;
     my $value = _validate_value($args[0]);
     my $wanted = lc $name;
-    my @headers;
-    my $inserted = 0;
+    my $headers = $self->{headers};
 
-    for my $pair (@{$self->{headers}}) {
-        if (lc($pair->[0]) eq $wanted) {
-            if (!$inserted) {
-                push @headers, [ $name, $value ];
-                $inserted = 1;
-            }
-            next;
-        }
-        push @headers, [ @$pair ];
+    # The overwhelmingly common setter case is adding a new distinct field.
+    # Do not rebuild/copy the entire lossless header list just to append it.
+    my $first = -1;
+    my $matches = 0;
+    for my $i (0 .. $#$headers) {
+        next if lc($headers->[$i][0]) ne $wanted;
+        $first = $i if !$matches;
+        ++$matches;
     }
-    push @headers, [ $name, $value ] if !$inserted;
-    $self->{headers} = \@headers;
-    delete $self->{_server_default_final};
 
+    if (!$matches) {
+        if (refaddr($headers) == refaddr($EMPTY_HEADERS)) {
+            $headers = $self->{headers} = [];
+        }
+        push @$headers, [ $name, $value ];
+    } elsif ($matches == 1) {
+        $headers->[$first] = [ $name, $value ];
+    } else {
+        my @kept;
+        my $inserted = 0;
+        for my $pair (@$headers) {
+            if (lc($pair->[0]) eq $wanted) {
+                if (!$inserted) {
+                    push @kept, [ $name, $value ];
+                    $inserted = 1;
+                }
+                next;
+            }
+            push @kept, $pair;
+        }
+        $self->{headers} = \@kept;
+    }
+
+    delete $self->{_server_default_final};
     return $self;
 }
 
@@ -240,12 +259,13 @@ sub body ($self, @args) {
     return $self->{body} if !@args;
 
     die 'body accepts exactly one value' if @args != 1;
-    $self->_assert_mutable;
+    die 'response metadata cannot change after message commit'
+        if $self->{committed};
     die 'body(): response already has an incremental body producer'
         if ($self->{body_kind} // '') eq 'stream';
 
-    $self->{body_kind} = 'scalar';
     $self->{body} = _body_bytes('body', $args[0]);
+    $self->{body_kind} = 'scalar';
     $self->{complete} = 1;
     return $self;
 }
