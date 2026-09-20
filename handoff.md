@@ -138,14 +138,15 @@ A narrow replacement is now implemented on this branch:
   `_http_input` or running the general `_drive_http1` parser loop;
 - only the body prefix is consumed, so any same-read following request head
   stays native and is parsed immediately by the raw request-head parser;
-- chunked request bodies intentionally remain on the existing generic fallback.
+- at that stage, chunked request bodies still used the generic fallback; the
+  validated native chunked specialization below now supersedes that limitation.
 
 Focused coverage in `t/15-native-raw-server.t` proves:
 
 - direct Content-Length `on_body` delivery;
 - native draining with no `on_body`;
 - same-read pipelined request-head preservation after the body boundary;
-- chunked bodies still use the generic fallback;
+- the earlier generic chunked fallback baseline before native specialization;
 - reentrant Stream close from direct raw `on_body` is safe.
 
 GitHub Actions run `35538759809` is fully green:
@@ -229,32 +230,107 @@ re-enter the general Perl HTTP driver/chunk decoder.
 This is sufficient evidence for a narrowly scoped native chunked-body prototype.
 It is not evidence to change the production default yet.
 
+### Native chunked body path: validated
+
+The generic chunked fallback has now been replaced on this branch by a narrow
+raw-provider specialization.
+
+Implementation:
+
+- raw request activation selects native chunked drain/body modes rather than the
+  generic Perl input fallback;
+- the raw provider owns persistent `phr_chunked_decoder` state for the active
+  request body;
+- each borrowed encoded native window is copied only to mutable native scratch
+  because picohttpparser's chunk decoder rewrites its input;
+- drain/no-`on_body` mode creates no Perl body SV;
+- `on_body` mode materializes only decoded payload bytes and feeds them directly
+  into the existing callback lifecycle;
+- incomplete windows are consumed completely while decoder state is retained;
+- completion consumes only the encoded chunked-message prefix, leaving any
+  same-read following request bytes in Linux::Event's native input buffer;
+- trailers are consumed natively;
+- malformed chunked data is routed through the existing active-transaction 400
+  failure path;
+- provider retain/release rules remain intact across reentrant application close.
+
+Focused coverage in `t/15-native-raw-server.t` proves:
+
+- direct chunked `on_body` delivery without generic fallback;
+- chunked drain without body materialization;
+- trailers followed by a same-read pipelined next request;
+- malformed chunked input produces 400 before an application response starts;
+- reentrant Stream close inside direct chunked `on_body` is safe;
+- decoder state persists across deliberately separated socket reads;
+- the following request returns to native request-head parsing.
+
+Current candidate head includes:
+
+- `f305f164bae11e3d31bf92cad039266ebb098893` - initial native chunked provider;
+- `243ea2a1f2fcebb8002a425a7d402309980771fb` - correct malformed-body test
+  lifecycle;
+- `a699bd74b6143b7d6f7e7885a0e2425f7e5efe47` - fragmented-read regression
+  coverage.
+
+Confirmation run `35540190220` is green:
+
+- 41 test files / 1,026 tests;
+- Linux::Event 0.116;
+- fragmented chunked input coverage passed;
+- both 4 KiB and 64 KiB chunked matrices completed successfully.
+
+Same-run medians from the confirmation run:
+
+| Body | Behavior | Ordinary req/s | Raw req/s | Raw change |
+| --- | --- | ---: | ---: | ---: |
+| 4 KiB | drain / early response | 50,747.6 | 53,102.2 | +4.6% |
+| 4 KiB | on_body / early response | 47,810.4 | 49,120.5 | +2.7% |
+| 4 KiB | drain / request-end response | 51,231.6 | 55,840.0 | +9.0% |
+| 4 KiB | on_body / request-end response | 47,810.4 | 51,517.7 | +7.8% |
+| 64 KiB | drain / early response | 31,927.8 | 38,343.4 | +20.1% |
+| 64 KiB | on_body / early response | 28,467.6 | 32,529.6 | +14.3% |
+| 64 KiB | drain / request-end response | 32,825.4 | 39,536.3 | +20.4% |
+| 64 KiB | on_body / request-end response | 28,179.6 | 33,941.8 | +20.4% |
+
+Paired-repeat medians were positive in all eight cases. Thirty-nine of forty
+individual paired comparisons were positive; the single negative outlier was one
+64 KiB drain/request-end repeat, while that case's paired median remained
++21.1%.
+
+The earlier successful candidate run `35540056837` was even stronger: all
+forty paired comparisons were positive, with paired medians from +8.5% to
++19.7% at 4 KiB and +26.2% to +36.8% at 64 KiB. Hosted-run absolute rates vary;
+the repeatable direction is the important evidence.
+
+The temporary branch-only benchmark workflow used to collect this evidence has
+been removed. The permanent comparison harness retains the useful
+`--request-body-framing=chunked` and `--request-chunk-bytes` options.
+
 ### Next useful work
 
-Prototype a native chunked-body mode inside the existing raw provider while
-leaving the ordinary Stream path untouched.
+The native chunked specialization is worth keeping. Open a clean PR from this
+branch to main and use normal repository CI as the final cross-Perl gate:
 
-Keep the scope narrow:
+- Perl 5.36;
+- latest Perl;
+- latest threaded Perl;
+- full test suite;
+- existing raw GET / Content-Length comparisons;
+- disttest.
 
-1. Reuse picohttpparser's existing persistent chunked decoder state.
-2. Copy only the borrowed encoded raw window into mutable native scratch because
-   pico's decoder mutates its input.
-3. For drain/no-on_body, decode without creating a Perl body SV.
-4. For on_body, materialize only decoded payload bytes and feed them directly
-   into the existing HTTP callback lifecycle.
-5. When the terminating chunk is found, consume only the encoded chunked-body
-   prefix so same-read following request bytes remain in the native ordered-byte
-   buffer and are parsed as the next request.
-6. Preserve trailers, malformed-body 400 handling, reentrant close safety, and
-   provider retain/release rules.
+If that gate is green, squash-merge the chunked specialization to main.
 
-Add focused correctness coverage before benchmarking. Then rerun the exact
-4 KiB/64 KiB eight-case matrix. Keep the specialization only if it materially
-improves the existing raw fallback without reducing the already validated
-bodyless GET or Content-Length gains.
+After that merge, all demonstrated common server input shapes have a validated
+raw-native path: bodyless request heads, Content-Length bodies, chunked bodies,
+Upgrade, and CONNECT. The next architectural decision is therefore whether to
+make raw native HTTP/1 input the default production
+`Server::Connection` behavior rather than an opt-in internal capability.
 
-Do not make raw input the production Server::Connection default until this
-chunked result is resolved.
+Before flipping that default, audit the public subclassing contract carefully:
+the current experimental raw subclasses hide inherited `on_data` from
+Linux::Event descriptor discovery. Determine the clean production class/API
+shape that enables the native provider without breaking applications that
+subclass `Server::Connection` and implement ordinary `on_data` intentionally.
 
 Everything below is experiment/history context. This section is authoritative.
 
