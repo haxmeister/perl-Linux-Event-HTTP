@@ -690,16 +690,26 @@ new_request_object(
     return object;
 }
 
+enum {
+    LE_HTTP_RAW_INPUT_REQUEST = 0,
+    LE_HTTP_RAW_INPUT_FALLBACK = 1,
+    LE_HTTP_RAW_INPUT_CONTENT_LENGTH_DRAIN = 2,
+    LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY = 3
+};
+
 typedef struct {
     const les_consumer_host_api_v1_t *host;
     void *host_context;
     SV *stream;
     CV *request_cv;
     CV *fallback_cv;
+    CV *content_length_body_cv;
+    CV *content_length_complete_cv;
     CV *protocol_400_cv;
     CV *protocol_431_cv;
     CV *protocol_501_cv;
-    int fallback_input;
+    int input_mode;
+    UV content_length_remaining;
 } le_http_raw_consumer_context;
 
 static CV *
@@ -787,7 +797,144 @@ le_http_raw_call_scalar_int(
     }
 
     if (store_fallback)
-        context->fallback_input = result ? 1 : 0;
+        context->input_mode = result
+            ? LE_HTTP_RAW_INPUT_FALLBACK
+            : LE_HTTP_RAW_INPUT_REQUEST;
+
+    host->release(aTHX_ host_context);
+    return result;
+}
+
+static int
+le_http_raw_call_request(
+    pTHX_
+    le_http_raw_consumer_context *context,
+    SV *request,
+    UV content_length
+)
+{
+    const les_consumer_host_api_v1_t *host;
+    void *host_context;
+    CV *cv;
+    int result = 0;
+    int count;
+    int jump_status;
+    dJMPENV;
+    dSP;
+
+    host = context->host;
+    host_context = context->host_context;
+    if (!host
+        || host->struct_size < LES_CONSUMER_HOST_V1_RETAIN_REQUIRED_SIZE
+        || !host->retain || !host->release)
+        croak("Linux::Event raw consumer host lifetime extension is unavailable");
+
+    cv = le_http_raw_method_cv(
+        aTHX_ context,
+        &context->request_cv,
+        "_http_native_request"
+    );
+
+    if (!host->retain(aTHX_ host_context))
+        croak("Linux::Event raw consumer host is no longer available");
+
+    JMPENV_PUSH(jump_status);
+    if (jump_status == 0) {
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+        XPUSHs(context->stream);
+        XPUSHs(request);
+        PUTBACK;
+        count = call_sv((SV *)cv, G_SCALAR);
+        SPAGAIN;
+        if (count > 0)
+            result = POPi;
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+        JMPENV_POP;
+    } else {
+        JMPENV_POP;
+        host->release(aTHX_ host_context);
+        JMPENV_JUMP(jump_status);
+    }
+
+    if (result < LE_HTTP_RAW_INPUT_REQUEST
+        || result > LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY)
+        croak("Linux::Event HTTP raw consumer returned invalid input mode");
+
+    context->input_mode = result;
+    context->content_length_remaining
+        = (result == LE_HTTP_RAW_INPUT_CONTENT_LENGTH_DRAIN
+            || result == LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY)
+        ? content_length : 0;
+
+    host->release(aTHX_ host_context);
+    return result;
+}
+
+static int
+le_http_raw_call_content_length_body(
+    pTHX_
+    le_http_raw_consumer_context *context,
+    SV *bytes,
+    int done
+)
+{
+    const les_consumer_host_api_v1_t *host;
+    void *host_context;
+    CV *cv;
+    int result = 0;
+    int count;
+    int jump_status;
+    dJMPENV;
+    dSP;
+
+    host = context->host;
+    host_context = context->host_context;
+    if (!host
+        || host->struct_size < LES_CONSUMER_HOST_V1_RETAIN_REQUIRED_SIZE
+        || !host->retain || !host->release)
+        croak("Linux::Event raw consumer host lifetime extension is unavailable");
+
+    cv = le_http_raw_method_cv(
+        aTHX_ context,
+        &context->content_length_body_cv,
+        "_http_native_content_length_body"
+    );
+
+    if (!host->retain(aTHX_ host_context))
+        croak("Linux::Event raw consumer host is no longer available");
+
+    if (done)
+        context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
+
+    JMPENV_PUSH(jump_status);
+    if (jump_status == 0) {
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+        XPUSHs(context->stream);
+        XPUSHs(bytes);
+        mPUSHi(done ? 1 : 0);
+        PUTBACK;
+        count = call_sv((SV *)cv, G_SCALAR);
+        SPAGAIN;
+        if (count > 0)
+            result = POPi;
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+        JMPENV_POP;
+    } else {
+        JMPENV_POP;
+        host->release(aTHX_ host_context);
+        JMPENV_JUMP(jump_status);
+    }
+
+    if (!result)
+        context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
 
     host->release(aTHX_ host_context);
     return result;
@@ -816,7 +963,8 @@ le_http_raw_consumer_create(
     context->host = host;
     context->host_context = host_context;
     context->stream = SvREFCNT_inc(stream);
-    context->fallback_input = 0;
+    context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
+    context->content_length_remaining = 0;
     return context;
 }
 
@@ -846,7 +994,45 @@ le_http_raw_consumer_input(
 
     *host_consumed = 0;
 
-    if (context->fallback_input) {
+    if (context->input_mode == LE_HTTP_RAW_INPUT_CONTENT_LENGTH_DRAIN
+        || context->input_mode == LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY) {
+        UV remaining = context->content_length_remaining;
+        size_t take = buffer_len;
+        int done;
+
+        if (remaining == 0)
+            croak("Linux::Event HTTP raw Content-Length mode has no body remaining");
+        if (remaining < (UV)take)
+            take = (size_t)remaining;
+
+        done = (UV)take == remaining ? 1 : 0;
+        *host_consumed = take;
+        context->content_length_remaining -= (UV)take;
+
+        if (context->input_mode == LE_HTTP_RAW_INPUT_CONTENT_LENGTH_BODY) {
+            SV *bytes = sv_2mortal(newSVpvn(buf, (STRLEN)take));
+            (void)le_http_raw_call_content_length_body(
+                aTHX_ context,
+                bytes,
+                done
+            );
+            return LES_CONSUMER_CONTINUE;
+        }
+
+        if (done) {
+            context->input_mode = LE_HTTP_RAW_INPUT_REQUEST;
+            (void)le_http_raw_call_scalar_int(
+                aTHX_ context,
+                &context->content_length_complete_cv,
+                "_http_native_content_length_complete",
+                NULL,
+                0
+            );
+        }
+        return LES_CONSUMER_CONTINUE;
+    }
+
+    if (context->input_mode == LE_HTTP_RAW_INPUT_FALLBACK) {
         SV *bytes = sv_2mortal(newSVpvn(buf, (STRLEN)buffer_len));
         *host_consumed = buffer_len;
         (void)le_http_raw_call_scalar_int(
@@ -941,12 +1127,10 @@ le_http_raw_consumer_input(
     );
 
     *host_consumed = (size_t)consumed;
-    (void)le_http_raw_call_scalar_int(
+    (void)le_http_raw_call_request(
         aTHX_ context,
-        &context->request_cv,
-        "_http_native_request",
         sv_2mortal(request),
-        1
+        semantics.content_length
     );
     return LES_CONSUMER_CONTINUE;
 }
@@ -982,6 +1166,10 @@ le_http_raw_consumer_destroy(pTHX_ void *opaque)
         SvREFCNT_dec((SV *)context->request_cv);
     if (context->fallback_cv != NULL)
         SvREFCNT_dec((SV *)context->fallback_cv);
+    if (context->content_length_body_cv != NULL)
+        SvREFCNT_dec((SV *)context->content_length_body_cv);
+    if (context->content_length_complete_cv != NULL)
+        SvREFCNT_dec((SV *)context->content_length_complete_cv);
     if (context->protocol_400_cv != NULL)
         SvREFCNT_dec((SV *)context->protocol_400_cv);
     if (context->protocol_431_cv != NULL)
