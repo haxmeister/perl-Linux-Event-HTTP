@@ -171,7 +171,10 @@ my $payload = 'x' x $response_bytes;
         Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
     );
 
-    sub _uses_native_http_input ($class) { 1 }
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
 
     sub stream_tuning ($class) {
         return read_budget_bytes => $main::READ_BUDGET_BYTES;
