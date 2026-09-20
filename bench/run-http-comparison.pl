@@ -29,6 +29,91 @@ my %server = (
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
         available => sub { 1 },
     },
+    linuxevent_content_type => {
+        label => 'Linux::Event::HTTP + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'content-type',
+    },
+    linuxevent_content_type_native => {
+        label => 'Linux::Event::HTTP raw native input + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'content-type-native',
+    },
+    linuxevent_legacy_ready => {
+        label => 'Linux::Event::HTTP old readiness path',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'legacy-ready',
+    },
+    linuxevent_legacy_eligibility => {
+        label => 'Linux::Event::HTTP old native-final checks',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'legacy-eligibility',
+    },
+    linuxevent_legacy_callback => {
+        label => 'Linux::Event::HTTP old callback boundary',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'legacy-callback',
+    },
+    linuxevent_baseline_content_type => {
+        label => 'Linux::Event::HTTP pre-general-fastpath + Content-Type',
+        command => sub {
+            my $tree = $ENV{BENCH_BASE_TREE}
+                // die "BENCH_BASE_TREE is required for linuxevent_baseline_content_type\n";
+            return [
+                $^X,
+                "-I$tree/blib/lib",
+                "-I$tree/blib/arch",
+                "$tree/bench/servers/linuxevent-http.pl",
+            ];
+        },
+        available => sub {
+            my $tree = $ENV{BENCH_BASE_TREE} // return 0;
+            return -f "$tree/bench/servers/linuxevent-http.pl"
+                && -d "$tree/blib/lib" && -d "$tree/blib/arch";
+        },
+        linuxevent_mode => 'content-type',
+    },
+    linuxevent_baseline => {
+        label => 'Linux::Event::HTTP before lazy Transaction',
+        command => sub {
+            my $tree = $ENV{BENCH_BASE_TREE}
+                // die "BENCH_BASE_TREE is required for linuxevent_baseline\n";
+            return [
+                $^X,
+                "-I$tree/blib/lib",
+                "-I$tree/blib/arch",
+                "$tree/bench/servers/linuxevent-http.pl",
+            ];
+        },
+        available => sub {
+            my $tree = $ENV{BENCH_BASE_TREE} // return 0;
+            return -f "$tree/bench/servers/linuxevent-http.pl"
+                && -d "$tree/blib/lib" && -d "$tree/blib/arch";
+        },
+    },
+    linuxevent_main => {
+        label => 'Linux::Event::HTTP main',
+        command => sub {
+            my $tree = $ENV{BENCH_MAIN_TREE}
+                // die "BENCH_MAIN_TREE is required for linuxevent_main\n";
+            return [
+                $^X,
+                "-I$tree/blib/lib",
+                "-I$tree/blib/arch",
+                "$tree/bench/servers/linuxevent-http.pl",
+            ];
+        },
+        available => sub {
+            my $tree = $ENV{BENCH_MAIN_TREE} // return 0;
+            return -f "$tree/bench/servers/linuxevent-http.pl"
+                && -d "$tree/blib/lib" && -d "$tree/blib/arch";
+        },
+    },
     feersum => {
         label => 'Feersum',
         command => [$^X, "$Bin/servers/feersum-http.pl"],
@@ -295,9 +380,16 @@ sub start_server ($name, $port) {
     if ($pid == 0) {
         $ENV{BENCH_PORT} = $port;
         $ENV{BENCH_RESPONSE_BYTES} = $response_bytes;
+        if (exists $server{$name}{linuxevent_mode}) {
+            $ENV{BENCH_LINUXEVENT_MODE} = $server{$name}{linuxevent_mode};
+        } else {
+            delete $ENV{BENCH_LINUXEVENT_MODE};
+        }
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
-        child_exec(@{$server{$name}{command}});
+        my $command = $server{$name}{command};
+        $command = $command->() if ref($command) eq 'CODE';
+        child_exec(@$command);
         POSIX::_exit(127);
     }
     return ($pid, $stdout_path, $stderr_path);
@@ -566,7 +658,7 @@ sub usage ($status) {
     print <<'USAGE';
 usage: bench/run-http-comparison.pl [options]
 
-  --servers=LIST           linuxevent,feersum,mojo,twiggy,node,go,h2o,aiohttp
+  --servers=LIST           linuxevent,linuxevent_baseline,linuxevent_legacy_ready,linuxevent_legacy_eligibility,linuxevent_legacy_callback,linuxevent_main,feersum,mojo,twiggy,node,go,h2o,aiohttp
   --requests=N             measured requests per server/repeat (default 20000)
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)

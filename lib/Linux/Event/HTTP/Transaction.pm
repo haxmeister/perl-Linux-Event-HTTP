@@ -38,6 +38,17 @@ sub _new ($class, %args) {
     return $self;
 }
 
+sub _new_server_active ($class, $request, $response, $controller) {
+    my $self = bless {
+        request    => $request,
+        response   => $response,
+        state      => 'active',
+        controller => $controller,
+    }, $class;
+    weaken($self->{controller});
+    return $self;
+}
+
 sub request             ($self) { $self->{request} }
 sub response            ($self) { $self->{response} }
 sub state               ($self) { $self->{state} }

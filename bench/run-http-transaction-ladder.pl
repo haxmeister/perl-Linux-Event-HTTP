@@ -18,17 +18,125 @@ use Time::HiRes qw(time sleep);
 $SIG{PIPE} = 'IGNORE';
 
 my %case = (
+    current_parse => {
+        label => 'C1 current parse + prebuilt Content-Type write',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_parse',
+        description => 'Current Perl input buffer plus pico/native Request construction; prebuilt Content-Type response write',
+    },
+    current_response_empty => {
+        label => 'C2a + empty server Response object',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_response_empty',
+        description => 'Parsed Request plus an otherwise-empty blessed Response hash; estimates the lower bound for implicit server defaults',
+    },
+    current_response_flagged => {
+        label => 'C2b + one-key server Response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_response_flagged',
+        description => 'Parsed Request plus a Response carrying one compact server-default flag key',
+    },
+    current_response => {
+        label => 'C2 + trusted sparse Response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_response',
+        description => 'Current parse plus trusted sparse server Response construction; prebuilt Content-Type response write',
+    },
+    current_header => {
+        label => 'C3 + Content-Type header setter',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_header',
+        description => 'Trusted sparse Response plus one public Content-Type header setter; prebuilt response write',
+    },
+    current_api => {
+        label => 'C4 + scalar body setter',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_api',
+        description => 'Trusted Response plus Content-Type header setter and public scalar body setter; prebuilt response write',
+    },
+    current_frame => {
+        label => 'C5 + generated Content-Length metadata',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_frame',
+        description => 'Public Content-Type/body API plus production-style internal generated Content-Length append; prebuilt response write',
+    },
+    current_exchange_minimal => {
+        label => 'C7a + minimal bodyless active fields',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_exchange_minimal',
+        description => 'Native head path plus only active Request/Response/request-state assignment and cleanup; no native Request completion mark',
+    },
+    current_exchange_nomark => {
+        label => 'C7b + full fields, no Request mark',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_exchange_nomark',
+        description => 'Production bodyless active-field setup and cleanup without native Request _mark_complete',
+    },
+    current_exchange => {
+        label => 'C7 + active bodyless exchange state',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_exchange',
+        description => 'Native head path plus production bodyless exchange activation/request completion/active-field setup and cleanup, without application callback dispatch',
+    },
+    current_callback => {
+        label => 'C8 + guarded application callback',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_callback',
+        description => 'Active bodyless exchange plus guarded on_request dispatch, production-style generated Content-Length append, native head serialization, and scalar write',
+    },
+    current_head => {
+        label => 'C6 + native Response head serialization',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_head',
+        description => 'Public Content-Type/body API plus native Response head serialization and scalar body concatenation',
+    },
+    current_send => {
+        label => 'C9 + current scalar-final send',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_send',
+        description => 'Production guarded callback plus current response-readiness and general scalar-final fast path',
+    },
+    current_checked => {
+        label => 'C10 + production request checks',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_checked',
+        description => 'Current scalar-final send plus parser eval/error boundary, request-head guard, and Expect validation',
+    },
+    current_bodyless => {
+        label => 'C11 production Connection + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_bodyless',
+        description => 'Actual current Server::Connection bodyless driver through raw Listener with Content-Type scalar response',
+    },
+    current_http => {
+        label => 'C12 full Server + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        linuxevent_mode => 'content-type',
+        description => 'Current Server plus Server::Connection lifecycle with ordinary Content-Type scalar response',
+    },
     parse => {
         label => '3a Parsed Request + prebuilt write',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'parse',
         description => 'Perl input buffer plus pico parse_request/native Request construction; prebuilt response write',
     },
+    fastbound => {
+        label => '3b-fast + trusted Response construction',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'fastbound',
+        description => 'Parsed native Request plus private trusted default server Response construction',
+    },
     bound => {
         label => '3b + Response construction',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
         stage => 'bound',
         description => 'Parsed Request plus Response construction using the request HTTP version; prebuilt response write',
+    },
+    faststate => {
+        label => '3c-fast + trusted active Transaction',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'faststate',
+        description => 'Trusted default Response plus private trusted active server Transaction construction and bodyless state',
     },
     state => {
         label => '3c + Transaction/body state',
@@ -97,6 +205,28 @@ my %case = (
     },
 );
 
+# Contract 9: isolate current fused wire construction and minimal active fields.
+# Historical cases remain explicitly selectable for reproducing old evidence.
+my @production_stages = (
+    [prod_api => 'P1 parse + public Response mutation + prebuilt write',
+        'Native server request checks, compact Response, public Content-Type/body setters; prebuilt wire (diagnostic only)'],
+    [prod_wire => 'P2 + production native scalar wire builder',
+        'P1 plus actual build_simple_scalar_final validation, Content-Length metadata, commit and wire construction'],
+    [prod_active => 'P3 + minimal active exchange fields',
+        'P2 plus current three live exchange fields and their retirement; no legacy resets or Request completion mark'],
+    [prod_dispatch => 'P4 production callback and scalar send',
+        'P3 with actual _invoke_http_callback, readiness, scalar-final output and retirement instead of inline mutation/build/write'],
+    [prod_connection => 'P5 unmodified production Connection',
+        'Actual Server::Connection driver through raw Listener; no copied request lifecycle'],
+);
+for my $stage (@production_stages) {
+    my ($name, $label, $description) = @$stage;
+    $case{$name} = {
+        label => $label, description => $description, stage => $name,
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-production-stage.pl"],
+    };
+}
+
 my $requests = 100_000;
 my $warmup = 10_000;
 my $connections = 100;
@@ -106,6 +236,7 @@ my $repeats = 7;
 my $timeout = 120;
 my $read_budget_bytes = 0;
 my $json_path;
+my $case_list;
 my $smoke = 0;
 my $help = 0;
 
@@ -119,6 +250,7 @@ GetOptions(
     'timeout=f'           => \$timeout,
     'read-budget-bytes=i' => \$read_budget_bytes,
     'json=s'              => \$json_path,
+    'cases=s'             => \$case_list,
     'smoke'               => \$smoke,
     'help'                => \$help,
 ) or usage(2);
@@ -144,7 +276,16 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(parse bound state callbacks fused eligibility build mark commit complete checked bodyless http);
+my @names = ((map { $_->[0] } @production_stages), 'current_http');
+if (defined $case_list) {
+    my %known = map { $_ => 1 } keys %case;
+    my @selected = grep { length } split /,/, $case_list;
+    die "cases must name at least one benchmark case\n" if !@selected;
+    for my $name (@selected) {
+        die "unknown benchmark case '$name'\n" if !$known{$name};
+    }
+    @names = @selected;
+}
 my @records;
 
 say 'Linux::Event::HTTP transaction lifecycle ladder';
@@ -195,11 +336,11 @@ for my $i (1 .. $#summary) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my %contract = map { $_ => $case{$_}{description} } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; parse through checked are cumulative staged costs; bodyless uses the production Server::Connection driver through a raw Listener; full HTTP adds the Server convenience wrapper';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; prod stages isolate the actual fused scalar-final builder and current minimal exchange state; prod_dispatch calls production callback/readiness/send; prod_connection uses the unmodified production Connection; current_http adds the Server wrapper; prebuilt wire is a diagnostic only, not an optimization';
 
     my $report = {
         benchmark => 'linux-event-http-transaction-ladder',
-        benchmark_contract_version => 7,
+        benchmark_contract_version => 9,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
@@ -285,6 +426,11 @@ sub start_server ($name, $port) {
             $ENV{BENCH_TRANSACTION_STAGE} = $case{$name}{stage};
         } else {
             delete $ENV{BENCH_TRANSACTION_STAGE};
+        }
+        if (defined $case{$name}{linuxevent_mode}) {
+            $ENV{BENCH_LINUXEVENT_MODE} = $case{$name}{linuxevent_mode};
+        } else {
+            delete $ENV{BENCH_LINUXEVENT_MODE};
         }
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
@@ -520,6 +666,7 @@ Options:
   --read-budget-bytes=N   Linux::Event Stream read budget (default 0)
   --timeout=N             per-phase timeout seconds (default 120)
   --json=PATH             write machine-readable report
+  --cases=LIST            comma-separated benchmark cases to run
   --smoke                 tiny one-repeat validation run
   --help                  show this help
 

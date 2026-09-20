@@ -8,6 +8,8 @@ use Scalar::Util qw(refaddr);
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Stream;
+use Linux::Event::Framer ();
+use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Server::Connection;
 use Linux::Event::HTTP::Server;
 
@@ -159,6 +161,81 @@ is(
         "TARGET:PING",
     '101 switching response is queued before target protocol output',
 );
+
+{
+    package T::RawUpgradeHTTP;
+    use parent -norequire, 'T::UpgradeHTTP';
+    use Linux::Event::Framer ();
+    use Linux::Event::HTTP::_HTTP1 ();
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
+
+    sub _http_native_request ($self, $request) {
+        $self->data->{raw_request_hits}++;
+        return $self->SUPER::_http_native_request($request);
+    }
+}
+
+subtest 'raw native HTTP Upgrade retires into ordinary on_data target' => sub {
+    my $loop = Linux::Event::Loop->new;
+    my $state = {
+        wire => '',
+        target_hits => 0,
+        target_input => '',
+        request_end_hits => 0,
+        raw_request_hits => 0,
+    };
+
+    my $server = Linux::Event::HTTP::Server->new(
+        loop             => $loop,
+        host             => '127.0.0.1',
+        port             => 0,
+        data             => $state,
+        connection_class => 'T::RawUpgradeHTTP',
+    );
+
+    run_client(
+        $loop,
+        $server,
+        "GET /switch HTTP/1.1\r\n" .
+            "Host: example.test\r\n" .
+            "Connection: keep-alive, Upgrade\r\n" .
+            "Upgrade: test-proto\r\n" .
+            "\r\n" .
+            "PING",
+        $state,
+        qr/TARGET:PING\z/,
+    );
+
+    is($state->{raw_request_hits}, 1,
+        'Upgrade request head entered through the raw native provider');
+    is($state->{target_hits}, 1,
+        'ordinary target receives retained native tail exactly once');
+    is($state->{target_input}, 'PING',
+        'same-read post-Upgrade bytes survive native-to-ordinary transition');
+    is($state->{target_class}, 'T::UpgradedProtocol',
+        'native HTTP consumer retires into ordinary target class');
+    ok($state->{same_object},
+        'raw native Upgrade retains live Stream object identity');
+    is(
+        $state->{wire},
+        "HTTP/1.1 101 Switching Protocols\r\n" .
+            "Upgrade: test-proto\r\n" .
+            "X-Handshake: ok\r\n" .
+            "Connection: Upgrade\r\n" .
+            "\r\n" .
+            "TARGET:PING",
+        '101 output precedes retained-tail delivery to ordinary target',
+    );
+};
 
 {
     package T::BadUpgradeHTTP;

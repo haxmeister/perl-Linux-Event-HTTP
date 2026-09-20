@@ -1,13 +1,16 @@
 Revision history for Linux-Event-HTTP
 
 0.001  UNRELEASED
+
+    - Fix interpreter context in native Response helpers on threaded Perl.
     - Initial distribution scaffold.
     - Establish HTTP protocol, transport, message, transaction, and high-level
       client-operation boundaries.
     - Use the flat Linux::Event::HTTP namespace and make the server-side transport
       class Linux::Event::HTTP::Server::Connection.
-    - Require Linux::Event 0.113 for the Listener, tuning, TLS, and stream APIs used
-      by this distribution.
+    - Require Linux::Event 0.116 for the ordered-byte raw-consumer ABI,
+      native-consumer transition semantics, Listener, tuning, TLS, and stream APIs
+      used by this distribution.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.

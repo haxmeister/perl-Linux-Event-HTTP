@@ -8,6 +8,8 @@ use Scalar::Util qw(refaddr);
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Stream;
+use Linux::Event::Framer ();
+use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Server;
 use Linux::Event::HTTP::Server::Connection;
 
@@ -164,6 +166,77 @@ subtest 'successful CONNECT hands the same live stream to the tunnel protocol' =
         'successful CONNECT response does not gain Content-Length');
     unlike($state->{wire}, qr/Transfer-Encoding:/i,
         'successful CONNECT response does not gain Transfer-Encoding');
+};
+
+{
+    package T::RawConnectHTTP;
+    use parent -norequire, 'T::ConnectHTTP';
+    use Linux::Event::Framer ();
+    use Linux::Event::HTTP::_HTTP1 ();
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
+
+    sub _http_native_request ($self, $request) {
+        $self->data->{raw_request_hits}++;
+        return $self->SUPER::_http_native_request($request);
+    }
+}
+
+subtest 'raw native CONNECT retires into ordinary tunnel target' => sub {
+    my $loop = Linux::Event::Loop->new;
+    my $state = {
+        wire => '',
+        target_hits => 0,
+        target_input => '',
+        request_end_hits => 0,
+        raw_request_hits => 0,
+    };
+
+    my $server = Linux::Event::HTTP::Server->new(
+        loop             => $loop,
+        host             => '127.0.0.1',
+        port             => 0,
+        data             => $state,
+        connection_class => 'T::RawConnectHTTP',
+    );
+
+    run_client(
+        $loop,
+        $server,
+        "CONNECT example.test:443 HTTP/1.1\r\n" .
+            "Host: example.test:443\r\n" .
+            "\r\n" .
+            "PING",
+        $state,
+        qr/TUNNEL:PING\z/,
+    );
+
+    is($state->{raw_request_hits}, 1,
+        'CONNECT request head entered through the raw native provider');
+    is($state->{target_hits}, 1,
+        'ordinary tunnel target receives retained native tail exactly once');
+    is($state->{target_input}, 'PING',
+        'same-read post-CONNECT bytes survive native-to-ordinary transition');
+    is($state->{target_class}, 'T::ServerTunnelProtocol',
+        'native HTTP consumer retires into ordinary tunnel target');
+    ok($state->{same_object},
+        'raw native CONNECT retains live Stream object identity');
+    is(
+        $state->{wire},
+        "HTTP/1.1 200 OK\r\n" .
+            "X-Proxy: ok\r\n" .
+            "\r\n" .
+            "TUNNEL:PING",
+        'CONNECT response precedes retained-tail delivery to ordinary target',
+    );
 };
 
 {

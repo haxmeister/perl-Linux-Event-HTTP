@@ -1,0 +1,75 @@
+name: HTTP raw native input A/B
+
+on:
+  push:
+    branches:
+      - experiment/native-raw-http1-current
+    paths-ignore:
+      - handoff.md
+      - docs/**
+
+concurrency:
+  group: http-raw-native-input-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        threaded: [false, true]
+    steps:
+      - name: Check out experiment
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
+        with:
+          perl-version: '5'
+          multi-thread: ${{ matrix.threaded }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev
+
+      - name: Install current Linux::Event main and dependencies
+        run: |
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/51f2e1eab28f6f1234024a0cf37be03b36780e84.tar.gz
+          cpanm --notest 'Uniform::HTTP::Auth@0.02' || cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
+          cpanm --notest --installdeps .
+
+      - name: Build and test
+        run: |
+          perl Makefile.PL
+          make
+          make test
+
+      - name: Build and test exact pre-raw baseline
+        run: |
+          git fetch --depth=1 origin c391b2d8fe6b56b6088569cdadeb86160630be26
+          git worktree add --detach "$RUNNER_TEMP/http-baseline" FETCH_HEAD
+          cd "$RUNNER_TEMP/http-baseline"
+          perl Makefile.PL
+          make
+          make test
+
+      - name: Same-run raw native input comparisons
+        run: |
+          export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=100000 --warmup=10000 --repeats=7 --response-bytes=32 --json=bench/results/ci-raw-get32.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=50000 --warmup=5000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-raw-get16k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=50000 --warmup=5000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-raw-post4k.json
+
+      - name: Production diagnostic smoke
+        run: perl -Mblib bench/run-http-transaction-ladder.pl --smoke
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-http-input-threaded-${{ matrix.threaded }}
+          path: bench/results/ci-raw-*.json

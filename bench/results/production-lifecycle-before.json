@@ -1,0 +1,421 @@
+{
+   "benchmark" : "linux-event-http-transaction-ladder",
+   "benchmark_contract_version" : 9,
+   "configuration" : {
+      "connections" : 100,
+      "pipeline" : 1,
+      "read_budget_bytes" : 0,
+      "repeats" : 5,
+      "request_bytes" : 45,
+      "requests" : 50000,
+      "response_bytes" : 32,
+      "timeout" : 120,
+      "warmup" : 5000
+   },
+   "contract" : {
+      "common" : "same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; prod stages isolate the actual fused scalar-final builder and current minimal exchange state; prod_dispatch calls production callback/readiness/send; prod_connection uses the unmodified production Connection; current_http adds the Server wrapper; prebuilt wire is a diagnostic only, not an optimization",
+      "current_http" : "Current Server plus Server::Connection lifecycle with ordinary Content-Type scalar response",
+      "prod_active" : "P2 plus current three live exchange fields and their retirement; no legacy resets or Request completion mark",
+      "prod_api" : "Native server request checks, compact Response, public Content-Type/body setters; prebuilt wire (diagnostic only)",
+      "prod_connection" : "Actual Server::Connection driver through raw Listener; no copied request lifecycle",
+      "prod_dispatch" : "P3 with actual _invoke_http_callback, readiness, scalar-final output and retirement instead of inline mutation/build/write",
+      "prod_wire" : "P1 plus actual build_simple_scalar_final validation, Content-Length metadata, commit and wire construction"
+   },
+   "environment" : {
+      "kernel" : "6.18.44",
+      "linux_event" : "0.115",
+      "machine" : "x86_64",
+      "os" : "Linux",
+      "perl" : "v5.38.2",
+      "picohttpparser" : "1.dev"
+   },
+   "generated_at" : "2026-09-20T15:33:55Z",
+   "records" : [
+      {
+         "case" : "prod_api",
+         "latency_us_max" : 3668.06983947754,
+         "latency_us_p50" : 938.177108764648,
+         "latency_us_p95" : 1628.87573242188,
+         "latency_us_p99" : 2687.93106079102,
+         "repeat" : 1,
+         "requests" : 50000,
+         "requests_per_second" : 87898.1745999812,
+         "wall_seconds" : 0.568840026855469
+      },
+      {
+         "case" : "prod_wire",
+         "latency_us_max" : 3918.88618469238,
+         "latency_us_p50" : 952.959060668945,
+         "latency_us_p95" : 1728.05786132812,
+         "latency_us_p99" : 2163.88702392578,
+         "repeat" : 1,
+         "requests" : 50000,
+         "requests_per_second" : 92104.6113089414,
+         "wall_seconds" : 0.542860984802246
+      },
+      {
+         "case" : "prod_active",
+         "latency_us_max" : 4100.08430480957,
+         "latency_us_p50" : 1003.98063659668,
+         "latency_us_p95" : 1910.20965576172,
+         "latency_us_p99" : 2237.79678344727,
+         "repeat" : 1,
+         "requests" : 50000,
+         "requests_per_second" : 84560.568921949,
+         "wall_seconds" : 0.591292142868042
+      },
+      {
+         "case" : "prod_dispatch",
+         "latency_us_max" : 9653.09143066406,
+         "latency_us_p50" : 1504.89807128906,
+         "latency_us_p95" : 2878.90434265137,
+         "latency_us_p99" : 4885.91194152832,
+         "repeat" : 1,
+         "requests" : 50000,
+         "requests_per_second" : 59184.2033373295,
+         "wall_seconds" : 0.844820022583008
+      },
+      {
+         "case" : "prod_connection",
+         "latency_us_max" : 5465.03067016602,
+         "latency_us_p50" : 1417.87528991699,
+         "latency_us_p95" : 2354.86030578613,
+         "latency_us_p99" : 3180.98068237305,
+         "repeat" : 1,
+         "requests" : 50000,
+         "requests_per_second" : 61224.8341692141,
+         "wall_seconds" : 0.816662073135376
+      },
+      {
+         "case" : "current_http",
+         "latency_us_max" : 9068.96591186523,
+         "latency_us_p50" : 1630.78308105469,
+         "latency_us_p95" : 2256.15501403809,
+         "latency_us_p99" : 3370.04661560059,
+         "repeat" : 1,
+         "requests" : 50000,
+         "requests_per_second" : 57291.6117445575,
+         "wall_seconds" : 0.872728109359741
+      },
+      {
+         "case" : "prod_wire",
+         "latency_us_max" : 4822.96943664551,
+         "latency_us_p50" : 1204.9674987793,
+         "latency_us_p95" : 2125.97846984863,
+         "latency_us_p99" : 2923.01177978516,
+         "repeat" : 2,
+         "requests" : 50000,
+         "requests_per_second" : 75173.5012719782,
+         "wall_seconds" : 0.665127992630005
+      },
+      {
+         "case" : "prod_active",
+         "latency_us_max" : 5465.98434448242,
+         "latency_us_p50" : 1242.16079711914,
+         "latency_us_p95" : 1971.96006774902,
+         "latency_us_p99" : 2851.00936889648,
+         "repeat" : 2,
+         "requests" : 50000,
+         "requests_per_second" : 73268.0199364008,
+         "wall_seconds" : 0.682425975799561
+      },
+      {
+         "case" : "prod_dispatch",
+         "latency_us_max" : 7930.99403381348,
+         "latency_us_p50" : 1218.79577636719,
+         "latency_us_p95" : 2034.90257263184,
+         "latency_us_p99" : 3480.91125488281,
+         "repeat" : 2,
+         "requests" : 50000,
+         "requests_per_second" : 72232.842240716,
+         "wall_seconds" : 0.692205905914307
+      },
+      {
+         "case" : "prod_connection",
+         "latency_us_max" : 7400.9895324707,
+         "latency_us_p50" : 1420.97473144531,
+         "latency_us_p95" : 1769.06585693359,
+         "latency_us_p99" : 2919.91233825684,
+         "repeat" : 2,
+         "requests" : 50000,
+         "requests_per_second" : 66596.7826907914,
+         "wall_seconds" : 0.750787019729614
+      },
+      {
+         "case" : "current_http",
+         "latency_us_max" : 17319.917678833,
+         "latency_us_p50" : 1386.88087463379,
+         "latency_us_p95" : 2330.06477355957,
+         "latency_us_p99" : 3354.07257080078,
+         "repeat" : 2,
+         "requests" : 50000,
+         "requests_per_second" : 62096.6048913892,
+         "wall_seconds" : 0.80519700050354
+      },
+      {
+         "case" : "prod_api",
+         "latency_us_max" : 22630.9299468994,
+         "latency_us_p50" : 838.041305541992,
+         "latency_us_p95" : 1624.10736083984,
+         "latency_us_p99" : 2094.98405456543,
+         "repeat" : 2,
+         "requests" : 50000,
+         "requests_per_second" : 102963.079340141,
+         "wall_seconds" : 0.485610961914062
+      },
+      {
+         "case" : "prod_active",
+         "latency_us_max" : 7086.03858947754,
+         "latency_us_p50" : 1038.0744934082,
+         "latency_us_p95" : 1807.92808532715,
+         "latency_us_p99" : 3143.0721282959,
+         "repeat" : 3,
+         "requests" : 50000,
+         "requests_per_second" : 80771.3742655711,
+         "wall_seconds" : 0.619031190872192
+      },
+      {
+         "case" : "prod_dispatch",
+         "latency_us_max" : 5366.08695983887,
+         "latency_us_p50" : 1255.03540039062,
+         "latency_us_p95" : 1976.96685791016,
+         "latency_us_p99" : 2692.93785095215,
+         "repeat" : 3,
+         "requests" : 50000,
+         "requests_per_second" : 72821.6717143903,
+         "wall_seconds" : 0.686608791351318
+      },
+      {
+         "case" : "prod_connection",
+         "latency_us_max" : 6036.99684143066,
+         "latency_us_p50" : 1405.95436096191,
+         "latency_us_p95" : 2324.81956481934,
+         "latency_us_p99" : 3057.00302124023,
+         "repeat" : 3,
+         "requests" : 50000,
+         "requests_per_second" : 63509.4145807289,
+         "wall_seconds" : 0.787284851074219
+      },
+      {
+         "case" : "current_http",
+         "latency_us_max" : 8951.90238952637,
+         "latency_us_p50" : 1529.93202209473,
+         "latency_us_p95" : 2311.94496154785,
+         "latency_us_p99" : 3288.03062438965,
+         "repeat" : 3,
+         "requests" : 50000,
+         "requests_per_second" : 60414.8589615505,
+         "wall_seconds" : 0.827610969543457
+      },
+      {
+         "case" : "prod_api",
+         "latency_us_max" : 4997.01499938965,
+         "latency_us_p50" : 849.96223449707,
+         "latency_us_p95" : 1704.93125915527,
+         "latency_us_p99" : 2430.91583251953,
+         "repeat" : 3,
+         "requests" : 50000,
+         "requests_per_second" : 101255.584465999,
+         "wall_seconds" : 0.493799924850464
+      },
+      {
+         "case" : "prod_wire",
+         "latency_us_max" : 4065.03677368164,
+         "latency_us_p50" : 972.03254699707,
+         "latency_us_p95" : 1824.85580444336,
+         "latency_us_p99" : 2475.97694396973,
+         "repeat" : 3,
+         "requests" : 50000,
+         "requests_per_second" : 88777.3196949871,
+         "wall_seconds" : 0.563206911087036
+      },
+      {
+         "case" : "prod_dispatch",
+         "latency_us_max" : 6181.00166320801,
+         "latency_us_p50" : 1338.00506591797,
+         "latency_us_p95" : 2045.86982727051,
+         "latency_us_p99" : 3119.94552612305,
+         "repeat" : 4,
+         "requests" : 50000,
+         "requests_per_second" : 66425.499715091,
+         "wall_seconds" : 0.752722978591919
+      },
+      {
+         "case" : "prod_connection",
+         "latency_us_max" : 7149.93476867676,
+         "latency_us_p50" : 1456.02226257324,
+         "latency_us_p95" : 2345.08514404297,
+         "latency_us_p99" : 3218.17398071289,
+         "repeat" : 4,
+         "requests" : 50000,
+         "requests_per_second" : 62355.9442732283,
+         "wall_seconds" : 0.801848173141479
+      },
+      {
+         "case" : "current_http",
+         "latency_us_max" : 5331.03942871094,
+         "latency_us_p50" : 1523.01788330078,
+         "latency_us_p95" : 2344.84672546387,
+         "latency_us_p99" : 2999.06730651855,
+         "repeat" : 4,
+         "requests" : 50000,
+         "requests_per_second" : 60301.9248347999,
+         "wall_seconds" : 0.829160928726196
+      },
+      {
+         "case" : "prod_api",
+         "latency_us_max" : 3940.10543823242,
+         "latency_us_p50" : 1076.93672180176,
+         "latency_us_p95" : 1996.99401855469,
+         "latency_us_p99" : 2368.92700195312,
+         "repeat" : 4,
+         "requests" : 50000,
+         "requests_per_second" : 84869.47963442,
+         "wall_seconds" : 0.589139938354492
+      },
+      {
+         "case" : "prod_wire",
+         "latency_us_max" : 6475.92544555664,
+         "latency_us_p50" : 1504.89807128906,
+         "latency_us_p95" : 1641.98875427246,
+         "latency_us_p99" : 3102.06413269043,
+         "repeat" : 4,
+         "requests" : 50000,
+         "requests_per_second" : 71665.1630717078,
+         "wall_seconds" : 0.697689056396484
+      },
+      {
+         "case" : "prod_active",
+         "latency_us_max" : 8666.9921875,
+         "latency_us_p50" : 1168.96629333496,
+         "latency_us_p95" : 2347.94616699219,
+         "latency_us_p99" : 3473.99711608887,
+         "repeat" : 4,
+         "requests" : 50000,
+         "requests_per_second" : 78032.227169321,
+         "wall_seconds" : 0.640760898590088
+      },
+      {
+         "case" : "prod_connection",
+         "latency_us_max" : 7809.87739562988,
+         "latency_us_p50" : 1437.90245056152,
+         "latency_us_p95" : 2282.85789489746,
+         "latency_us_p99" : 3050.08888244629,
+         "repeat" : 5,
+         "requests" : 50000,
+         "requests_per_second" : 62345.2110635257,
+         "wall_seconds" : 0.801986217498779
+      },
+      {
+         "case" : "current_http",
+         "latency_us_max" : 6472.11074829102,
+         "latency_us_p50" : 1724.9584197998,
+         "latency_us_p95" : 2427.10113525391,
+         "latency_us_p99" : 3403.90205383301,
+         "repeat" : 5,
+         "requests" : 50000,
+         "requests_per_second" : 53496.0188276012,
+         "wall_seconds" : 0.934648990631104
+      },
+      {
+         "case" : "prod_api",
+         "latency_us_max" : 6980.89599609375,
+         "latency_us_p50" : 874.042510986328,
+         "latency_us_p95" : 1893.99719238281,
+         "latency_us_p99" : 3596.06742858887,
+         "repeat" : 5,
+         "requests" : 50000,
+         "requests_per_second" : 93974.8853853879,
+         "wall_seconds" : 0.532057046890259
+      },
+      {
+         "case" : "prod_wire",
+         "latency_us_max" : 5444.04983520508,
+         "latency_us_p50" : 1070.02258300781,
+         "latency_us_p95" : 1953.8402557373,
+         "latency_us_p99" : 3036.0221862793,
+         "repeat" : 5,
+         "requests" : 50000,
+         "requests_per_second" : 80420.2256204793,
+         "wall_seconds" : 0.621734142303467
+      },
+      {
+         "case" : "prod_active",
+         "latency_us_max" : 6340.02685546875,
+         "latency_us_p50" : 1551.86653137207,
+         "latency_us_p95" : 2145.05195617676,
+         "latency_us_p99" : 3206.96830749512,
+         "repeat" : 5,
+         "requests" : 50000,
+         "requests_per_second" : 68896.0608895851,
+         "wall_seconds" : 0.725730895996094
+      },
+      {
+         "case" : "prod_dispatch",
+         "latency_us_max" : 6227.01644897461,
+         "latency_us_p50" : 1363.99269104004,
+         "latency_us_p95" : 2107.14340209961,
+         "latency_us_p99" : 3294.94476318359,
+         "repeat" : 5,
+         "requests" : 50000,
+         "requests_per_second" : 64143.6812195286,
+         "wall_seconds" : 0.779500007629395
+      }
+   ],
+   "summary" : [
+      {
+         "case" : "prod_api",
+         "label" : "P1 parse + public Response mutation + prebuilt write",
+         "latency_us_max" : 4997.01499938965,
+         "latency_us_p50" : 874.042510986328,
+         "latency_us_p95" : 1704.93125915527,
+         "latency_us_p99" : 2430.91583251953,
+         "requests_per_second" : 93974.8853853879
+      },
+      {
+         "case" : "prod_wire",
+         "label" : "P2 + production native scalar wire builder",
+         "latency_us_max" : 4822.96943664551,
+         "latency_us_p50" : 1070.02258300781,
+         "latency_us_p95" : 1824.85580444336,
+         "latency_us_p99" : 2923.01177978516,
+         "requests_per_second" : 80420.2256204793
+      },
+      {
+         "case" : "prod_active",
+         "label" : "P3 + minimal active exchange fields",
+         "latency_us_max" : 6340.02685546875,
+         "latency_us_p50" : 1168.96629333496,
+         "latency_us_p95" : 1971.96006774902,
+         "latency_us_p99" : 3143.0721282959,
+         "requests_per_second" : 78032.227169321
+      },
+      {
+         "case" : "prod_dispatch",
+         "label" : "P4 production callback and scalar send",
+         "latency_us_max" : 6227.01644897461,
+         "latency_us_p50" : 1338.00506591797,
+         "latency_us_p95" : 2045.86982727051,
+         "latency_us_p99" : 3294.94476318359,
+         "requests_per_second" : 66425.499715091
+      },
+      {
+         "case" : "prod_connection",
+         "label" : "P5 unmodified production Connection",
+         "latency_us_max" : 7149.93476867676,
+         "latency_us_p50" : 1420.97473144531,
+         "latency_us_p95" : 2324.81956481934,
+         "latency_us_p99" : 3057.00302124023,
+         "requests_per_second" : 62355.9442732283
+      },
+      {
+         "case" : "current_http",
+         "label" : "C12 full Server + Content-Type",
+         "latency_us_max" : 8951.90238952637,
+         "latency_us_p50" : 1529.93202209473,
+         "latency_us_p95" : 2330.06477355957,
+         "latency_us_p99" : 3354.07257080078,
+         "requests_per_second" : 60301.9248347999
+      }
+   ]
+}

@@ -1,0 +1,86 @@
+Run: 35520275873
+Job: 106103042067 (nonthreaded)
+Candidate: 586c208054a76d392eca88086357e0d3cc3e2aaa
+Baseline: 2245560e8a3dfddd88a4974d52d2168da4cbbbc3
+Core: 1c3de59e395e05e79c735f5d5ef35cd5021e8c55
+Source: GitHub job log; selected verbatim benchmark/test lines.
+
+2026-09-20T15:39:42.3542438Z   perl-version: 5
+2026-09-20T15:39:42.3542689Z   multi-thread: false
+2026-09-20T15:39:43.9799269Z [command]/opt/hostedtoolcache/perl/5.44.0/x64/bin/perl -V
+2026-09-20T15:40:11.4583610Z Files=40, Tests=1015,  3 wallclock secs ( 0.08 usr  0.05 sys +  2.34 cusr  0.35 csys =  2.82 CPU)
+2026-09-20T15:40:11.4584260Z Result: PASS
+2026-09-20T15:40:11.9486666Z HEAD is now at 2245560 fix: support threaded Perl and refresh production lifecycle diagnostic
+2026-09-20T15:40:16.1111076Z Files=40, Tests=1014,  3 wallclock secs ( 0.08 usr  0.05 sys +  2.44 cusr  0.33 csys =  2.90 CPU)
+2026-09-20T15:40:16.1111568Z Result: PASS
+2026-09-20T15:40:16.1176210Z [36;1mperl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=100000 --warmup=10000 --repeats=7 --response-bytes=32 --json=bench/results/ci-single-pass-get32.json[0m
+2026-09-20T15:40:16.1178206Z [36;1mperl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-single-pass-get16k.json[0m
+2026-09-20T15:40:16.1180491Z [36;1mperl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-single-pass-post4k.json[0m
+2026-09-20T15:40:16.1582225Z requests=100000 warmup=10000 connections=100 pipeline=1 request_body_bytes=0 response_bytes=32 repeats=7
+2026-09-20T15:40:18.0558890Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=1    61938.2 req/s p50=  1555.9 us p95=  1736.2 us p99=  3077.0 us max=  5208.0 us
+2026-09-20T15:40:19.9396074Z Linux::Event::HTTP + Content-Type repeat=1    62355.1 req/s p50=  1559.0 us p95=  1660.1 us p99=  3083.9 us max=  4286.1 us
+2026-09-20T15:40:21.7749478Z Linux::Event::HTTP + Content-Type repeat=2    64144.1 req/s p50=  1518.0 us p95=  1588.8 us p99=  3014.1 us max=  3675.0 us
+2026-09-20T15:40:23.6324231Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=2    63312.3 req/s p50=  1539.0 us p95=  1617.0 us p99=  3047.9 us max=  3835.0 us
+2026-09-20T15:40:25.4847170Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=3    63509.6 req/s p50=  1537.1 us p95=  1601.9 us p99=  3040.1 us max=  3501.9 us
+2026-09-20T15:40:27.3463911Z Linux::Event::HTTP + Content-Type repeat=3    63204.3 req/s p50=  1534.9 us p95=  1647.9 us p99=  3037.0 us max=  4493.0 us
+2026-09-20T15:40:29.2327385Z Linux::Event::HTTP + Content-Type repeat=4    62369.6 req/s p50=  1562.1 us p95=  1654.1 us p99=  3094.2 us max=  3701.9 us
+2026-09-20T15:40:31.1094230Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=4    62784.0 req/s p50=  1552.1 us p95=  1627.2 us p99=  3056.0 us max=  3917.0 us
+2026-09-20T15:40:32.9555427Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=5    63935.1 req/s p50=  1521.1 us p95=  1613.1 us p99=  3022.9 us max=  3634.9 us
+2026-09-20T15:40:34.8253947Z Linux::Event::HTTP + Content-Type repeat=5    63127.4 req/s p50=  1545.9 us p95=  1617.9 us p99=  3052.9 us max=  3573.9 us
+2026-09-20T15:40:36.7008714Z Linux::Event::HTTP + Content-Type repeat=6    62822.6 req/s p50=  1551.9 us p95=  1636.0 us p99=  3061.1 us max=  4002.1 us
+2026-09-20T15:40:38.5772027Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=6    62784.7 req/s p50=  1519.9 us p95=  1818.2 us p99=  3022.9 us max=  9960.9 us
+2026-09-20T15:40:40.4429412Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=7    63221.2 req/s p50=  1532.1 us p95=  1617.9 us p99=  3036.0 us max=  4904.0 us
+2026-09-20T15:40:42.2836780Z Linux::Event::HTTP + Content-Type repeat=7    64240.6 req/s p50=  1502.0 us p95=  1643.2 us p99=  2991.0 us max=  7300.1 us
+2026-09-20T15:40:42.2837710Z Median comparison
+2026-09-20T15:40:42.2839357Z Linux::Event::HTTP pre-general-fastpath + Content-Type      63221.2       1537.1       1617.9       3040.1       3917.0
+2026-09-20T15:40:42.2840274Z Linux::Event::HTTP + Content-Type      63127.4       1545.9       1643.2       3052.9       4002.1
+2026-09-20T15:40:46.8007356Z json=bench/results/ci-single-pass-get32.json
+2026-09-20T15:40:46.8362658Z requests=50000 warmup=5000 connections=100 pipeline=1 request_body_bytes=0 response_bytes=16384 repeats=7
+2026-09-20T15:40:47.9479072Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=1    53240.7 req/s p50=  1823.9 us p95=  1946.9 us p99=  3633.0 us max=  4758.1 us
+2026-09-20T15:40:49.0759853Z Linux::Event::HTTP + Content-Type repeat=1    52782.0 req/s p50=  1820.1 us p95=  2157.9 us p99=  3626.1 us max=  5723.0 us
+2026-09-20T15:40:50.2002597Z Linux::Event::HTTP + Content-Type repeat=2    53144.7 req/s p50=  1815.1 us p95=  1965.0 us p99=  3613.9 us max=  7498.0 us
+2026-09-20T15:40:51.3035739Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=2    54276.3 req/s p50=  1792.9 us p95=  1887.1 us p99=  3562.0 us max=  4501.1 us
+2026-09-20T15:40:52.4273532Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=3    53149.4 req/s p50=  1832.0 us p95=  1910.9 us p99=  3646.9 us max=  4291.1 us
+2026-09-20T15:40:53.5464164Z Linux::Event::HTTP + Content-Type repeat=3    53403.5 req/s p50=  1823.9 us p95=  1905.9 us p99=  3618.0 us max=  5608.8 us
+2026-09-20T15:40:54.7045249Z Linux::Event::HTTP + Content-Type repeat=4    51319.5 req/s p50=  1829.1 us p95=  2672.9 us p99=  3650.2 us max=  8456.0 us
+2026-09-20T15:40:55.8271705Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=4    53287.0 req/s p50=  1831.1 us p95=  1920.9 us p99=  3619.9 us max=  4700.9 us
+2026-09-20T15:40:56.9399948Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=5    53823.8 req/s p50=  1806.0 us p95=  1910.9 us p99=  3589.9 us max=  4467.0 us
+2026-09-20T15:40:58.0731983Z Linux::Event::HTTP + Content-Type repeat=5    52770.2 req/s p50=  1823.2 us p95=  2166.0 us p99=  3633.0 us max=  6139.0 us
+2026-09-20T15:40:59.1937163Z Linux::Event::HTTP + Content-Type repeat=6    53580.4 req/s p50=  1822.0 us p95=  1885.9 us p99=  3629.9 us max=  3855.9 us
+2026-09-20T15:41:00.3271565Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=6    52845.0 req/s p50=  1848.0 us p95=  1918.1 us p99=  3663.1 us max=  4523.0 us
+2026-09-20T15:41:01.4681713Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=7    52447.9 req/s p50=  1858.9 us p95=  1926.9 us p99=  3695.0 us max=  4982.0 us
+2026-09-20T15:41:02.5889244Z Linux::Event::HTTP + Content-Type repeat=7    53457.5 req/s p50=  1820.1 us p95=  1905.0 us p99=  3609.9 us max=  4652.0 us
+2026-09-20T15:41:02.5890119Z Median comparison
+2026-09-20T15:41:02.5891816Z Linux::Event::HTTP pre-general-fastpath + Content-Type      53240.7       1831.1       1918.1       3633.0       4523.0
+2026-09-20T15:41:02.5893537Z Linux::Event::HTTP + Content-Type      53144.7       1822.0       1965.0       3626.1       5723.0
+2026-09-20T15:41:02.6924222Z json=bench/results/ci-single-pass-get16k.json
+2026-09-20T15:41:02.7287252Z requests=50000 warmup=5000 connections=100 pipeline=1 request_body_bytes=4096 response_bytes=32 repeats=7
+2026-09-20T15:41:04.1356432Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=1    42900.3 req/s p50=  2299.1 us p95=  2386.1 us p99=  2618.1 us max=  5297.2 us
+2026-09-20T15:41:05.5184958Z Linux::Event::HTTP + Content-Type repeat=1    42510.0 req/s p50=  2327.0 us p95=  2403.0 us p99=  2569.9 us max=  4886.9 us
+2026-09-20T15:41:06.9410808Z Linux::Event::HTTP + Content-Type repeat=2    41118.2 req/s p50=  2362.0 us p95=  2805.0 us p99=  3764.9 us max=  9553.9 us
+2026-09-20T15:41:08.3043347Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=2    42787.7 req/s p50=  2300.0 us p95=  2455.9 us p99=  2818.1 us max=  5224.9 us
+2026-09-20T15:41:09.6803657Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=3    42800.5 req/s p50=  2306.0 us p95=  2400.9 us p99=  2786.2 us max=  5968.1 us
+2026-09-20T15:41:11.0704728Z Linux::Event::HTTP + Content-Type repeat=3    42146.2 req/s p50=  2279.0 us p95=  2772.1 us p99=  3863.8 us max=  9881.0 us
+2026-09-20T15:41:12.4697830Z Linux::Event::HTTP + Content-Type repeat=4    42041.8 req/s p50=  2349.1 us p95=  2435.9 us p99=  2564.0 us max=  5034.9 us
+2026-09-20T15:41:13.8978915Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=4    40995.7 req/s p50=  2348.9 us p95=  2845.0 us p99=  3818.0 us max= 10831.1 us
+2026-09-20T15:41:15.3068517Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=5    41749.0 req/s p50=  2357.0 us p95=  2498.9 us p99=  2888.9 us max=  5685.1 us
+2026-09-20T15:41:16.7031922Z Linux::Event::HTTP + Content-Type repeat=5    42121.5 req/s p50=  2328.2 us p95=  2466.0 us p99=  3280.2 us max=  7551.9 us
+2026-09-20T15:41:18.1263662Z Linux::Event::HTTP + Content-Type repeat=6    41394.9 req/s p50=  2375.8 us p95=  2561.1 us p99=  2977.8 us max=  6172.9 us
+2026-09-20T15:41:19.5170109Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=6    42381.5 req/s p50=  2319.1 us p95=  2476.9 us p99=  2936.8 us max=  5789.0 us
+2026-09-20T15:41:20.9099248Z Linux::Event::HTTP pre-general-fastpath + Content-Type repeat=7    42252.6 req/s p50=  2327.9 us p95=  2482.9 us p99=  2850.1 us max=  5821.0 us
+2026-09-20T15:41:22.3443991Z Linux::Event::HTTP + Content-Type repeat=7    40880.8 req/s p50=  2347.0 us p95=  2825.0 us p99=  3952.0 us max= 10810.1 us
+2026-09-20T15:41:22.3444750Z Median comparison
+2026-09-20T15:41:22.3445846Z Linux::Event::HTTP pre-general-fastpath + Content-Type      42381.5       2319.1       2476.9       2850.1       5789.0
+2026-09-20T15:41:22.3447100Z Linux::Event::HTTP + Content-Type      42041.8       2347.0       2561.1       3280.2       7551.9
+2026-09-20T15:41:22.4485169Z json=bench/results/ci-single-pass-post4k.json
+2026-09-20T15:41:22.4914852Z requests=600 warmup=120 connections=4 pipeline=1 response_bytes=8 repeats=1 read_budget_bytes=0
+2026-09-20T15:41:22.5555941Z P1 parse + public Response mutation + prebuilt write repeat=1    64123.3 req/s p50=    46.0 us p95=    92.0 us p99=   114.2 us max=   164.0 us
+2026-09-20T15:41:22.6189458Z P2 + production native scalar wire builder repeat=1    70853.7 req/s p50=    42.9 us p95=    79.9 us p99=    93.9 us max=   116.8 us
+2026-09-20T15:41:22.6823065Z P3 + minimal active exchange fields repeat=1    70093.9 req/s p50=    44.1 us p95=    82.0 us p99=    89.9 us max=   103.0 us
+2026-09-20T15:41:22.7478784Z P4 production callback and scalar send repeat=1    57692.0 req/s p50=    49.1 us p95=    98.0 us p99=   111.1 us max=   118.0 us
+2026-09-20T15:41:22.8148890Z P5 unmodified production Connection repeat=1    51484.9 req/s p50=    50.1 us p95=   109.0 us p99=   123.0 us max=   132.1 us
+2026-09-20T15:41:22.8815165Z C12 full Server + Content-Type     repeat=1    52498.8 req/s p50=    50.1 us p95=   114.0 us p99=   124.0 us max=   140.0 us
+2026-09-20T15:41:22.8816066Z Median comparison
+2026-09-20T15:41:22.8821865Z C12 full Server + Content-Type          52498.8         50.1        114.0        124.0        140.0
+2026-09-20T15:41:22.8925725Z   path: bench/results/ci-single-pass-*.json
+
