@@ -15,7 +15,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response|current_header|current_api|current_frame|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
+    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response|current_header|current_api|current_frame|current_exchange|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -177,6 +177,31 @@ my $wire_ct = "HTTP/1.1 200 OK\r\n"
 
             $self->_activate_bodyless($request, $response);
             my $handler = $self->{_http_on_request};
+
+            if ($main::STAGE eq 'current_exchange') {
+                $response->header(
+                    'Content-Type', 'application/octet-stream',
+                );
+                $response->body($self->data->{payload});
+
+                my $headers = $response->{headers};
+                my $pair = [
+                    'Content-Length',
+                    '' . length($self->data->{payload}),
+                ];
+                if (@$headers) {
+                    push @$headers, $pair;
+                } else {
+                    $response->{headers} = [ $pair ];
+                }
+                my $head = $response->_serialize_head('1.1');
+
+                Linux::Event::HTTP::Server::Connection::_clear_transaction(
+                    $self,
+                );
+                $self->write($head . $self->data->{payload});
+                next;
+            }
 
             if ($main::STAGE eq 'current_callback') {
                 my $ok = $self->_invoke_http_callback(
