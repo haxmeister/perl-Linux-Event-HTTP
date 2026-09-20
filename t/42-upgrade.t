@@ -235,7 +235,7 @@ subtest 'raw native HTTP Upgrade retires into ordinary on_data target' => sub {
             "TARGET:PING",
         '101 output precedes retained-tail delivery to ordinary target',
     );
-}
+};
 
 {
     package T::BadUpgradeHTTP;
