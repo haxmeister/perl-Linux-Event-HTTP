@@ -11,6 +11,10 @@
 #define LE_HTTP_BODY_CONTENT_LENGTH 1
 #define LE_HTTP_BODY_CHUNKED 2
 
+#define LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL 0x01
+#define LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE 0x02
+#define LE_HTTP_RESPONSE_SERVER_HTTP10        0x04
+
 #define LE_HTTP_SEMANTICS_OK 0
 #define LE_HTTP_SEMANTICS_BAD_REQUEST 400
 #define LE_HTTP_SEMANTICS_NOT_IMPLEMENTED 501
@@ -795,6 +799,37 @@ response_hv_true(HV *hv, const char *key, I32 key_len)
     return value != NULL && SvTRUE(*value);
 }
 
+static UV
+response_server_flags(HV *hv)
+{
+    SV **value = hv_fetch(
+        hv,
+        "_server_flags",
+        (I32)(sizeof("_server_flags") - 1),
+        0
+    );
+    return value != NULL && SvOK(*value) ? SvUV(*value) : 0;
+}
+
+static void
+response_clear_server_flags(HV *hv, UV mask)
+{
+    SV **value = hv_fetch(
+        hv,
+        "_server_flags",
+        (I32)(sizeof("_server_flags") - 1),
+        0
+    );
+    UV flags;
+
+    if (value == NULL || !SvOK(*value))
+        return;
+
+    flags = SvUV(*value);
+    flags &= ~mask;
+    sv_setuv(*value, flags);
+}
+
 static const char *
 response_input_bytes(
     pTHX_
@@ -911,13 +946,16 @@ response_set_header_native(
         croak("response header field value contains invalid control characters");
 
     headers_ptr = hv_fetch(hv, "headers", 7, 0);
-    if (headers_ptr == NULL ||
-        !SvROK(*headers_ptr) ||
-        SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
-        croak("response headers storage is invalid");
-
-    headers = (AV *)SvRV(*headers_ptr);
-    max_index = av_len(headers);
+    if (headers_ptr == NULL) {
+        headers = NULL;
+        max_index = -1;
+    } else {
+        if (!SvROK(*headers_ptr) ||
+            SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
+            croak("response headers storage is invalid");
+        headers = (AV *)SvRV(*headers_ptr);
+        max_index = av_len(headers);
+    }
 
     /*
      * Fresh server Responses share one immutable empty array. Never append to
@@ -933,14 +971,13 @@ response_set_header_native(
             hv, "headers", 7,
             newRV_noinc((SV *)new_headers), 0
         );
-        hv_delete(hv, "_server_default_final", 21, G_DISCARD);
-        if (framing_header)
-            hv_delete(
-                hv,
-                "_server_scalar_simple",
-                (I32)(sizeof("_server_scalar_simple") - 1),
-                G_DISCARD
-            );
+        response_clear_server_flags(
+            hv,
+            framing_header
+                ? LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
+                    | LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE
+                : LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
+        );
         return;
     }
 
@@ -1008,14 +1045,13 @@ response_set_header_native(
         );
     }
 
-    hv_delete(hv, "_server_default_final", 21, G_DISCARD);
-    if (framing_header)
-        hv_delete(
-            hv,
-            "_server_scalar_simple",
-            (I32)(sizeof("_server_scalar_simple") - 1),
-            G_DISCARD
-        );
+    response_clear_server_flags(
+        hv,
+        framing_header
+            ? LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
+                | LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE
+            : LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
+    );
 }
 
 static void
@@ -1074,21 +1110,20 @@ response_build_simple_scalar_final(
     request_state = request_state_from_object(aTHX_ request);
     hv = response_hv_from_object(aTHX_ response);
 
-    if (!response_hv_true(
-            hv,
-            "_server_scalar_simple",
-            (I32)(sizeof("_server_scalar_simple") - 1)
-        ))
+    if (!(response_server_flags(hv)
+            & LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE))
         return NULL;
 
     if (request_state->minor_version != 1 || !request_state->keep_alive)
         return NULL;
 
     status_ptr = hv_fetch(hv, "status", 6, 0);
-    if (status_ptr == NULL || !SvOK(*status_ptr))
+    if (status_ptr == NULL)
+        status = 200;
+    else if (!SvOK(*status_ptr))
         return NULL;
-
-    status = SvIV(*status_ptr);
+    else
+        status = SvIV(*status_ptr);
     if (status < 100 || status > 999)
         return NULL;
 
@@ -1116,13 +1151,16 @@ response_build_simple_scalar_final(
     }
 
     headers_ptr = hv_fetch(hv, "headers", 7, 0);
-    if (headers_ptr == NULL ||
-        !SvROK(*headers_ptr) ||
-        SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
-        return NULL;
-
-    headers = (AV *)SvRV(*headers_ptr);
-    max_index = av_len(headers);
+    if (headers_ptr == NULL) {
+        headers = NULL;
+        max_index = -1;
+    } else {
+        if (!SvROK(*headers_ptr) ||
+            SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
+            return NULL;
+        headers = (AV *)SvRV(*headers_ptr);
+        max_index = av_len(headers);
+    }
 
     /*
      * The marker is maintained by the public server Response mutation path,
@@ -1738,6 +1776,37 @@ DESTROY(self)
 
 MODULE = Linux::Event::HTTP::_HTTP1    PACKAGE = Linux::Event::HTTP::Response
 
+SV *
+_new_server_default(CLASS, request)
+    const char *CLASS
+    SV *request
+  PREINIT:
+    le_http_request_state *state;
+    HV *hv;
+    UV flags;
+    HV *stash;
+  CODE:
+    state = request_state_from_object(aTHX_ request);
+    flags = LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
+        | LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE;
+    if (state->minor_version == 0)
+        flags |= LE_HTTP_RESPONSE_SERVER_HTTP10;
+
+    hv = newHV();
+    hv_store(
+        hv,
+        "_server_flags",
+        (I32)(sizeof("_server_flags") - 1),
+        newSVuv(flags),
+        0
+    );
+
+    RETVAL = newRV_noinc((SV *)hv);
+    stash = gv_stashpv(CLASS, GV_ADD);
+    sv_bless(RETVAL, stash);
+  OUTPUT:
+    RETVAL
+
 void
 _set_header_native(self, name, value)
     SV *self
@@ -1783,10 +1852,15 @@ _serialize_head(self, http_version = "1.1")
     hv = (HV *)SvRV(self);
 
     status_ptr = hv_fetch(hv, "status", 6, 0);
-    if (status_ptr == NULL || !SvOK(*status_ptr))
-        croak("response status is required");
-
-    status = SvIV(*status_ptr);
+    if (status_ptr == NULL) {
+        if (!response_server_flags(hv))
+            croak("response status is required");
+        status = 200;
+    } else {
+        if (!SvOK(*status_ptr))
+            croak("response status is required");
+        status = SvIV(*status_ptr);
+    }
     if (status < 100 || status > 999)
         croak("response status must be between 100 and 999");
 
@@ -1801,19 +1875,23 @@ _serialize_head(self, http_version = "1.1")
     }
 
     headers_ptr = hv_fetch(hv, "headers", 7, 0);
-    if (headers_ptr == NULL ||
-        !SvROK(*headers_ptr) ||
-        SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
-        croak("response headers storage is invalid");
-
-    headers = (AV *)SvRV(*headers_ptr);
+    if (headers_ptr == NULL) {
+        if (!response_server_flags(hv))
+            croak("response headers storage is invalid");
+        headers = NULL;
+    } else {
+        if (!SvROK(*headers_ptr) ||
+            SvTYPE(SvRV(*headers_ptr)) != SVt_PVAV)
+            croak("response headers storage is invalid");
+        headers = (AV *)SvRV(*headers_ptr);
+    }
 
     head = newSVpvn("", 0);
     sv_catpvf(head, "HTTP/%s %03" IVdf " ", http_version, status);
     sv_catpvn(head, reason, reason_len);
     sv_catpvn(head, "\r\n", 2);
 
-    max_index = av_len(headers);
+    max_index = headers == NULL ? -1 : av_len(headers);
     for (i = 0; i <= max_index; ++i) {
         SV **row_ptr = av_fetch(headers, i, 0);
         AV *row;
