@@ -6,8 +6,9 @@ Updated: 2026-09-20 (America/Chicago)
 
 Canonical branch: `main`.
 
-Active research branch: `experiment/raw-body-behavior` (draft PR #32).
-Base main handoff commit: `faced6c635fcb75dac7c8d85c8773a0fe3cab9e3`.
+Active research branch: `experiment/raw-body-behavior` (PR #32).
+Original branch base: `faced6c635fcb75dac7c8d85c8773a0fe3cab9e3`.
+Current main handoff commit: `d38c8c92348fa5a3a7af5702a5927ab66713584a`.
 
 Current main integration commit:
 
@@ -26,18 +27,16 @@ repository.
 
 Linux::Event::HTTP now requires Linux::Event 0.116.
 
-The currently validated pre-release core commit is:
+The currently validated Linux::Event 0.116 main commit is:
 
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`
-"Allow native consumer retirement to ordinary Stream input"
+`007db40e22374c6d7bf8e056b2d354681d20c852`
+"Finalize 0.116 release handoff [skip ci]"
 
-That code still reports 0.115 internally because the Linux::Event release/version
-bump has not yet landed, but the user has established that these capabilities
-will ship as Linux::Event 0.116. Until 0.116 is released, CI installs the exact
-commit above and installs the remaining HTTP dependencies explicitly rather than
-asking cpanm to satisfy the unreleased 0.116 version from CPAN.
+Linux::Event 0.116 now carries the native-consumer retirement support required
+by raw HTTP Upgrade/CONNECT and reports the correct release version internally.
+The HTTP distribution minimum remains 0.116.
 
-Do not lower the published Linux::Event dependency back to 0.115.
+Do not lower the published Linux::Event dependency below 0.116.
 
 ### Raw native HTTP/1 state
 
@@ -119,6 +118,10 @@ Conclusion:
   varies across hosted runners (roughly -3.5% to -6.7% in the current evidence).
 
 Do not optimize for one exact hosted-run percentage.
+
+PR #32 must be validated once more against the released-version 0.116 main
+state before merge; its prior functional evidence used the same implementation
+at core commit `51f2e1eab28f6f1234024a0cf37be03b36780e84`.
 
 ### Native Content-Length body path: validated
 
