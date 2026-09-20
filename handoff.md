@@ -66,10 +66,27 @@ Lazy Transaction materialization, run `35479564228`:
 
 Cumulative comparison driver commit: `7f24885d73dc7b5a4594102c79e77bda91ba4cbc`.
 
-The next benchmark is a cumulative same-run comparison of untouched `main`
-versus the complete optimized branch versus Feersum. Do not infer cumulative
-improvement by multiplying the independent experiment percentages because
-runner performance varies and the optimizations overlap.
+Cumulative same-run comparison, run `35479723733`:
+
+- 32-byte response: main 13,285.2 req/s -> optimized 23,333.3 req/s
+  (+75.6%); Feersum 74,809.1 req/s. The Feersum ratio narrowed from about
+  5.6x to about 3.2x.
+- 16 KiB response: main 11,581.9 req/s -> optimized 18,775.5 req/s
+  (+62.1%); Feersum 63,613.9 req/s. The Feersum ratio narrowed from about
+  5.5x to about 3.4x.
+- 4 KiB request body / 32-byte response: main 7,573.8 req/s -> optimized
+  8,256.7 req/s (+9.0%).
+- optimized branch: 975 tests pass; untouched main: 971 tests pass.
+
+The cumulative result confirms that the HTTP lifecycle work is material and
+not an artifact of comparing separate GitHub runners.
+
+Current experiment: permit the existing native default-final response builder
+to serve an HTTP/1.1 keep-alive request before its request body has finished
+arriving. The generic response path already supports response-before-request-
+body-completion; the experiment preserves that lifecycle while avoiding the
+generic response serialization path. A Transaction is materialized only when
+needed to track the early response until the request body reaches its boundary.
 
 The earlier raw-native-input experiment remains separate. Its full-server gain
 was only about 5.8%, and Linux::Event currently cannot transition away from an

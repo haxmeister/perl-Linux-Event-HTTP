@@ -255,7 +255,7 @@ sub _try_native_default_final ($self, $transaction, $body) {
     return 0 if $self->{_http_response_state};
 
     my $request_state = $self->{_http_request_state} or return 0;
-    return 0 if !$request_state->{body_done};
+    my $body_done = $request_state->{body_done} ? 1 : 0;
 
     my $request = $transaction
         ? $transaction->{request}
@@ -265,6 +265,10 @@ sub _try_native_default_final ($self, $transaction, $body) {
         ->build_default_final($request, $body);
     return 0 if !defined $wire;
 
+    if (!$body_done && !$transaction) {
+        $transaction = $self->transaction or return 0;
+    }
+
     $response->{committed} = 1;
     if ($transaction) {
         $transaction->{response_output_started} = 1;
@@ -273,8 +277,11 @@ sub _try_native_default_final ($self, $transaction, $body) {
     $self->{_http_response_state} = undef;
 
     $self->write($wire);
-    $transaction->{state} = 'complete' if $transaction;
-    $self->_clear_transaction;
+
+    if ($body_done) {
+        $transaction->{state} = 'complete' if $transaction;
+        $self->_clear_transaction;
+    }
 
     $self->resume_read if $self->is_read_paused;
     return 1;
