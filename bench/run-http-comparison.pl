@@ -53,6 +53,25 @@ my %server = (
         available => sub { 1 },
         linuxevent_mode => 'legacy-callback',
     },
+    linuxevent_baseline_content_type => {
+        label => 'Linux::Event::HTTP pre-output-state + Content-Type',
+        command => sub {
+            my $tree = $ENV{BENCH_BASE_TREE}
+                // die "BENCH_BASE_TREE is required for linuxevent_baseline_content_type\n";
+            return [
+                $^X,
+                "-I$tree/blib/lib",
+                "-I$tree/blib/arch",
+                "$tree/bench/servers/linuxevent-http.pl",
+            ];
+        },
+        available => sub {
+            my $tree = $ENV{BENCH_BASE_TREE} // return 0;
+            return -f "$tree/bench/servers/linuxevent-http.pl"
+                && -d "$tree/blib/lib" && -d "$tree/blib/arch";
+        },
+        linuxevent_mode => 'content-type',
+    },
     linuxevent_baseline => {
         label => 'Linux::Event::HTTP before lazy Transaction',
         command => sub {
