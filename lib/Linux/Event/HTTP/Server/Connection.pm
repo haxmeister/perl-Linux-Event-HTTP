@@ -220,10 +220,89 @@ sub _response_body_ready ($self, $response) {
     }
 
     return if !$response->_has_scalar_body;
+    my $body = $response->_scalar_body;
+    return if $self->_try_simple_scalar_final($response, $body);
     $self->_write_response(
-        $response, $response->_scalar_body, 1, 'send_response',
+        $response, $body, 1, 'send_response',
     );
     return;
+}
+
+
+sub _try_simple_scalar_final ($self, $response, $body) {
+    my $request = $self->{_http_active_request} or return 0;
+    return 0 if $request->version ne '1.1';
+    return 0 if !$request->_http1_keep_alive;
+    return 0 if $self->{_http_response_state};
+
+    my $status = $response->{status};
+    croak 'send_response(): informational responses require a future interim-response API'
+        if $status >= 100 && $status < 200;
+
+    my $method = $request->method;
+    my $head_request = $method eq 'HEAD';
+    my $body_forbidden = $status == 204 || $status == 304;
+    croak 'send_response(): this response status cannot carry a message body'
+        if $body_forbidden && length($body);
+
+    my $headers = $response->{headers};
+    return 0 if ref($headers) ne 'ARRAY';
+
+    my ($content_length, $content_length_count);
+    for my $pair (@$headers) {
+        return 0 if ref($pair) ne 'ARRAY' || @$pair != 2;
+        my ($name, $value) = @$pair;
+        return 0 if !defined($name) || ref($name)
+            || !defined($value) || ref($value);
+
+        my $lower = lc $name;
+        return 0 if $lower eq 'transfer-encoding';
+        return 0 if $lower eq 'connection';
+
+        if ($lower eq 'content-length') {
+            ++$content_length_count;
+            return 0 if $content_length_count > 1;
+            $content_length = _canonical_decimal($value);
+            return 0 if !defined $content_length;
+        }
+    }
+
+    if (defined($content_length)
+        && !$head_request && !$body_forbidden
+        && _compare_count(length($body), $content_length) != 0) {
+        croak 'send_response(): Content-Length does not match scalar body length';
+    }
+
+    if (!defined($content_length) && !$body_forbidden) {
+        my @headers = @$headers;
+        push @headers, [ 'Content-Length', '' . length($body) ];
+        $response->{headers} = \@headers;
+    }
+
+    my $head = $response->_serialize_head('1.1');
+    $response->{committed} = 1;
+
+    $self->{_http_response_output_started} = 1;
+    $self->{_http_response_output_complete} = 1;
+    if (my $transaction = $self->{_http_active_transaction}) {
+        $transaction->{response_output_started} = 1;
+        $transaction->{response_output_complete} = 1;
+    }
+
+    my $wire = $head;
+    $wire .= $body if !$head_request && !$body_forbidden;
+    $self->write($wire);
+
+    my $request_state = $self->{_http_request_state};
+    if ($request_state && $request_state->{body_done}) {
+        if (my $transaction = $self->{_http_active_transaction}) {
+            $transaction->{state} = 'complete';
+        }
+        $self->_clear_transaction;
+    }
+
+    $self->resume_read if $self->is_read_paused;
+    return 1;
 }
 
 sub _send_http_response ($self, $transaction) {
@@ -243,6 +322,7 @@ sub _send_http_response ($self, $transaction) {
 
     my $body = $response->_scalar_body;
     return 1 if $self->_try_native_default_final($transaction, $body);
+    return 1 if $self->_try_simple_scalar_final($response, $body);
 
     $self->_write_response($response, $body, 1, 'send_response');
     return 1;
