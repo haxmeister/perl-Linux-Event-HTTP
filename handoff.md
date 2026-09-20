@@ -208,6 +208,71 @@ Do not compare the ladder's 24.2k full-Server figure directly with the earlier
 different cumulative-stage benchmark mechanics. Use the ladder's relative
 stage deltas diagnostically.
 
+## Response mutation optimization
+
+Branch: `experiment/response-mutation-fastpath`.
+
+The current realistic scalar-response path showed that public Response mutation
+was still a major cost. A refined current-architecture ladder split the cost
+into individual operations. Before native setters, the first Content-Type
+setter cost about 21-22% of throughput by itself and the scalar body setter
+cost another 8-13%.
+
+Pure-Perl cleanup (avoid rebuilding distinct header lists, direct generated
+Content-Length append, and repeated body-length work) was correct but produced
+only modest end-to-end gains. The measured setter cost remained large enough
+to justify moving the validation/storage hot path into the existing
+Linux::Event::HTTP::_HTTP1 XS extension without changing the public API.
+
+Current implementation:
+
+- `Response->header($name, $value)` keeps the same public Perl API but delegates
+  setter validation and lossless header-list mutation to XS.
+- `Response->body($bytes)` likewise delegates scalar byte validation/storage
+  to XS.
+- getters and all public semantics remain unchanged.
+- duplicate header replacement still preserves the first matching field
+  position and unrelated field order.
+- no new extension/library was added; the implementation lives in the existing
+  HTTP/1 XS unit.
+- the full distribution suite is green.
+
+Refined ladder after native setters, run `35487353561`:
+
+- parse + prebuilt Content-Type write: 83,124.9 req/s;
+- + trusted sparse Response: 74,355.1 (-10.6%);
+- + Content-Type setter: 70,123.0 (-5.7%);
+- + scalar body setter: 65,450.8 (-6.7%);
+- + generated Content-Length metadata: 63,926.9 (-2.3%);
+- + native head serialization: 59,038.1 (-7.7%);
+- + guarded callback: 48,453.3;
+- + current scalar-final send: 39,379.3;
+- production Connection: 35,028.4;
+- full Server: 35,883.4.
+
+The important comparison is the relative setter cost: the first-header stage
+fell from roughly 22% to 5.7%. Absolute ladder rates vary substantially across
+hosted runners and should not be compared between jobs as if they were one
+machine.
+
+Same-run end-to-end validation, run `35487442283`, exact baseline commit
+`9ad7cdffacda7a29e7f64d4b3b6731171637f088`:
+
+- 32-byte GET + Content-Type:
+  31,490.2 -> 35,835.6 req/s (+13.8%);
+  Feersum 98,966.0 req/s.
+- 16 KiB GET + Content-Type:
+  26,363.7 -> 29,325.6 req/s (+11.2%);
+  Feersum 82,623.0 req/s.
+- 4 KiB POST + Content-Type / 32-byte response:
+  25,295.5 -> 28,718.5 req/s (+13.5%).
+
+Conclusion: keep the native Response setters. They improve realistic GET and
+POST workloads materially while preserving the public message API and
+correctness suite. The remaining same-response Feersum gap is about 2.8x on
+these runs. The next measured costs are active callback/exchange setup and
+scalar-final send/completion bookkeeping rather than Response mutation.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
