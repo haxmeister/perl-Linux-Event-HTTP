@@ -6,6 +6,9 @@ Updated: 2026-09-20 (America/Chicago)
 
 Canonical branch: `main`.
 
+Active research branch: `experiment/raw-body-behavior` (draft PR #32).
+Base main handoff commit: `faced6c635fcb75dac7c8d85c8773a0fe3cab9e3`.
+
 Current main integration commit:
 
 `b8bba7454e26c82ce573cf3478b4cb7b0019dd47`
@@ -117,6 +120,53 @@ Conclusion:
 
 Do not optimize for one exact hosted-run percentage.
 
+### Body-bearing application-behavior matrix
+
+Draft PR #32 adds benchmark-only modes; no production semantics have changed.
+
+GitHub Actions run `35538317533` is green on Perl 5.36, latest Perl, and latest
+threaded Perl. The new benchmark compared ordinary and raw input under four
+application behaviors at 4 KiB and 64 KiB Content-Length bodies:
+
+| Body | Behavior | Ordinary req/s | Raw req/s | Raw change |
+| --- | --- | ---: | ---: | ---: |
+| 4 KiB | drain / early response | 18,277.6 | 17,667.5 | -3.3% |
+| 4 KiB | on_body / early response | 16,995.9 | 16,423.7 | -3.4% |
+| 4 KiB | drain / request-end response | 19,233.2 | 18,337.7 | -4.7% |
+| 4 KiB | on_body / request-end response | 17,801.2 | 17,009.1 | -4.5% |
+| 64 KiB | drain / early response | 11,915.8 | 11,328.7 | -4.9% |
+| 64 KiB | on_body / early response | 9,871.2 | 9,334.9 | -5.4% |
+| 64 KiB | drain / request-end response | 12,423.1 | 11,508.1 | -7.4% |
+| 64 KiB | on_body / request-end response | 10,258.9 | 9,866.5 | -3.8% |
+
+Repeat-by-repeat paired deltas are noisier at 4 KiB but remain directionally
+negative. At 64 KiB the median paired penalties are about -6.6%, -6.1%, -6.6%,
+and -3.3% for the four rows respectively.
+
+Conclusion: the raw body regression is general to the current Content-Length
+fallback path. It is not primarily caused by early-response behavior, and adding
+a no-op `on_body` does not reveal a uniquely dominant callback penalty. The
+current raw provider parses the head natively, then switches to a generic Perl
+fallback that materializes the native window, appends it into `_http_input`,
+runs `_drive_http1`, and may surface pipelined post-body request bytes through
+that fallback as well.
+
+The next justified experiment is a narrowly scoped native Content-Length body
+path:
+
+- keep the existing generic fallback for chunked bodies;
+- track Content-Length remaining in the raw provider;
+- for drained bodies, consume native body bytes without materializing them in
+  Perl and notify the HTTP lifecycle only at completion;
+- for `on_body`, deliver body chunks directly to the existing callback lifecycle
+  without staging through `_http_input`;
+- consume only the body prefix so a same-read following request head remains in
+  the native buffer and is parsed natively;
+- preserve all current reentrant close/transition and provider lifetime rules.
+
+Accept this only if same-run measurements improve body-bearing workloads without
+reducing the established bodyless GET gain.
+
 ### Rejected body fallback idea
 
 The candidate ending at
@@ -129,30 +179,14 @@ Do not revive the nested inline-tail design without new evidence.
 
 ### Next useful work
 
-The next decision is whether raw input should become the default production
-Server::Connection path.
+Prototype the native Content-Length body path described above on this branch,
+with focused correctness coverage first. Measure the existing eight body
+behavior modes again at 4 KiB and 64 KiB. Keep chunked requests on the current
+fallback so the experiment stays narrow.
 
-Do not answer that from the current discard-style POST benchmark alone. Measure
-body-bearing requests by real application behavior on a fresh branch from main:
-
-1. body ignored/drained with response generated in `on_request`;
-2. body delivered through `on_body`;
-3. response generated in `on_request_end` after body completion;
-4. at least 4 KiB and 64 KiB request bodies;
-5. compare ordinary input and raw native input in the same run.
-
-Use these measurements to identify whether the remaining raw-body penalty comes
-primarily from:
-
-- copying native body bytes into the Perl fallback buffer;
-- the extra provider/Perl callback boundary;
-- per-chunk `on_body` callbacks;
-- request-completion lifecycle;
-- or the artificial early-response/discard benchmark shape.
-
-Do not change production semantics to improve a benchmark. If there is a common,
-measured body-path cost with a simple fix, optimize it. Otherwise make an
-explicit default-policy decision based on the workload evidence.
+If the candidate is not clearly positive, revert it and retain the benchmark
+tooling/evidence only. Do not make raw input the default until the body result is
+resolved.
 
 Everything below is experiment/history context. This section is authoritative.
 
