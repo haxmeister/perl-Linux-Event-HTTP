@@ -360,6 +360,35 @@ showed only about a 1% effect, so split this stage before changing callback
 semantics: separately measure exchange activation/request-completion bookkeeping
 and the actual guarded application call.
 
+## Lean bodyless exchange activation
+
+Production bodyless request setup now avoids two costs that the split lifecycle
+benchmark proved unnecessary:
+
+- native bodyless Requests no longer receive a redundant
+  `Request->_mark_complete` fieldhash override; their native body mode
+  already makes `is_complete` true;
+- a new request no longer resets transaction/response-state/output-progress
+  fields that the connection lifecycle invariant has already returned to their
+  neutral values.
+
+Focused same-run validation, run `35489292962`, exact pre-activation baseline
+`be28cafc5082ec530e76f9c31687a27f38cdda17`, current Linux::Event main
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`, both full suites green:
+
+- 32-byte GET + Content-Type:
+  54,818.8 -> 62,532.5 req/s (+14.1%);
+  Feersum 142,247.5 req/s.
+- 16 KiB GET + Content-Type:
+  47,554.2 -> 51,630.8 req/s (+8.6%);
+  Feersum 112,790.4 req/s.
+- 4 KiB POST + Content-Type / 32-byte response:
+  42,272.8 -> 42,300.1 req/s (neutral, +0.06%).
+
+The POST neutrality is expected: body-bearing requests genuinely need request
+body lifecycle state. Keep this optimization specifically as a bodyless hot
+path simplification.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
