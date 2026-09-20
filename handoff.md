@@ -64,6 +64,8 @@ Lazy Transaction materialization, run `35479564228`:
 - Feersum: 73,212.0 req/s;
 - 4 KiB request body: 8,156.8 -> 8,108.3 req/s (-0.6%, effectively neutral).
 
+Cumulative comparison driver commit: `7f24885d73dc7b5a4594102c79e77bda91ba4cbc`.
+
 The next benchmark is a cumulative same-run comparison of untouched `main`
 versus the complete optimized branch versus Feersum. Do not infer cumulative
 improvement by multiplying the independent experiment percentages because
