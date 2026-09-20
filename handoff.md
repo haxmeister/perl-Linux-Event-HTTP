@@ -83,12 +83,23 @@ not an artifact of comparing separate GitHub runners.
 
 Early native-final experiment commit: `012522ac0b0af1c1b955c83919795ba336475b9f`.
 
-Current experiment: permit the existing native default-final response builder
-to serve an HTTP/1.1 keep-alive request before its request body has finished
-arriving. The generic response path already supports response-before-request-
-body-completion; the experiment preserves that lifecycle while avoiding the
-generic response serialization path. A Transaction is materialized only when
-needed to track the early response until the request body reaches its boundary.
+Early native-final response experiment, run `35479938375`:
+
+- bodyless GET: 52,076.5 -> 51,593.8 req/s (-0.9%, effectively neutral);
+- 4 KiB POST / 32-byte response: 16,245.8 -> 32,697.7 req/s (+101.3%);
+- 64 KiB POST / 32-byte response: 12,572.9 -> 19,754.2 req/s (+57.1%);
+- all experiment and baseline tests passed.
+
+The optimization lets the existing native default-final response builder answer
+an HTTP/1.1 keep-alive request before its request body has finished arriving.
+The generic response path already allowed response-before-request-body-
+completion; this change preserves that lifecycle while avoiding the generic
+response serialization path. A Transaction is materialized only when needed to
+track the early response until the request body reaches its boundary.
+
+Conclusion: keep this optimization. It is nearly neutral for the bodyless GET
+hot path and removes a major avoidable cost from realistic POST/upload-style
+workloads.
 
 The earlier raw-native-input experiment remains separate. Its full-server gain
 was only about 5.8%, and Linux::Event currently cannot transition away from an
