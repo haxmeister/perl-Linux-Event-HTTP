@@ -35,6 +35,12 @@ my %server = (
         available => sub { 1 },
         linuxevent_mode => 'content-type',
     },
+    linuxevent_content_type_native => {
+        label => 'Linux::Event::HTTP raw native input + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'content-type-native',
+    },
     linuxevent_legacy_ready => {
         label => 'Linux::Event::HTTP old readiness path',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
