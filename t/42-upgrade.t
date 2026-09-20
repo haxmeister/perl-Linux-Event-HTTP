@@ -178,9 +178,9 @@ is(
         return $class->SUPER::can($name);
     }
 
-    sub _http_native_request ($self, $request, $bytes = undef) {
+    sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
-        return $self->SUPER::_http_native_request($request, $bytes);
+        return $self->SUPER::_http_native_request($request);
     }
 }
 
