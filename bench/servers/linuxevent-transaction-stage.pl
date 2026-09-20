@@ -15,10 +15,169 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless)\z/;
+    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response|current_api|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
+my $wire_ct = "HTTP/1.1 200 OK\r\n"
+    . "Content-Type: application/octet-stream\r\n"
+    . "Content-Length: $response_bytes\r\n\r\n"
+    . $payload;
+
+{
+    package Linux::Event::HTTP::Bench::CurrentLifecycleConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+
+    my $PARSER = 'Linux::Event::HTTP::_HTTP1';
+    my $MAX_HEADERS = 100;
+    my $MAX_REQUEST_HEAD = 65_536;
+
+    sub stream_tuning ($class) {
+        return read_budget_bytes => $main::READ_BUDGET_BYTES;
+    }
+
+    sub on_request ($self, $request, $response) {
+        $response->header('Content-Type', 'application/octet-stream');
+        $response->body($self->data->{payload});
+        return;
+    }
+
+    sub _response_body_ready ($self, $response) {
+        return if $main::STAGE eq 'current_callback';
+        return $self->SUPER::_response_body_ready($response);
+    }
+
+    sub _activate_bodyless ($self, $request, $response) {
+        my $state = $self->{_http_bodyless_state} //= {
+            mode      => 'none',
+            body_done => 0,
+        };
+        $state->{body_done} = 1;
+        delete $state->{close_after_response};
+        $request->_mark_complete;
+
+        $self->{_http_active_transaction} = undef;
+        $self->{_http_active_request} = $request;
+        $self->{_http_active_response} = $response;
+        $self->{_http_request_state} = $state;
+        $self->{_http_response_state} = undef;
+        $self->{_http_response_output_started} = 0;
+        $self->{_http_response_output_complete} = 0;
+        return;
+    }
+
+    sub on_data ($self, $bytes) {
+        return $self->SUPER::on_data($bytes)
+            if $main::STAGE eq 'current_bodyless';
+
+        $self->{_current_input} //= '';
+        $self->{_current_input} .= $bytes;
+
+        while (length $self->{_current_input}) {
+            my $request;
+            if ($main::STAGE eq 'current_checked') {
+                my $parsed = eval {
+                    $request = $PARSER->parse_request(
+                        $self->{_current_input}, 0, $MAX_HEADERS,
+                    );
+                    1;
+                };
+                if (!$parsed) {
+                    my $failure = "$@";
+                    my $status = $failure =~ /semantic error \(501\)/ ? 501 : 400;
+                    $self->_protocol_error($status);
+                    last;
+                }
+                if (!defined $request) {
+                    $self->_protocol_error(431)
+                        if length($self->{_current_input}) > $MAX_REQUEST_HEAD;
+                    last;
+                }
+            } else {
+                $request = $PARSER->parse_request(
+                    $self->{_current_input}, 0, $MAX_HEADERS,
+                );
+                last if !defined $request;
+            }
+
+            my $consumed = $request->_consumed;
+            if ($main::STAGE eq 'current_checked'
+                && $consumed > $MAX_REQUEST_HEAD) {
+                $self->_protocol_error(431, $request->version);
+                last;
+            }
+            substr($self->{_current_input}, 0, $consumed, '');
+
+            if ($main::STAGE eq 'current_checked') {
+                my $expect
+                    = Linux::Event::HTTP::Server::Connection::_expect_continue(
+                        $request,
+                    );
+                if ($expect < 0) {
+                    $self->_protocol_error(417, $request->version);
+                    last;
+                }
+            }
+
+            if ($main::STAGE eq 'current_parse') {
+                $self->write($self->data->{wire_ct});
+                next;
+            }
+
+            my $response = Linux::Event::HTTP::Response
+                ->_new_server_default($request->version);
+
+            if ($main::STAGE eq 'current_response') {
+                $self->write($self->data->{wire_ct});
+                next;
+            }
+
+            if ($main::STAGE eq 'current_api'
+                || $main::STAGE eq 'current_head') {
+                $response->header(
+                    'Content-Type', 'application/octet-stream',
+                );
+                $response->body($self->data->{payload});
+
+                if ($main::STAGE eq 'current_api') {
+                    $self->write($self->data->{wire_ct});
+                } else {
+                    my $head = $response->_serialize_head('1.1');
+                    $self->write($head . $self->data->{payload});
+                }
+                next;
+            }
+
+            $self->_activate_bodyless($request, $response);
+            my $handler = $self->{_http_on_request};
+
+            if ($main::STAGE eq 'current_callback') {
+                my $ok = $self->_invoke_http_callback(
+                    $handler, $request, $response,
+                );
+                last if !$ok;
+                Linux::Event::HTTP::Server::Connection::_clear_transaction(
+                    $self,
+                );
+                $self->write($self->data->{wire_ct});
+                next;
+            }
+
+            my $ok = $self->_invoke_http_callback(
+                $handler, $request, $response,
+            );
+            last if !$ok;
+            last if $self->{_http_closing} || $self->is_closed;
+
+            # current_send and current_checked both use the real current
+            # response-readiness/scalar-final path. It should have completed
+            # and cleared this bodyless exchange.
+            die "current scalar send did not finalize bodyless exchange\n"
+                if $self->{_http_active_request};
+        }
+        return;
+    }
+}
 
 {
     package Linux::Event::HTTP::Bench::TransactionStageConnection;
@@ -278,15 +437,20 @@ my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
     }
 }
 
+my $connection_class = $STAGE =~ /\Acurrent_/
+    ? 'Linux::Event::HTTP::Bench::CurrentLifecycleConnection'
+    : 'Linux::Event::HTTP::Bench::TransactionStageConnection';
+
 my $loop = Linux::Event::Loop->new;
 my $server = Linux::Event::IO::Sock::Listener->new(
     loop => $loop,
     host => '127.0.0.1',
     port => 0 + $port,
     stream => {
-        class => 'Linux::Event::HTTP::Bench::TransactionStageConnection',
+        class => $connection_class,
         data  => {
             wire    => $wire,
+            wire_ct => $wire_ct,
             payload => $payload,
         },
     },
