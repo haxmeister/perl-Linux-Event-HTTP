@@ -162,7 +162,61 @@ sub _http_native_request ($self, $request) {
     }
 
     my $action = $self->_activate_native_http_request($request);
-    return $action == 2 ? 1 : 0;
+    return 0 if $action != 2;
+
+    return 1 if $request->_http1_body_mode eq 'chunked';
+    return $self->{_http_on_body} ? 3 : 2;
+}
+
+sub _http_native_content_length_body ($self, $bytes, $done) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+
+    my $request = $self->{_http_active_request} or return 0;
+    my $response = $self->{_http_active_response} or return 0;
+    my $state = $self->{_http_request_state} or return 0;
+
+    croak 'raw Content-Length body delivery has wrong request state'
+        if $state->{body_done} || $state->{mode} ne 'content-length';
+
+    my $length = length($bytes);
+    my $remaining = $state->{remaining} // 0;
+    croak 'raw Content-Length body delivery exceeds remaining body'
+        if $length > $remaining;
+
+    $state->{remaining} = $remaining - $length;
+
+    if ($length && !$self->_invoke_http_callback(
+        $self->{_http_on_body}, $request, $response, $bytes,
+    )) {
+        return 0;
+    }
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    return 0 if !$self->{_http_active_request};
+
+    if ($done) {
+        croak 'raw Content-Length body completed before declared length'
+            if $state->{remaining} != 0;
+        $self->_finish_request_body;
+        return 0;
+    }
+
+    croak 'raw Content-Length body reached zero without completion'
+        if $state->{remaining} == 0;
+    return 1;
+}
+
+sub _http_native_content_length_complete ($self) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+
+    my $state = $self->{_http_request_state} or return 0;
+    croak 'raw Content-Length drain has wrong request state'
+        if $state->{body_done} || $state->{mode} ne 'content-length';
+    croak 'raw Content-Length drain cannot bypass an on_body callback'
+        if $self->{_http_on_body};
+
+    $state->{remaining} = 0;
+    $self->_finish_request_body;
+    return 0;
 }
 
 sub _http_transport_drain ($self) {

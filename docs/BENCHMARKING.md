@@ -135,6 +135,43 @@ Comparison output reports per-repeat and median requests/second plus
 p50/p95/p99/max client-visible latency. Runtime and framework versions are
 included in JSON output when available.
 
+### Linux::Event request-body diagnostics
+
+The comparison harness also exposes ordinary/raw Linux::Event::HTTP pairs for
+isolating request-body lifecycle costs:
+
+```text
+linuxevent_body_ignore
+linuxevent_body_ignore_native
+linuxevent_body_callback
+linuxevent_body_callback_native
+linuxevent_body_end
+linuxevent_body_end_native
+linuxevent_body_callback_end
+linuxevent_body_callback_end_native
+```
+
+They distinguish bodies drained without an application consumer from bodies
+delivered through `on_body`, and responses generated immediately in
+`on_request` from responses generated after completion in `on_request_end`.
+Use them in ordinary/raw pairs and rotate multiple repeats; they are diagnostic
+server modes, not separate public APIs.
+
+For example:
+
+```sh
+perl -Mblib bench/run-http-comparison.pl \
+  --servers=linuxevent_body_ignore,linuxevent_body_ignore_native,linuxevent_body_callback,linuxevent_body_callback_native,linuxevent_body_end,linuxevent_body_end_native,linuxevent_body_callback_end,linuxevent_body_callback_end_native \
+  --request-body-bytes=65536 --response-bytes=32 --repeats=5
+```
+
+The current raw Content-Length path consumes drained body bytes directly from the
+native ordered-byte buffer and delivers requested `on_body` chunks directly to
+the existing HTTP callback lifecycle. Chunked request bodies deliberately remain
+on the generic fallback path. A following request head that shares the same read
+with the end of a Content-Length body must therefore remain native input and be
+parsed by the raw request-head consumer.
+
 The comparison is a protocol-stack comparison, not an attempt to make each
 framework perform an identical amount of application-layer work. Each adapter
 uses the smallest normal server API that still receives the complete request
