@@ -174,6 +174,14 @@ The benchmark entry label inherited from an earlier experiment still says
 Connection-owned output-state optimization. Treat these numbers strictly as
 pre-general-scalar-fast-path vs general-scalar-fast-path.
 
+Follow-up correctness hardening is green in run `35483660328`.
+Coverage now explicitly includes custom status, arbitrary non-framing headers,
+generated Content-Length visibility, custom-header HEAD responses, 204
+body-forbidden responses without Content-Length, mismatched explicit
+Content-Length rejection, explicit Connection: close fallback, late
+Transaction materialization after an early response, plus the existing
+streaming/Upgrade/CONNECT suites.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
