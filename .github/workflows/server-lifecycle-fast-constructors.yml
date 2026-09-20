@@ -1,4 +1,4 @@
-name: HTTP current lifecycle on latest core
+name: HTTP exchange-state split benchmark
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - docs/**
 
 concurrency:
-  group: http-current-lifecycle-latest-core-${{ github.ref }}
+  group: http-exchange-state-split-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -45,20 +45,21 @@ jobs:
           make
           make test
 
-      - name: Current lifecycle ladder
+      - name: Exchange activation vs callback dispatch
         run: |
           perl -Mblib bench/run-http-transaction-ladder.pl \
+            --cases=current_head,current_exchange,current_callback,current_send \
             --requests=50000 \
             --warmup=5000 \
             --connections=100 \
             --pipeline=1 \
             --response-bytes=32 \
-            --repeats=5 \
+            --repeats=7 \
             --read-budget-bytes=0 \
-            --json=bench/results/current-lifecycle-latest-core.json
+            --json=bench/results/exchange-state-split.json
 
       - name: Upload benchmark result
         uses: actions/upload-artifact@v4
         with:
-          name: current-lifecycle-latest-core
-          path: bench/results/current-lifecycle-latest-core.json
+          name: exchange-state-split
+          path: bench/results/exchange-state-split.json
