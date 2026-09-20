@@ -4,219 +4,155 @@ Updated: 2026-09-20 (America/Chicago)
 
 ## CURRENT STATE - READ THIS FIRST
 
-Active branch: `experiment/native-raw-http1-current`.
+Canonical branch: `main`.
 
-Raw-input implementation anchor:
-`73576736bd173e1624ff9cdbb575d91d39a38859`
-("perf: keep raw activation off the ordinary HTTP hot path").
+Current main integration commit:
 
-Current validated branch head before this handoff update:
-`a84196b9c4b3e0fa04b4f2be638bfa54727061f7`
-("test: fix raw transition subtest terminator").
+`b8bba7454e26c82ce573cf3478b4cb7b0019dd47`
+"Integrate optimized HTTP lifecycle and raw native input"
 
-Exact pre-raw HTTP baseline:
-`c391b2d8fe6b56b6088569cdadeb86160630be26`
-on `experiment/sparse-response-construction`.
+PR #31 was squash-merged into main on 2026-09-20. The squash intentionally
+keeps rejected experiment/revert history off main while promoting the validated
+HTTP lifecycle optimizations, raw native HTTP/1 capability, regression coverage,
+benchmark tooling, and documentation.
 
-Draft validation PR: #31, "Experiment: current-lifecycle raw HTTP input".
-It is intentionally draft and MUST NOT be merged without explicit authorization.
-Nothing from this experiment has been merged to main. Modify only this HTTP
-repository unless the user explicitly authorizes another repository.
+Modify only this HTTP repository unless the user explicitly authorizes another
+repository.
 
-All current tests and measurements use Linux::Event commit:
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`,
-Linux::Event 0.115,
-"Allow native consumer retirement to ordinary Stream input".
+### Linux::Event dependency
 
-That core commit is the direct child of the previously pinned
-`1c3de59e395e05e79c735f5d5ef35cd5021e8c55` and adds the transition
-semantics required by raw HTTP Upgrade/CONNECT.
+Linux::Event::HTTP now requires Linux::Event 0.116.
 
-### Raw native HTTP/1 experiment: completed result
+The currently validated pre-release core commit is:
 
-The old raw-input experiment was NOT transplanted wholesale. Its stale
-`_http_native_request` path eagerly created Transactions and repeated old
-Expect/request-completion work that the current HTTP lifecycle has since removed.
+`51f2e1eab28f6f1234024a0cf37be03b36780e84`
+"Allow native consumer retirement to ordinary Stream input"
 
-The current experiment instead integrates raw native HTTP/1 parsing with the
-current optimized Connection lifecycle:
+That code still reports 0.115 internally because the Linux::Event release/version
+bump has not yet landed, but the user has established that these capabilities
+will ship as Linux::Event 0.116. Until 0.116 is released, CI installs the exact
+commit above and installs the remaining HTTP dependencies explicitly rather than
+asking cpanm to satisfy the unreleased 0.116 version from CPAN.
 
-- the HTTP parser can consume directly from Linux::Event's ordered-byte native
-  input buffer before request-head bytes are surfaced into a Perl byte buffer;
-- parsed native Request objects enter the current server activation semantics;
-- body-bearing requests fall back into the existing Perl request-body state
-  machine, then return to native request-head parsing afterward;
-- the ordinary production `Connection::on_data` path remains on its original
-  hot-path shape and pays no helper-call tax for this experiment;
-- the raw consumer provider retains the host across reentrant Perl callbacks;
-  provider state is finalized before `release()`, and `release()` is the
-  final access through the provider context, matching the current core ABI;
-- focused coverage proves persistent request ordering across native head parsing,
-  Perl body fallback, return to native parsing, and reentrant Stream close.
+Do not lower the published Linux::Event dependency back to 0.115.
 
-The raw path is still opt-in for experiment/test/benchmark subclasses. It has
-NOT replaced the default HTTP Connection.
+### Raw native HTTP/1 state
 
-### Correctness validation
+Raw HTTP/1 request-head parsing is now retained in main as a validated internal
+capability. It is NOT yet the default production Server::Connection input mode.
 
-GitHub Actions run `35536933321` is green against Linux::Event
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
+The raw provider:
 
-Candidate suite:
+- parses request heads directly from Linux::Event's ordered-byte native input
+  buffer before those bytes are surfaced through ordinary Perl `on_data`;
+- creates the existing lazy native Request representation;
+- enters the current optimized HTTP lifecycle rather than the stale lifecycle
+  from the original raw-input experiment;
+- falls back to the existing Perl body state machine for body-bearing requests
+  and returns to native request-head parsing afterward;
+- obeys Linux::Event host retain/release rules across reentrant callbacks;
+- preserves persistent ordering and is safe under reentrant Stream close.
+
+The ordinary production `Connection::on_data` path remains unchanged and does
+not pay raw-provider helper overhead.
+
+### Upgrade and CONNECT transition blocker is resolved
+
+Linux::Event 0.116 supports the deliberately narrow transition needed here:
+
+- native consumer -> another native consumer;
+- native consumer -> ordinary Perl Stream/`on_data`;
+- preserved unread native input is re-driven under the target descriptor;
+- ordinary -> native remains intentionally unsupported.
+
+HTTP regression coverage proves raw HTTP request heads can transition into
+ordinary Upgrade and CONNECT targets while retaining same-read post-head bytes
+exactly once:
+
+- `t/42-upgrade.t`: raw HTTP -> ordinary Upgrade target;
+- `t/72-server-connect.t`: raw HTTP -> ordinary CONNECT tunnel target.
+
+Both tests explicitly prove the request entered through the raw provider.
+The former core transition limitation is therefore no longer a blocker to raw
+HTTP production use.
+
+### Current validation
+
+Final pre-merge gate: GitHub Actions run `35538048184`.
+
+Against exact Linux::Event commit
+`51f2e1eab28f6f1234024a0cf37be03b36780e84`:
 
 - Perl 5.36: success;
 - latest Perl: success;
 - latest threaded Perl: success;
 - 41 test files / 1,019 tests;
+- exact pre-raw baseline build/test: success;
+- raw HTTP comparison benchmarks: success;
 - end-to-end benchmark smoke: success;
-- transaction lifecycle diagnostic smoke: success;
+- transaction lifecycle smoke: success;
 - distribution integrity / disttest: success.
 
-The exact pre-raw baseline was also built and tested successfully in the same
-latest-Perl job before the A/B measurements.
+### Raw-input performance evidence
 
-Raw-input coverage now includes:
-
-- `t/15-native-raw-server.t`: native parsing, body fallback, return to native
-  parsing, persistent ordering, and reentrant close;
-- `t/42-upgrade.t`: raw native HTTP Upgrade to an ordinary `on_data` target,
-  with post-head bytes retained natively and delivered exactly once after the
-  transition;
-- `t/72-server-connect.t`: raw native CONNECT to an ordinary tunnel target,
-  with same-read post-CONNECT bytes retained and delivered exactly once.
-
-The Upgrade and CONNECT raw tests explicitly count entry through
-`_http_native_request`, so these are not ordinary-path passes accidentally
-masquerading as raw-provider coverage.
-
-### Final same-run performance result
-
-Current authoritative measurement: run `35536933321`; seven rotated repeats;
-100 loopback TCP connections; pipeline 1; candidate and exact pre-raw baseline
-built in the same job; both use Linux::Event
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
-
-All comparison responses include `Content-Type: application/octet-stream`.
+Final merge-gate run `35538048184`, seven rotated repeats, 100 loopback TCP
+connections, pipeline 1, Content-Type response:
 
 | Workload | Exact pre-raw baseline | Ordinary current path | Raw native input | Raw vs baseline |
 | --- | ---: | ---: | ---: | ---: |
-| GET, 32-byte response | 31,383.0 req/s | 31,290.9 req/s | 33,603.3 req/s | +7.1% |
-| GET, 16 KiB response | 22,394.7 req/s | 22,866.8 req/s | 25,718.8 req/s | +14.8% |
-| POST, 4 KiB request / 32-byte response | 18,391.1 req/s | 18,621.0 req/s | 17,739.3 req/s | -3.5% |
+| GET, 32-byte response | 30,948.3 req/s | 30,497.5 req/s | 33,346.6 req/s | +7.7% |
+| GET, 16 KiB response | 23,136.4 req/s | 23,499.2 req/s | 26,396.4 req/s | +14.1% |
+| POST, 4 KiB request / 32-byte response | 19,098.4 req/s | 18,796.6 req/s | 17,815.1 req/s | -6.7% |
 
-The ordinary path remains effectively neutral relative to the exact baseline
-(-0.3%, +2.1%, +1.3% respectively). The new core transition support therefore
-does not impose a visible ordinary HTTP hot-path cost.
-
-The prior run `35523554541` against core `1c3de59e...` remains useful
-historical confirmation: it measured +10.8% / +14.4% GET gains and -5.6% POST.
-The direction of all three workloads reproduced after the core change.
+Previous validated run `35536933321` measured +7.1%, +14.8%, and -3.5%
+respectively. An earlier run against the prior core measured +10.8%, +14.4%,
+and -5.6%.
 
 Conclusion:
 
-- raw native input is materially worthwhile for bodyless/common GET traffic;
-- the current body-bearing fallback is slower than the ordinary path and is a
-  separate optimization problem;
-- do not make raw input the default until protocol transition semantics are
-  resolved.
+- the bodyless GET win is repeatable and material;
+- the ordinary path remains near the exact pre-raw baseline;
+- the 4 KiB POST fallback regression is also repeatable, though its exact size
+  varies across hosted runners (roughly -3.5% to -6.7% in the current evidence).
 
-A rejected intermediate routing experiment at
-`a89e90a32b29ff43eab2d94a93de0160494dc822` fed raw Requests back through the
-whole Perl driver to avoid mirrored activation logic. It removed most of the
-small-response gain and made POST materially worse. Do not restore that design.
-The final branch keeps raw activation off the ordinary HTTP hot path.
+Do not optimize for one exact hosted-run percentage.
 
+### Rejected body fallback idea
 
-A second rejected body-fallback experiment ended at
-`d842ea4816f1a6dbcc84877e950dcf21e36210c7`. It attempted to pass body bytes
-already present after a parsed request head through the same retained raw-provider
-callback, avoiding one outer core provider re-drive. Correctness remained green,
-but run `35537248202` measured:
+The candidate ending at
+`d842ea4816f1a6dbcc84877e950dcf21e36210c7` tried to avoid a core provider
+re-drive by passing same-window body bytes through the retained raw Request
+callback. It stayed correct but made 4 KiB POST worse (-6.8%) without improving
+GET materially. It was fully reverted before the main squash merge.
 
-- GET 32 bytes: 31,262.0 baseline -> 33,580.1 raw (+7.4%);
-- GET 16 KiB: 23,465.9 baseline -> 26,509.7 raw (+13.0%);
-- POST 4 KiB: 18,861.1 baseline -> 17,582.4 raw (-6.8%).
+Do not revive the nested inline-tail design without new evidence.
 
-The POST result was worse than the already validated fallback design, while GET
-did not gain. The candidate was reverted. Do not revive the nested inline-tail
-approach without new evidence.
+### Next useful work
 
-The code after the revert is functionally back to the validated raw-input design
-from `12e12753bbd43b6fc3735f9da35b7ebdcdaf7789`, plus commit history documenting
-the rejected experiment.
+The next decision is whether raw input should become the default production
+Server::Connection path.
 
-### Core transition blocker: resolved
+Do not answer that from the current discard-style POST benchmark alone. Measure
+body-bearing requests by real application behavior on a fresh branch from main:
 
-Linux::Event commit
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`
-implements the deliberately narrow transition contract requested by this HTTP
-experiment:
+1. body ignored/drained with response generated in `on_request`;
+2. body delivered through `on_body`;
+3. response generated in `on_request_end` after body completion;
+4. at least 4 KiB and 64 KiB request bodies;
+5. compare ordinary input and raw native input in the same run.
 
-- native-consumer -> different native-consumer remains supported;
-- native-consumer -> ordinary Perl Stream/`on_data` is now supported;
-- unread ordered input remains native until the transition and is re-driven
-  under the target descriptor;
-- provider flush/frame/retain lifetime settling is preserved;
-- ordinary -> native remains intentionally rejected.
+Use these measurements to identify whether the remaining raw-body penalty comes
+primarily from:
 
-The raw HTTP tests now prove the two generic HTTP handoffs that were previously
-blocked:
+- copying native body bytes into the Perl fallback buffer;
+- the extra provider/Perl callback boundary;
+- per-chunk `on_body` callbacks;
+- request-completion lifecycle;
+- or the artificial early-response/discard benchmark shape.
 
-1. raw native HTTP -> ordinary Upgrade target;
-2. raw native HTTP -> ordinary CONNECT tunnel target.
-
-In both cases the HTTP request head and the target protocol bytes are sent in
-the same TCP write. The HTTP native consumer consumes only its own request head;
-the target bytes remain in Linux::Event's native ordered-byte buffer and are
-delivered exactly once after `transition_to()` retires the HTTP consumer.
-
-This removes the remaining correctness blocker to making raw native HTTP input
-a production Connection capability.
-
-### Next action
-
-Do NOT modify Linux::Event core further for this item; the required core change
-is complete and validated from HTTP.
-
-The next HTTP-local decision is production enablement of raw input.
-
-Current evidence:
-
-- bodyless/common GET traffic benefits materially and repeatably;
-- Upgrade and CONNECT to both native-capable and ordinary targets now have a
-  viable core transition contract;
-- the ordinary HTTP path remains performance-neutral when the experiment is
-  present;
-- body-bearing POST still pays a measured fallback penalty (-3.5% in the current
-  run).
-
-Before making raw input the default for every server Connection, investigate
-the body-bearing fallback cost. The first attempt to collapse provider re-entry
-was negative and has been reverted.
-
-Next, measure body-bearing traffic by application behavior rather than optimizing
-the current discard-style POST benchmark in isolation. At minimum distinguish:
-
-- request body ignored/drained;
-- request body delivered through `on_body`;
-- response generated from `on_request_end` after body completion;
-- more than one representative body size.
-
-Use that evidence to determine whether the remaining penalty is byte-copy cost,
-callback/lifecycle cost, or mainly an artifact of the current POST benchmark.
-Prefer removing a demonstrated general cost without adding ordinary read-hot-path
-bookkeeping. If the fallback cannot be made neutral without disproportionate
-complexity, make an explicit API/default-policy decision rather than silently
-accepting a body-bearing regression.
-
-Do not merge PR #31 or merge this experiment to main without explicit
-authorization.
-
-Current distribution metadata requires Linux::Event 0.116 because the
-shipped HTTP raw-input capability and transition regressions depend on the
-raw-consumer ABI and native-consumer retirement semantics. Until Linux::Event
-0.116 is released, CI pins exact core commit
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
+Do not change production semantics to improve a benchmark. If there is a common,
+measured body-path cost with a simple fix, optimize it. Otherwise make an
+explicit default-policy decision based on the workload evidence.
 
 Everything below is experiment/history context. This section is authoritative.
 
