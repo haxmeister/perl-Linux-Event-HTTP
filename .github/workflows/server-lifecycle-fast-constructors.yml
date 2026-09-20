@@ -46,7 +46,7 @@ jobs:
 
       - name: Response allocation lower bound
         run: |
-          perl -Mblib bench/run-http-transaction-ladder.pl             --cases=current_parse,current_response_empty,current_response             --requests=100000             --warmup=10000             --connections=100             --pipeline=1             --response-bytes=32             --repeats=7             --read-budget-bytes=0             --json=bench/results/sparse-response-construction.json
+          perl -Mblib bench/run-http-transaction-ladder.pl             --cases=current_parse,current_response_empty,current_response_flagged,current_response             --requests=100000             --warmup=10000             --connections=100             --pipeline=1             --response-bytes=32             --repeats=7             --read-budget-bytes=0             --json=bench/results/sparse-response-construction.json
 
       - name: Upload benchmark result
         uses: actions/upload-artifact@v4
