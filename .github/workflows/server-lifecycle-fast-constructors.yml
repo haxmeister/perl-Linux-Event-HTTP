@@ -1,4 +1,4 @@
-name: HTTP bodyless completion microbenchmark
+name: HTTP current lifecycle on latest core
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - docs/**
 
 concurrency:
-  group: http-bodyless-retire-v2-${{ github.ref }}
+  group: http-current-lifecycle-latest-core-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -21,8 +21,6 @@ jobs:
     steps:
       - name: Check out experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
 
       - name: Set up Perl
         uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
@@ -41,37 +39,26 @@ jobs:
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
           cpanm --notest --installdeps .
 
-      - name: Build and test experiment
+      - name: Build and test
         run: |
           perl Makefile.PL
           make
           make test
 
-      - name: Build exact pre-direct-retire baseline
+      - name: Current lifecycle ladder
         run: |
-          git worktree add /tmp/le-http-before 02de3b566039c6d1fdde77e7997cf488bddc47c1
-          cd /tmp/le-http-before
-          perl Makefile.PL
-          make
-          make test
-
-      - name: Focused bodyless Content-Type A/B
-        env:
-          BENCH_BASE_TREE: /tmp/le-http-before
-        run: |
-          perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline_content_type,linuxevent_content_type \
-            --strict \
-            --requests=30000 \
-            --warmup=3000 \
+          perl -Mblib bench/run-http-transaction-ladder.pl \
+            --requests=50000 \
+            --warmup=5000 \
             --connections=100 \
             --pipeline=1 \
             --response-bytes=32 \
-            --repeats=7 \
-            --json=bench/results/bodyless-retire.json
+            --repeats=5 \
+            --read-budget-bytes=0 \
+            --json=bench/results/current-lifecycle-latest-core.json
 
       - name: Upload benchmark result
         uses: actions/upload-artifact@v4
         with:
-          name: bodyless-retire
-          path: bench/results/bodyless-retire.json
+          name: current-lifecycle-latest-core
+          path: bench/results/current-lifecycle-latest-core.json
