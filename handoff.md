@@ -6,17 +6,15 @@ Updated: 2026-09-20 (America/Chicago)
 
 Canonical branch: `main`.
 
-Active research branch: `feature/native-content-length-body`.
-
 Current main integration commit:
 
-`b8bba7454e26c82ce573cf3478b4cb7b0019dd47`
-"Integrate optimized HTTP lifecycle and raw native input"
+`c51b8fe2450e2943f267fd1b04f89ec957f42505`
+"Optimize raw Content-Length request bodies"
 
-PR #31 was squash-merged into main on 2026-09-20. The squash intentionally
-keeps rejected experiment/revert history off main while promoting the validated
-HTTP lifecycle optimizations, raw native HTTP/1 capability, regression coverage,
-benchmark tooling, and documentation.
+PR #31 previously squash-merged the optimized HTTP lifecycle and raw native
+request-head capability. PR #34 then squash-merged the validated native
+Content-Length request-body specialization on 2026-09-20. Rejected experiment
+history remains off main.
 
 Modify only this HTTP repository unless the user explicitly authorizes another
 repository.
@@ -79,26 +77,25 @@ HTTP production use.
 
 ### Current validation
 
-Final pre-merge gate: GitHub Actions run `35538048184`.
+Final Content-Length merge gate: GitHub Actions run `35539553970`.
 
-Against the pre-release implementation commit
-`51f2e1eab28f6f1234024a0cf37be03b36780e84`:
+Against Linux::Event 0.116 main commit
+`007db40e22374c6d7bf8e056b2d354681d20c852`:
 
 - Perl 5.36: success;
 - latest Perl: success;
 - latest threaded Perl: success;
-- 41 test files / 1,019 tests;
+- 41 test files / 1,022 tests;
 - exact pre-raw baseline build/test: success;
 - raw HTTP comparison benchmarks: success;
 - end-to-end benchmark smoke: success;
 - transaction lifecycle smoke: success;
 - distribution integrity / disttest: success.
 
-The dependency/CI pin was subsequently advanced to released-version main commit
-`007db40e22374c6d7bf8e056b2d354681d20c852`; no HTTP behavior change is expected
-from that bookkeeping-only core advance.
+The Content-Length specialization itself was first validated by the dedicated
+body-behavior matrix in run `35538759809`.
 
-### Raw-input performance evidence
+### Raw-input request-head evidence (historical pre-Content-Length specialization)
 
 Final merge-gate run `35538048184`, seven rotated repeats, 100 loopback TCP
 connections, pipeline 1, Content-Type response:
@@ -196,17 +193,28 @@ Do not revive the nested inline-tail design without new evidence.
 
 ### Next useful work
 
-The native Content-Length body specialization is worth keeping. This clean
-branch was rebuilt from current main to avoid the stale PR #32 merge conflict.
-Run a final validation gate and squash-merge the replacement PR to main.
+The remaining input-mode question before considering raw input as the production
+Server::Connection default is chunked request bodies.
 
-After merge, the remaining input-mode question is chunked request bodies. Raw
-request heads and Content-Length bodies are now positive, Upgrade/CONNECT
-transitions are correct, and the ordinary path remains available. Before making
-raw input the production Server::Connection default, measure ordinary vs raw
-chunked requests under the same body-drain/on_body/request-end application
-shapes. Keep the existing chunked fallback unless measurement justifies a native
-chunked-body specialization.
+Measure ordinary vs raw chunked requests under the same application shapes used
+for Content-Length:
+
+1. body ignored/drained with response generated in `on_request`;
+2. body delivered through `on_body` with response generated in `on_request`;
+3. body ignored/drained with response generated in `on_request_end`;
+4. body delivered through `on_body` with response generated in
+   `on_request_end`;
+5. at least 4 KiB and 64 KiB decoded body sizes.
+
+Keep the existing generic chunked fallback during the first measurement. Do not
+specialize chunked parsing merely for symmetry with Content-Length. If the
+fallback is already competitive, retain the simpler implementation. If there is
+a repeatable material penalty, isolate whether it comes from native-window
+materialization, the generic Perl fallback, chunk decoding, or callback
+boundaries before changing production semantics.
+
+After chunked-body evidence is complete, make an explicit decision about whether
+raw native input should become the default production Server::Connection mode.
 
 Everything below is experiment/history context. This section is authoritative.
 
