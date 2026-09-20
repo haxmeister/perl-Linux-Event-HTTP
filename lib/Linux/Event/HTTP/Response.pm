@@ -70,9 +70,10 @@ sub _new ($class, %args) {
 
 sub _new_server_default ($class, $version) {
     return bless {
-        status  => 200,
-        version => $version,
-        headers => $EMPTY_HEADERS,
+        status                => 200,
+        version               => $version,
+        headers               => $EMPTY_HEADERS,
+        _server_default_final => 1,
     }, $class;
 }
 
@@ -95,6 +96,7 @@ sub status ($self, @args) {
     $self->_assert_mutable;
     _validate_status($args[0]);
     $self->{status} = 0 + $args[0];
+    delete $self->{_server_default_final};
     return $self;
 }
 
@@ -104,6 +106,7 @@ sub reason ($self, @args) {
     die 'reason accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
     $self->{reason} = defined($args[0]) ? _validate_reason($args[0]) : undef;
+    delete $self->{_server_default_final};
     return $self;
 }
 
@@ -114,9 +117,11 @@ sub version ($self, @args) {
     $self->_assert_mutable;
     if (!defined $args[0]) {
         $self->{version} = undef;
+        delete $self->{_server_default_final};
         return $self;
     }
     $self->{version} = _validate_version($args[0]);
+    delete $self->{_server_default_final};
     return $self;
 }
 
@@ -150,6 +155,7 @@ sub header ($self, $name, @args) {
     }
     push @headers, [ $name, $value ] if !$inserted;
     $self->{headers} = \@headers;
+    delete $self->{_server_default_final};
 
     return $self;
 }
@@ -161,6 +167,7 @@ sub add_header ($self, $name, $value) {
     $self->{headers} = []
         if refaddr($self->{headers}) == refaddr($EMPTY_HEADERS);
     push @{$self->{headers}}, [ $name, $value ];
+    delete $self->{_server_default_final};
     return $self;
 }
 
@@ -170,6 +177,7 @@ sub remove_header ($self, $name) {
     my $wanted = lc $name;
     my @kept = grep { lc($_->[0]) ne $wanted } @{$self->{headers}};
     $self->{headers} = \@kept;
+    delete $self->{_server_default_final};
     return $self;
 }
 
@@ -262,6 +270,7 @@ sub _begin_stream_body ($self) {
 
     $self->{body_kind} = 'stream';
     $self->{complete} = 0;
+    delete $self->{_server_default_final};
     return $self;
 }
 
