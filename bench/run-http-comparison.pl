@@ -29,6 +29,12 @@ my %server = (
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
         available => sub { 1 },
     },
+    linuxevent_content_type => {
+        label => 'Linux::Event::HTTP + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'content-type',
+    },
     linuxevent_legacy_ready => {
         label => 'Linux::Event::HTTP old readiness path',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
