@@ -107,6 +107,16 @@ active native consumer during same-object Upgrade/CONNECT. Do not make raw input
 the default Server::Connection path without resolving that core transition
 contract.
 
+Benchmark fairness note:
+
+- Feersum, Node, Go, and aiohttp comparison adapters emit
+  `Content-Type: application/octet-stream` for the benchmark response.
+- the historical Linux::Event::HTTP natural adapter emitted no Content-Type,
+  which slightly favored its narrow default-final fast path.
+- the active realistic-scalar benchmark therefore measures an explicit
+  Linux::Event::HTTP Content-Type response and keeps the old no-header response
+  only as a diagnostic ceiling.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
