@@ -1,6 +1,101 @@
 # Linux::Event::HTTP handoff
 
-Updated: 2026-09-19 (America/Chicago)
+Updated: 2026-09-20 (America/Chicago)
+
+## CURRENT STATE - READ THIS FIRST
+
+Active branch: `experiment/sparse-response-construction`.
+
+Current branch head after the latest profiling work:
+`4360904cb6ac` (`ci: profile lifecycle after compact server Response`).
+
+All current HTTP performance work is tested against Linux::Event `main` at:
+
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`
+(`Fix reentrant raw-consumer close accounting`, Linux::Event 0.115).
+
+Important core change: current Linux::Event now supports native-consumer provider
+replacement during `transition_to()`. The earlier raw-HTTP blocker for
+same-object Upgrade/CONNECT is therefore obsolete. Raw native HTTP input should
+be revisited after the current HTTP-local lifecycle work.
+
+Cumulative validated HTTP-local optimizations now present in this branch lineage:
+
+- trusted/lazy Transaction materialization;
+- Connection-owned response output state;
+- general scalar-final fast path for ordinary HTTP/1.1 scalar responses;
+- native Response header/body mutation hot path;
+- native scalar-final framing/validation/wire construction;
+- direct retirement of the ordinary bodyless exchange;
+- lean bodyless request activation without redundant Request completion state;
+- native server request-check/Expect classification;
+- compact one-key server Response with implicit status/version/empty headers.
+
+Latest compact-Response lower-bound run `35495614308`:
+
+- parse + prebuilt Content-Type write: 120,227.4 req/s;
+- + empty Response object: 119,423.2 (-0.7%);
+- + one-key server Response: 118,580.3 (-0.7%);
+- + prior eager sparse Response defaults: 104,014.0 (-12.3%).
+
+This proved that Response allocation itself is nearly free; eagerly populating
+default hash fields was the real constructor cost.
+
+Latest compact-Response end-to-end A/B run `35495843785`, exact pre-compact
+baseline `6005c2f64ebf120f0dbc01ed8145a0d8275adf37`, both full suites green:
+
+- 32-byte GET + Content-Type:
+  68,855.7 -> 71,633.6 req/s (+4.0%);
+  Feersum 144,417.2 req/s.
+- 16 KiB GET + Content-Type:
+  56,819.7 -> 59,467.2 req/s (+4.7%);
+  Feersum 114,457.5 req/s.
+- 4 KiB POST + Content-Type / 32-byte response:
+  46,424.4 -> 48,017.7 req/s (+3.4%).
+
+Latest lifecycle profile after compact Response, run `35495984551`, all green:
+
+- parse + prebuilt Content-Type write: 62,191.8 req/s;
+- + empty Response: 61,869.3 (-0.5%);
+- + one-key Response: 61,445.7 (-0.7%);
+- + prior sparse defaults: 59,757.5 (-2.8%);
+- + Content-Type setter: 54,375.7 (-9.0%);
+- + scalar body setter: 49,435.1 (-9.1%);
+- + generated Content-Length: 47,367.2 (-4.2%);
+- + native head serialization: 41,961.7 (-11.4%);
+- + minimal active exchange fields: 37,372.1 (-10.9%);
+- guarded application callback: 28,772.2 after the full legacy exchange stage;
+- scalar-final send: 27,336.9 (-5.0%);
+- production request-check stage in this copied ladder remains diagnostic and
+  does not yet model the newer native request-check path exactly;
+- production Connection: 30,206.3 req/s;
+- full Server: 30,971.4 req/s.
+
+Do not compare absolute ladder rates across different GitHub jobs. Use the
+within-run stage deltas diagnostically.
+
+Current interpretation:
+
+1. Response object allocation is solved as a constructor concern.
+2. The remaining Response hot costs are mutation and head preparation, not
+   object creation.
+3. Minimal active exchange bookkeeping is still material.
+4. The old copied ladder stages for callback/request checks have some historical
+   baggage; prefer production-path A/B measurements for decisions.
+5. The remaining overall realistic gap to Feersum is now roughly 2x on recent
+   same-run Content-Type comparisons, down substantially from the original gap.
+
+Next work:
+
+- do not spend more time on Response construction;
+- refresh the lifecycle decomposition around the *actual* production Connection
+  path, especially head preparation and minimal exchange bookkeeping;
+- then revisit raw native HTTP input now that current Linux::Event can safely
+  replace native consumer providers during protocol transition.
+
+Everything below this section is retained as chronological experiment history.
+When an older section conflicts with this CURRENT STATE section, this section is
+authoritative.
 
 ## Active HTTP server lifecycle performance work
 
@@ -102,10 +197,11 @@ hot path and removes a major avoidable cost from realistic POST/upload-style
 workloads.
 
 The earlier raw-native-input experiment remains separate. Its full-server gain
-was only about 5.8%, and Linux::Event currently cannot transition away from an
-active native consumer during same-object Upgrade/CONNECT. Do not make raw input
-the default Server::Connection path without resolving that core transition
-contract.
+was about 5.8% at that point in the work. At the time, Linux::Event could not
+transition away from an active native consumer during same-object
+Upgrade/CONNECT. That limitation has since been removed in current Linux::Event
+main via native-consumer provider replacement during `transition_to()`; treat
+this paragraph as historical context, not a current blocker.
 
 Benchmark fairness note:
 
