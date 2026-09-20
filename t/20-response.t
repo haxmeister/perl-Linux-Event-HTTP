@@ -94,6 +94,37 @@ is_deeply(
 is($response->header_name(0), 'Content-Type',
     'header replacement retains first matching field position');
 
+my $duplicate_replace = $class->new(
+    headers => [
+        [ 'X-Dupe', 'first' ],
+        [ 'X-Keep', 'middle' ],
+        [ 'x-dupe', 'second' ],
+        [ 'X-Last', 'last' ],
+    ],
+);
+$duplicate_replace->header('X-Dupe', 'final');
+is_deeply(
+    $duplicate_replace->header_values('x-dupe'),
+    [ 'final' ],
+    'header setter collapses duplicate same-name fields',
+);
+is_deeply(
+    [
+        map {
+            [
+                $duplicate_replace->header_name($_),
+                $duplicate_replace->header_value($_),
+            ]
+        } 0 .. $duplicate_replace->header_count - 1
+    ],
+    [
+        [ 'X-Dupe', 'final' ],
+        [ 'X-Keep', 'middle' ],
+        [ 'X-Last', 'last' ],
+    ],
+    'duplicate replacement preserves the first field position and unrelated order',
+);
+
 $response->remove_header('Set-Cookie');
 is_deeply(
     $response->header_values('Set-Cookie'),
