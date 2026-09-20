@@ -10,6 +10,7 @@ use Scalar::Util qw(refaddr);
 use utf8 ();
 
 use Linux::Event::HTTP::_HTTP1 ();
+use Linux::Event::HTTP::Request;
 use Linux::Event::HTTP::Response;
 use Linux::Event::HTTP::Transaction;
 
