@@ -23,7 +23,10 @@ use Linux::Event::HTTP::Server::Connection;
         Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
     );
 
-    sub _uses_native_http_input ($class) { 1 }
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
 
     sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
@@ -145,7 +148,10 @@ subtest 'raw native head parsing shares the current request lifecycle' => sub {
         Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
     );
 
-    sub _uses_native_http_input ($class) { 1 }
+    sub can ($class, $name) {
+        return undef if $name eq 'on_data';
+        return $class->SUPER::can($name);
+    }
 
     sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
