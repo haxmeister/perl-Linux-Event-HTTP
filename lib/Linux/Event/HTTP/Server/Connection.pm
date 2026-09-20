@@ -600,6 +600,10 @@ sub _drive_http1 ($self) {
         }
 
         my $consumed = $request->_consumed;
+        if ($consumed > $MAX_REQUEST_HEAD) {
+            $self->_protocol_error(431, $request->version);
+            last;
+        }
         substr($self->{_http_input}, 0, $consumed, '');
 
         my $expect = $request->_expect_continue;
