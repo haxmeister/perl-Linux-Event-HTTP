@@ -164,14 +164,14 @@ my $wire_ct = "HTTP/1.1 200 OK\r\n"
 
             if ($main::STAGE eq 'current_response_flagged') {
                 my $response = bless {
-                    _server_flags => 3,
+                    _server_flags => 11,
                 }, 'Linux::Event::HTTP::Response';
                 $self->write($self->data->{wire_ct});
                 next;
             }
 
             my $response = Linux::Event::HTTP::Response
-                ->_new_server_default($request->version);
+                ->_new_server_default($request);
 
             if ($main::STAGE eq 'current_response') {
                 $self->write($self->data->{wire_ct});
