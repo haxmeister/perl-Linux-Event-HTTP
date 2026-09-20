@@ -14,6 +14,7 @@
 #define LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL 0x01
 #define LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE 0x02
 #define LE_HTTP_RESPONSE_SERVER_HTTP10        0x04
+#define LE_HTTP_RESPONSE_SERVER_OBJECT        0x08
 
 #define LE_HTTP_SEMANTICS_OK 0
 #define LE_HTTP_SEMANTICS_BAD_REQUEST 400
@@ -1788,7 +1789,8 @@ _new_server_default(CLASS, request)
   CODE:
     state = request_state_from_object(aTHX_ request);
     flags = LE_HTTP_RESPONSE_SERVER_DEFAULT_FINAL
-        | LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE;
+        | LE_HTTP_RESPONSE_SERVER_SCALAR_SIMPLE
+        | LE_HTTP_RESPONSE_SERVER_OBJECT;
     if (state->minor_version == 0)
         flags |= LE_HTTP_RESPONSE_SERVER_HTTP10;
 
