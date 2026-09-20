@@ -32,7 +32,39 @@ Current continuation (2026-09-20):
 - Local threaded Perl 5.38.2 exposed four XS helpers missing pTHX_/aTHX_
   interpreter context. Fixed the helpers without changing HTTP semantics. Use
   this same compile fix on both A/B trees. Core is the exact commit above.
-- Measurement and full validation are in progress; no new performance claim yet.
+- Local contract-9 diagnostic (5 rotated repeats, 50k requests, 5k warmup,
+  100 connections, pipeline 1, 32-byte response + Content-Type, read budget 0):
+  actual fused wire construction costs 14.42% throughput; minimal exchange fields
+  cost 2.97%; guarded callback/readiness/send costs 14.87%; production driver
+  remainder costs 6.13%. These are diagnostic deltas, not optimization gains.
+  Raw evidence: bench/results/production-lifecycle-before.json.
+- Conclusion: do not prioritize invasive active-state changes for this small
+  measured cost. Evaluate one-pass header validation/serialization next with
+  production same-run A/B; callback delta includes readiness/send, not just eval.
+- Full validation is being rerun after installing the missing local
+  Crypt::SysRandom dependency. No new optimization performance claim yet.
+
+Single-pass response-head candidate:
+
+- Native scalar-final now validates and serializes headers in one traversal.
+  It keeps an unfinished wire mortal until all headers validate; a declined fast
+  path neither commits Response nor inserts generated Content-Length.
+- Local threaded Perl 5.38.2, same host, 7 rotated A/B repeats against 2245560e8a3dfddd88a4974d52d2168da4cbbbc3
+  (same interpreter-context fix on both sides):
+  - GET, 32 bytes + Content-Type: 54,233.8 -> 57,365.3 req/s (+5.8%).
+  - GET, 16 KiB + Content-Type: 43,910.3 -> 47,456.9 req/s (+8.1%).
+  - POST, 4 KiB request / 32-byte response + Content-Type:
+    35,687.3 -> 35,621.6 req/s (-0.18%, neutral).
+- Baseline and candidate passed all 40 test programs / 1,014 tests before
+  additional late-header rejection/repair coverage; the expanded candidate suite
+  passes 40 files / 1,015 tests. Results are checked into
+  bench/results/single-pass-{get32,get16k,post4k}.json.
+- CI now compares the exact pre-change baseline and candidate on the same runner
+  for both threaded and non-threaded latest Perl; confirmation pending.
+- Raw-input review: the old raw branch also duplicates pre-lazy Transaction
+  activation and old Expect checks. Do not transplant that copied lifecycle
+  unchanged into the current branch. Provider replacement is supported by core;
+  preserve the current lifecycle when revisiting raw input.
 
 Cumulative validated HTTP-local optimizations now present in this branch lineage:
 

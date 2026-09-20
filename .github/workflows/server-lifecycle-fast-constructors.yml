@@ -1,4 +1,4 @@
-name: HTTP lifecycle after compact Response
+name: HTTP single-pass response A/B
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - docs/**
 
 concurrency:
-  group: http-lifecycle-after-compact-response-${{ github.ref }}
+  group: http-single-pass-response-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,6 +18,10 @@ permissions:
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        threaded: [false, true]
     steps:
       - name: Check out experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -26,6 +30,7 @@ jobs:
         uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
         with:
           perl-version: '5'
+          multi-thread: ${{ matrix.threaded }}
 
       - name: Install system dependencies
         run: |
@@ -44,15 +49,27 @@ jobs:
           make
           make test
 
-      - name: Current lifecycle ladder
-        run: >
-          perl -Mblib bench/run-http-transaction-ladder.pl
-          --requests=50000 --warmup=5000 --connections=100 --pipeline=1
-          --response-bytes=32 --repeats=5 --read-budget-bytes=0
-          --json=bench/results/current-lifecycle-compact-response.json
+      - name: Build and test exact pre-single-pass baseline
+        run: |
+          git fetch --depth=1 origin 2245560e8a3dfddd88a4974d52d2168da4cbbbc3
+          git worktree add --detach "$RUNNER_TEMP/http-baseline" FETCH_HEAD
+          cd "$RUNNER_TEMP/http-baseline"
+          perl Makefile.PL
+          make
+          make test
 
-      - name: Upload benchmark result
+      - name: Same-run production comparisons
+        run: |
+          export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=100000 --warmup=10000 --repeats=7 --response-bytes=32 --json=bench/results/ci-single-pass-get32.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-single-pass-get16k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-single-pass-post4k.json
+
+      - name: Production diagnostic smoke
+        run: perl -Mblib bench/run-http-transaction-ladder.pl --smoke
+
+      - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: current-lifecycle-compact-response
-          path: bench/results/current-lifecycle-compact-response.json
+          name: single-pass-response-threaded-${{ matrix.threaded }}
+          path: bench/results/ci-single-pass-*.json

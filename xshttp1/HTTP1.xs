@@ -1167,6 +1167,12 @@ response_build_simple_scalar_final(
         max_index = av_len(headers);
     }
 
+    /* Keep an unfinished wire mortal: validation can decline the fast path
+     * or throw before any response metadata is changed. */
+    wire = sv_2mortal(newSVpvf("HTTP/1.1 %03" IVdf " ", status));
+    sv_catpvn(wire, reason, reason_len);
+    sv_catpvn(wire, "\r\n", 2);
+
     /*
      * The marker is maintained by the public server Response mutation path,
      * but validate the actual header storage anyway. Direct hash tampering
@@ -1209,25 +1215,6 @@ response_build_simple_scalar_final(
             ascii_equal_ci(name, (size_t)name_len, "Transfer-Encoding", 17) ||
             ascii_equal_ci(name, (size_t)name_len, "Connection", 10))
             return NULL;
-    }
-
-    wire = newSVpvf(
-        "HTTP/1.1 %03" IVdf " ",
-        status
-    );
-    sv_catpvn(wire, reason, reason_len);
-    sv_catpvn(wire, "\r\n", 2);
-
-    for (i = 0; i <= max_index; ++i) {
-        SV **row_ptr = av_fetch(headers, i, 0);
-        AV *row = (AV *)SvRV(*row_ptr);
-        SV **name_ptr = av_fetch(row, 0, 0);
-        SV **value_ptr = av_fetch(row, 1, 0);
-        STRLEN name_len;
-        STRLEN value_len;
-        const char *name = SvPVbyte(*name_ptr, name_len);
-        const char *value = SvPVbyte(*value_ptr, value_len);
-
         sv_catpvn(wire, name, name_len);
         sv_catpvn(wire, ": ", 2);
         sv_catpvn(wire, value, value_len);
@@ -1264,7 +1251,7 @@ response_build_simple_scalar_final(
         sv_catpvn(wire, body, body_len);
 
     hv_store(hv, "committed", 9, newSViv(1), 0);
-    return wire;
+    return SvREFCNT_inc(wire);
 }
 
 
