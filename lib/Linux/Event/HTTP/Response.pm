@@ -68,17 +68,6 @@ sub _new ($class, %args) {
     return $class->new(%args);
 }
 
-sub _new_server_default ($class, $version) {
-    return bless {
-        status                => 200,
-        version               => $version,
-        headers               => $EMPTY_HEADERS,
-        _server_default_final => 1,
-        _server_scalar_simple => 1,
-    }, $class;
-}
-
-
 sub is_complete ($self) { !!$self->{complete} }
 sub is_mutable ($self) { $self->{committed} ? 0 : 1 }
 sub headers_are_lossless ($self) { 1 }
@@ -91,13 +80,17 @@ sub _assert_mutable ($self) {
 }
 
 sub status ($self, @args) {
-    return $self->{status} if !@args;
+    if (!@args) {
+        return $self->{status} if exists $self->{status};
+        return 200 if $self->{_server_flags};
+        return undef;
+    }
 
     die 'status accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
     _validate_status($args[0]);
     $self->{status} = 0 + $args[0];
-    delete $self->{_server_default_final};
+    $self->{_server_flags} &= ~1 if exists $self->{_server_flags};
     return $self;
 }
 
@@ -107,22 +100,27 @@ sub reason ($self, @args) {
     die 'reason accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
     $self->{reason} = defined($args[0]) ? _validate_reason($args[0]) : undef;
-    delete $self->{_server_default_final};
+    $self->{_server_flags} &= ~1 if exists $self->{_server_flags};
     return $self;
 }
 
 sub version ($self, @args) {
-    return $self->{version} if !@args;
+    if (!@args) {
+        return $self->{version} if exists $self->{version};
+        my $flags = $self->{_server_flags} // 0;
+        return ($flags & 4) ? '1.0' : '1.1' if $flags;
+        return undef;
+    }
 
     die 'version accepts exactly one value' if @args != 1;
     $self->_assert_mutable;
     if (!defined $args[0]) {
         $self->{version} = undef;
-        delete $self->{_server_default_final};
+        $self->{_server_flags} &= ~1 if exists $self->{_server_flags};
         return $self;
     }
     $self->{version} = _validate_version($args[0]);
-    delete $self->{_server_default_final};
+    $self->{_server_flags} &= ~1 if exists $self->{_server_flags};
     return $self;
 }
 
@@ -130,7 +128,8 @@ sub header ($self, $name, @args) {
     if (!@args) {
         $name = _validate_name($name);
         my $wanted = lc $name;
-        for my $pair (@{$self->{headers}}) {
+        my $headers = $self->{headers} // $EMPTY_HEADERS;
+        for my $pair (@$headers) {
             return $pair->[1] if lc($pair->[0]) eq $wanted;
         }
         return undef;
@@ -147,11 +146,12 @@ sub add_header ($self, $name, $value) {
     $self->_assert_mutable;
     $name = _validate_name($name);
     $value = _validate_value($value);
-    $self->{headers} = []
-        if refaddr($self->{headers}) == refaddr($EMPTY_HEADERS);
-    push @{$self->{headers}}, [ $name, $value ];
-    delete $self->{_server_default_final};
-    delete $self->{_server_scalar_simple};
+    my $headers = $self->{headers};
+    if (!defined($headers) || refaddr($headers) == refaddr($EMPTY_HEADERS)) {
+        $headers = $self->{headers} = [];
+    }
+    push @$headers, [ $name, $value ];
+    $self->{_server_flags} &= ~3 if exists $self->{_server_flags};
     return $self;
 }
 
@@ -159,19 +159,20 @@ sub remove_header ($self, $name) {
     $self->_assert_mutable;
     $name = _validate_name($name);
     my $wanted = lc $name;
-    my @kept = grep { lc($_->[0]) ne $wanted } @{$self->{headers}};
+    my $headers = $self->{headers} // $EMPTY_HEADERS;
+    my @kept = grep { lc($_->[0]) ne $wanted } @$headers;
     $self->{headers} = \@kept;
-    delete $self->{_server_default_final};
-    delete $self->{_server_scalar_simple};
+    $self->{_server_flags} &= ~3 if exists $self->{_server_flags};
     return $self;
 }
 
 sub _header_values_list ($self, $name) {
     $name = _validate_name($name);
     my $wanted = lc $name;
+    my $headers = $self->{headers} // $EMPTY_HEADERS;
     return map { $_->[1] }
         grep { lc($_->[0]) eq $wanted }
-        @{$self->{headers}};
+        @$headers;
 }
 
 sub header_values ($self, $name) {
@@ -179,7 +180,8 @@ sub header_values ($self, $name) {
 }
 
 sub header_count ($self) {
-    return scalar @{$self->{headers}};
+    my $headers = $self->{headers} // $EMPTY_HEADERS;
+    return scalar @$headers;
 }
 
 sub _validate_header_index ($index) {
@@ -190,14 +192,16 @@ sub _validate_header_index ($index) {
 
 sub header_name ($self, $index) {
     $index = _validate_header_index($index);
-    return undef if $index >= @{$self->{headers}};
-    return $self->{headers}[$index][0];
+    my $headers = $self->{headers} // $EMPTY_HEADERS;
+    return undef if $index >= @$headers;
+    return $headers->[$index][0];
 }
 
 sub header_value ($self, $index) {
     $index = _validate_header_index($index);
-    return undef if $index >= @{$self->{headers}};
-    return $self->{headers}[$index][1];
+    my $headers = $self->{headers} // $EMPTY_HEADERS;
+    return undef if $index >= @$headers;
+    return $headers->[$index][1];
 }
 
 sub content_length ($self) {
@@ -251,8 +255,7 @@ sub _begin_stream_body ($self) {
 
     $self->{body_kind} = 'stream';
     $self->{complete} = 0;
-    delete $self->{_server_default_final};
-    delete $self->{_server_scalar_simple};
+    $self->{_server_flags} &= ~3 if exists $self->{_server_flags};
     return $self;
 }
 
