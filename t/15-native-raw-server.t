@@ -403,6 +403,16 @@ subtest 'raw chunked drain consumes trailers and preserves next request' => sub 
     package T::RawChunkedErrorConnection;
     use parent -norequire, 'T::RawHTTPConnection';
 
+    sub on_request ($self, $request, $response) {
+        push @{$self->data->{paths}}, $request->target;
+        return;
+    }
+
+    sub on_request_end ($self, $request, $response) {
+        $response->body('SHOULD-NOT-COMPLETE');
+        return;
+    }
+
     sub _http_native_chunked_error ($self) {
         $self->data->{chunked_error_hits}++;
         return $self->SUPER::_http_native_chunked_error;
