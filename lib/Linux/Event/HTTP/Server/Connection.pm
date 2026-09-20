@@ -154,8 +154,6 @@ sub _http_native_request ($self, $request) {
     return 0 if $self->{_http_closing} || $self->is_closed;
     croak 'raw HTTP input delivered a new Request while another Request is active'
         if $self->{_http_active_request};
-    croak 'raw HTTP input re-entered the active HTTP driver'
-        if $self->{_http_driving};
 
     my $consumed = $request->_consumed;
     if ($consumed > $MAX_REQUEST_HEAD) {
@@ -163,13 +161,8 @@ sub _http_native_request ($self, $request) {
         return 0;
     }
 
-    $self->_drive_http1($request);
-
-    return 0 if $self->{_http_closing} || $self->is_closed;
-    my $state = $self->{_http_request_state};
-    return 1 if $self->{_http_active_request}
-        && $state && !$state->{body_done};
-    return 0;
+    my $action = $self->_activate_native_http_request($request);
+    return $action == 2 ? 1 : 0;
 }
 
 sub _http_transport_drain ($self) {
@@ -607,7 +600,85 @@ sub _finalize_transaction ($self) {
     return;
 }
 
-sub _drive_http1 ($self, $native_request = undef) {
+sub _activate_native_http_request ($self, $request) {
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    croak 'cannot activate a new HTTP Request while another Request is active'
+        if $self->{_http_active_request};
+
+    my $expect = $request->_expect_continue;
+    if ($expect < 0) {
+        $self->_protocol_error(417, $request->version);
+        return 0;
+    }
+
+    my $body_mode = $request->_http1_body_mode;
+    my $bodyless = $body_mode eq 'none';
+
+    my $response = Linux::Event::HTTP::Response
+        ->_new_server_default($request);
+
+    my $request_state;
+    if ($bodyless) {
+        $request_state = $self->{_http_bodyless_state};
+        if (!$request_state) {
+            $request_state = $self->{_http_bodyless_state} = {
+                mode      => 'none',
+                body_done => $self->{_http_on_request_end} ? 0 : 1,
+            };
+        } elsif ($self->{_http_on_request_end}) {
+            $request_state->{body_done} = 0;
+        }
+    } else {
+        $request_state = _new_request_state($request, $body_mode);
+    }
+
+    $self->{_http_active_request} = $request;
+    $self->{_http_active_response} = $response;
+    $self->{_http_request_state} = $request_state;
+
+    if ($expect && _body_pending($request_state)) {
+        $self->write("HTTP/1.1 100 Continue\r\n\r\n");
+    }
+
+    if (!$self->_invoke_http_callback(
+        $self->{_http_on_request}, $request, $response,
+    )) {
+        return 0;
+    }
+    return 0 if $self->{_http_closing} || $self->is_closed;
+    return 1 if !$self->{_http_active_request};
+
+    if ($bodyless) {
+        if ($self->{_http_on_request_end}) {
+            $request_state->{body_done} = 1;
+            return 0 if !$self->_invoke_http_callback(
+                $self->{_http_on_request_end}, $request, $response,
+            );
+            return 0 if $self->{_http_closing} || $self->is_closed;
+            return 1 if !$self->{_http_active_request};
+        }
+
+        if ($self->{_http_response_output_complete}) {
+            $self->_finalize_transaction;
+            return 0 if $self->{_http_closing} || $self->is_closed;
+            return 1;
+        }
+
+        $self->pause_read if !$self->is_read_paused;
+        return 0;
+    }
+
+    if (!_body_pending($request_state)) {
+        $self->_finish_request_body;
+        return 0 if $self->{_http_closing} || $self->is_closed;
+        return 1 if !$self->{_http_active_request};
+        return 0;
+    }
+
+    return 2;
+}
+
+sub _drive_http1 ($self) {
     return if $self->{_http_driving} || $self->{_http_closing}
         || $self->is_closed;
 
@@ -639,32 +710,26 @@ sub _drive_http1 ($self, $native_request = undef) {
             last;
         }
 
-        my $request;
-        if (defined $native_request) {
-            $request = $native_request;
-            $native_request = undef;
-        } else {
-            last if !length($self->{_http_input});
+        last if !length($self->{_http_input});
 
-            $request = $PARSER->_parse_server_request(
-                $self->{_http_input}, $MAX_REQUEST_HEAD, $MAX_HEADERS,
-            );
+        my $request = $PARSER->_parse_server_request(
+            $self->{_http_input}, $MAX_REQUEST_HEAD, $MAX_HEADERS,
+        );
 
-            if (!defined $request) {
-                last;
-            }
-            if (!ref $request) {
-                $self->_protocol_error(0 + $request);
-                last;
-            }
-
-            my $consumed = $request->_consumed;
-            if ($consumed > $MAX_REQUEST_HEAD) {
-                $self->_protocol_error(431, $request->version);
-                last;
-            }
-            substr($self->{_http_input}, 0, $consumed, '');
+        if (!defined $request) {
+            last;
         }
+        if (!ref $request) {
+            $self->_protocol_error(0 + $request);
+            last;
+        }
+
+        my $consumed = $request->_consumed;
+        if ($consumed > $MAX_REQUEST_HEAD) {
+            $self->_protocol_error(431, $request->version);
+            last;
+        }
+        substr($self->{_http_input}, 0, $consumed, '');
 
         my $expect = $request->_expect_continue;
         if ($expect < 0) {
