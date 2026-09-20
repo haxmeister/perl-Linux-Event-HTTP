@@ -34,7 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libssl-dev
 
-      - name: Install dependencies
+      - name: Install current Linux::Event main and dependencies
         run: |
           cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/1c3de59e395e05e79c735f5d5ef35cd5021e8c55.tar.gz
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
@@ -47,10 +47,11 @@ jobs:
           perl Makefile.PL
           make
           make test
+          perl -MLinux::Event -e 'print "Linux::Event=$Linux::Event::VERSION\n"'
 
-      - name: Build exact pre-mutation baseline
+      - name: Build exact pre-completion baseline
         run: |
-          git worktree add /tmp/le-http-before 9ad7cdffacda7a29e7f64d4b3b6731171637f088
+          git worktree add /tmp/le-http-before 2ba493944588aad15256c0456845d67e0ce252db
           cd /tmp/le-http-before
           perl Makefile.PL
           make
@@ -69,7 +70,7 @@ jobs:
             --pipeline=1 \
             --response-bytes=32 \
             --repeats=7 \
-            --json=bench/results/response-xs-32.json
+            --json=bench/results/scalar-final-xs-32.json
 
       - name: 16 KiB Content-Type A/B vs Feersum
         env:
@@ -84,7 +85,7 @@ jobs:
             --pipeline=1 \
             --response-bytes=16384 \
             --repeats=5 \
-            --json=bench/results/response-xs-16k.json
+            --json=bench/results/scalar-final-xs-16k.json
 
       - name: 4 KiB POST Content-Type A/B
         env:
@@ -100,13 +101,13 @@ jobs:
             --request-body-bytes=4096 \
             --response-bytes=32 \
             --repeats=5 \
-            --json=bench/results/response-xs-post4k.json
+            --json=bench/results/scalar-final-xs-post4k.json
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: response-xs-end-to-end
+          name: scalar-final-xs
           path: |
-            bench/results/response-xs-32.json
-            bench/results/response-xs-16k.json
-            bench/results/response-xs-post4k.json
+            bench/results/scalar-final-xs-32.json
+            bench/results/scalar-final-xs-16k.json
+            bench/results/scalar-final-xs-post4k.json
