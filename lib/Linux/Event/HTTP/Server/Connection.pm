@@ -80,6 +80,8 @@ sub new ($class, %option) {
     $self->{_http_active_response} = undef;
     $self->{_http_request_state} = undef;
     $self->{_http_response_state} = undef;
+    $self->{_http_response_output_started} = 0;
+    $self->{_http_response_output_complete} = 0;
     $self->{_http_driving} = 0;
     $self->{_http_dispatching} = 0;
     $self->{_http_closing} = 0;
@@ -101,6 +103,10 @@ sub transaction ($self) {
 
     $transaction = Linux::Event::HTTP::Transaction
         ->_new_server_active($request, $response, $self);
+    $transaction->{response_output_started} = 1
+        if $self->{_http_response_output_started};
+    $transaction->{response_output_complete} = 1
+        if $self->{_http_response_output_complete};
     $self->{_http_active_transaction} = $transaction;
     return $transaction;
 }
@@ -203,9 +209,9 @@ sub _response_body_ready ($self, $response) {
     my $active_response = $self->{_http_active_response} or return;
     return if refaddr($active_response) != refaddr($response);
 
-    my $transaction = $self->{_http_active_transaction};
-    return if $transaction && $transaction->{response_output_complete};
+    return if $self->{_http_response_output_complete};
 
+    my $transaction = $self->{_http_active_transaction};
     if ($response->{_server_default_final}
         && ($response->{body_kind} // '') eq 'scalar') {
         return if $self->_try_native_default_final(
@@ -214,9 +220,9 @@ sub _response_body_ready ($self, $response) {
     }
 
     return if !$response->_has_scalar_body;
-    $transaction //= $self->transaction;
-    return if !$transaction || $transaction->{response_output_complete};
-    $self->_send_http_response($transaction);
+    $self->_write_response(
+        $response, $response->_scalar_body, 1, 'send_response',
+    );
     return;
 }
 
@@ -265,11 +271,9 @@ sub _try_native_default_final ($self, $transaction, $body) {
         ->build_default_final($request, $body);
     return 0 if !defined $wire;
 
-    if (!$body_done && !$transaction) {
-        $transaction = $self->transaction or return 0;
-    }
-
     $response->{committed} = 1;
+    $self->{_http_response_output_started} = 1;
+    $self->{_http_response_output_complete} = 1;
     if ($transaction) {
         $transaction->{response_output_started} = 1;
         $transaction->{response_output_complete} = 1;
@@ -332,6 +336,8 @@ sub _clear_transaction ($self) {
     $self->{_http_active_response} = undef;
     $self->{_http_request_state} = undef;
     $self->{_http_response_state} = undef;
+    $self->{_http_response_output_started} = 0;
+    $self->{_http_response_output_complete} = 0;
     delete $self->{_http_pending_upgrade};
     delete $self->{_http_pending_tunnel};
     return;
@@ -368,7 +374,7 @@ sub _fail_active_transaction ($self, $status, $request, $response) {
     return if $self->{_http_closing} || $self->is_closed;
 
     my $transaction = $self->{_http_active_transaction};
-    my $started = $transaction && $transaction->is_response_started ? 1 : 0;
+    my $started = $self->{_http_response_output_started} ? 1 : 0;
     $self->_fail_active_transaction_state("HTTP server transaction failed ($status)");
 
     if ($started) {
@@ -396,8 +402,7 @@ sub _finish_request_body ($self) {
     return if $self->{_http_closing} || $self->is_closed;
     return if !$self->{_http_active_request};
 
-    my $transaction = $self->{_http_active_transaction};
-    if ($transaction && $transaction->_is_response_output_complete) {
+    if ($self->{_http_response_output_complete}) {
         $self->_finalize_transaction;
     } else {
         $self->pause_read if !$self->is_read_paused;
@@ -520,7 +525,7 @@ sub _drive_http1 ($self) {
                 next;
             }
 
-            if ($transaction && $transaction->_is_response_output_complete) {
+            if ($self->{_http_response_output_complete}) {
                 $self->_finalize_transaction;
                 next;
             }
@@ -592,6 +597,8 @@ sub _drive_http1 ($self) {
         $self->{_http_active_response} = $response;
         $self->{_http_request_state} = $request_state;
         $self->{_http_response_state} = undef;
+        $self->{_http_response_output_started} = 0;
+        $self->{_http_response_output_complete} = 0;
 
         if ($expect && _body_pending($request_state)) {
             $self->write("HTTP/1.1 100 Continue\r\n\r\n");
@@ -615,8 +622,7 @@ sub _drive_http1 ($self) {
                 next if !$self->{_http_active_request};
             }
 
-            my $transaction = $self->{_http_active_transaction};
-            if ($transaction && $transaction->_is_response_output_complete) {
+            if ($self->{_http_response_output_complete}) {
                 $self->_finalize_transaction;
                 next;
             }
@@ -686,9 +692,9 @@ sub _chunked_transfer_encoding ($operation, $version, $values) {
 }
 
 sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
-    my $transaction = $self->{_http_active_transaction}
-        or croak 'response output requires an active HTTP Transaction';
-    my $request = $transaction->request;
+    my $transaction = $self->{_http_active_transaction};
+    my $request = $self->{_http_active_request}
+        or croak 'response output requires an active HTTP Request';
     my $version = $request->version;
     my $method = $request->method;
     my $status = $response->status;
@@ -763,7 +769,8 @@ sub _response_start ($self, $response, $bytes, $final, $operation = undef) {
 
     my $head = $response->_serialize_head($version);
     $response->_commit;
-    $transaction->_mark_response_started;
+    $self->{_http_response_output_started} = 1;
+    $transaction->_mark_response_started if $transaction;
 
     return (
         {
@@ -851,9 +858,10 @@ sub _write_response ($self, $response, $body, $final, $operation = undef) {
 }
 
 sub _complete_response ($self, $response, $wire, $close_after) {
-    my $transaction = $self->{_http_active_transaction}
-        or croak 'response completion requires an active HTTP Transaction';
-    $transaction->_mark_response_output_complete;
+    my $transaction = $self->{_http_active_transaction};
+    $self->{_http_response_output_started} = 1;
+    $self->{_http_response_output_complete} = 1;
+    $transaction->_mark_response_output_complete if $transaction;
     $self->{_http_response_state} = undef;
 
     my $request_state = $self->{_http_request_state};
