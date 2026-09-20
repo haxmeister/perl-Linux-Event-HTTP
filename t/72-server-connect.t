@@ -237,7 +237,7 @@ subtest 'raw native CONNECT retires into ordinary tunnel target' => sub {
             "TUNNEL:PING",
         'CONNECT response precedes retained-tail delivery to ordinary target',
     );
-}
+};
 
 {
     package T::RejectConnectHTTP;
