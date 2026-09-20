@@ -188,3 +188,53 @@ A single parser microbenchmark number is not a server throughput number, and a
 single end-to-end throughput number does not identify where CPU time is spent.
 Use the parser benchmark, the end-to-end harness, the comparison harness, and
 Linux::Event profiling as separate views of the stack.
+
+## Current production lifecycle diagnostic
+
+The default transaction ladder uses contract 9:
+
+```sh
+perl -Mblib bench/run-http-transaction-ladder.pl \
+  --requests=50000 --warmup=5000 --connections=100 --pipeline=1 \
+  --response-bytes=32 --repeats=5 --read-budget-bytes=0 \
+  --json=bench/results/production-lifecycle.json
+```
+
+| Case | Work measured |
+| --- | --- |
+| `prod_api` | Native server request checks, compact Response, public Content-Type/body setters, prebuilt diagnostic wire |
+| `prod_wire` | Adds the actual native scalar-final builder, including validation, generated Content-Length, commit, and wire construction |
+| `prod_active` | Adds the three live exchange references and their retirement |
+| `prod_dispatch` | Uses the actual guarded callback, readiness, scalar send, and retirement methods |
+| `prod_connection` | Uses the unmodified production Connection driver through a raw Listener |
+| `current_http` | Uses the full Server wrapper with Content-Type |
+
+All stages use the same bodyless GET workload, transport, and client. The
+intermediate stages are diagnostics; they do not implement a general HTTP
+server. In particular, `prod_api` skips generated framing metadata and commit.
+The callback stage includes readiness/send bookkeeping, so its delta cannot be
+attributed to exception handling alone. Stage differences include diagnostic
+control flow and are hypotheses for production A/B tests, not guaranteed gains.
+
+Earlier `current_*` and legacy cases remain explicitly selectable with
+`--cases`. Their copied lifecycle includes historical behavior, and their
+percentages should not guide optimization of the current production path.
+Do not combine the old generic head-serialization stage with the newer fused
+scalar-final builder as if they represented the same production work.
+
+For an actual optimization, build an exact baseline in another directory and
+run the production comparison with `BENCH_BASE_TREE` set to that directory:
+
+```sh
+BENCH_BASE_TREE=/path/to/built/baseline \
+  perl -Mblib bench/run-http-comparison.pl \
+  --servers=linuxevent_baseline_content_type,linuxevent_content_type \
+  --requests=100000 --warmup=10000 --connections=100 --pipeline=1 \
+  --response-bytes=32 --repeats=7 \
+  --json=bench/results/production-ab.json
+```
+
+Also measure a 16 KiB response and a 4 KiB POST (`--request-body-bytes=4096`).
+The historical baseline display label mentions an older fast-path experiment;
+`BENCH_BASE_TREE` determines the real baseline. Record its exact commit alongside
+the results. Both builds must use the same Perl and Linux::Event core.

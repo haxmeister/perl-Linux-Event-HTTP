@@ -3,8 +3,6 @@ Revision history for Linux-Event-HTTP
 0.001  UNRELEASED
 
     - Fix interpreter context in native Response helpers on threaded Perl.
-    - Validate and serialize common scalar-response headers in one native pass,
-      preserving framing fallback and generated Content-Length metadata.
     - Initial distribution scaffold.
     - Establish HTTP protocol, transport, message, transaction, and high-level
       client-operation boundaries.

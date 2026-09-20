@@ -4,145 +4,111 @@ Updated: 2026-09-20 (America/Chicago)
 
 ## CURRENT STATE - READ THIS FIRST
 
-Active branch: `experiment/sparse-response-construction`.
+Active branch: `experiment/sparse-response-construction`. Nothing from this
+continuation was merged into main. Modify only this HTTP repository.
 
-Current branch head after the latest profiling work:
-`4360904cb6ac` (`ci: profile lifecycle after compact server Response`).
+Core used for all current tests and measurements:
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`, Linux::Event 0.115,
+"Fix reentrant raw-consumer close accounting".
+Core supports native-consumer provider replacement during `transition_to()`.
+The historical same-object Upgrade/CONNECT blocker is obsolete.
 
-All current HTTP performance work is tested against Linux::Event `main` at:
+### Completed in this continuation
 
-`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`
-(`Fix reentrant raw-consumer close accounting`, Linux::Event 0.115).
+1. Replaced the default lifecycle ladder with contract 9, using the actual native
+   server request-check and fused scalar-final builder. Historical copied stages
+   remain explicitly selectable, but must not guide current optimization.
+2. Fixed four XS Response helpers missing interpreter context on threaded Perl.
+   The original branch failed to compile on local threaded Perl 5.38.2.
+   Fix/diagnostic commit: `2245560e8a3dfddd88a4974d52d2168da4cbbbc3`.
+3. Evaluated single-pass header validation/serialization. Candidate commit:
+   `586c208054a76d392eca88086357e0d3cc3e2aaa`.
+   **Rejected and reverted the optimization** after CI failed to reproduce local
+   gains. Keep the additional late-header rejection/repair regression coverage.
+4. Preserved local JSON and CI per-repeat benchmark/test log extracts under
+   `bench/results/`. Updated `docs/BENCHMARKING.md` with current usage and limits.
 
-Important core change: current Linux::Event now supports native-consumer provider
-replacement during `transition_to()`. The earlier raw-HTTP blocker for
-same-object Upgrade/CONNECT is therefore obsolete. Raw native HTTP input should
-be revisited after the current HTTP-local lifecycle work.
+### Actual production lifecycle decomposition
 
-Current continuation (2026-09-20):
+Local threaded Perl 5.38.2; five rotated repeats; 50,000 requests; 5,000 warmup;
+100 connections; pipeline 1; 32-byte response with Content-Type; read budget 0.
 
-- Refreshed lifecycle diagnostic uses the actual native server request-check and
-  fused scalar-final builder. The old ladder separately generated Content-Length
-  in Perl and serialized the generic head, then accumulated legacy state resets;
-  those percentages do not isolate today's production builder.
-- New contract-9 default stages: public mutation + prebuilt diagnostic wire;
-  actual native scalar-final builder; minimal three active exchange fields;
-  actual guarded callback/readiness/send; unmodified Connection; full Server.
-  Historical cases remain available explicitly through --cases.
-- Local threaded Perl 5.38.2 exposed four XS helpers missing pTHX_/aTHX_
-  interpreter context. Fixed the helpers without changing HTTP semantics. Use
-  this same compile fix on both A/B trees. Core is the exact commit above.
-- Local contract-9 diagnostic (5 rotated repeats, 50k requests, 5k warmup,
-  100 connections, pipeline 1, 32-byte response + Content-Type, read budget 0):
-  actual fused wire construction costs 14.42% throughput; minimal exchange fields
-  cost 2.97%; guarded callback/readiness/send costs 14.87%; production driver
-  remainder costs 6.13%. These are diagnostic deltas, not optimization gains.
-  Raw evidence: bench/results/production-lifecycle-before.json.
-- Conclusion: do not prioritize invasive active-state changes for this small
-  measured cost. Evaluate one-pass header validation/serialization next with
-  production same-run A/B; callback delta includes readiness/send, not just eval.
-- Full validation is being rerun after installing the missing local
-  Crypt::SysRandom dependency. No new optimization performance claim yet.
+| Stage | req/s | Change from preceding stage |
+| --- | ---: | ---: |
+| Native checks + public mutation + prebuilt diagnostic wire | 93,974.9 | - |
+| Actual fused native scalar-final builder | 80,420.2 | -14.42% |
+| Three active exchange fields and retirement | 78,032.2 | -2.97% |
+| Actual guarded callback/readiness/send | 66,425.5 | -14.87% |
+| Unmodified production Connection | 62,355.9 | -6.13% |
+| Full Server | 60,301.9 | -3.29% |
 
-Single-pass response-head candidate:
+Evidence: `bench/results/production-lifecycle-before.json`.
+These are diagnostic stage deltas, not promised optimization gains. The
+callback delta includes readiness/send; it does not establish eval as a target.
+The earlier ladder separately inserted Content-Length in Perl, used the generic
+head serializer, and accumulated obsolete exchange resets. Its later-stage
+percentages do not describe the current production path.
 
-- Native scalar-final now validates and serializes headers in one traversal.
-  It keeps an unfinished wire mortal until all headers validate; a declined fast
-  path neither commits Response nor inserts generated Content-Length.
-- Local threaded Perl 5.38.2, same host, 7 rotated A/B repeats against 2245560e8a3dfddd88a4974d52d2168da4cbbbc3
-  (same interpreter-context fix on both sides):
-  - GET, 32 bytes + Content-Type: 54,233.8 -> 57,365.3 req/s (+5.8%).
-  - GET, 16 KiB + Content-Type: 43,910.3 -> 47,456.9 req/s (+8.1%).
-  - POST, 4 KiB request / 32-byte response + Content-Type:
-    35,687.3 -> 35,621.6 req/s (-0.18%, neutral).
-- Baseline and candidate passed all 40 test programs / 1,014 tests before
-  additional late-header rejection/repair coverage; the expanded candidate suite
-  passes 40 files / 1,015 tests. Results are checked into
-  bench/results/single-pass-{get32,get16k,post4k}.json.
-- CI now compares the exact pre-change baseline and candidate on the same runner
-  for both threaded and non-threaded latest Perl; confirmation pending.
-- Raw-input review: the old raw branch also duplicates pre-lazy Transaction
-  activation and old Expect checks. Do not transplant that copied lifecycle
-  unchanged into the current branch. Provider replacement is supported by core;
-  preserve the current lifecycle when revisiting raw input.
+Conclusion: minimal active-state storage is a small remaining cost; avoid an
+invasive state redesign for it. Head construction is material in aggregate, but
+removing its second header traversal did not produce a repeatable server gain.
 
-Cumulative validated HTTP-local optimizations now present in this branch lineage:
+### Rejected single-pass experiment
 
-- trusted/lazy Transaction materialization;
-- Connection-owned response output state;
-- general scalar-final fast path for ordinary HTTP/1.1 scalar responses;
-- native Response header/body mutation hot path;
-- native scalar-final framing/validation/wire construction;
-- direct retirement of the ordinary bodyless exchange;
-- lean bodyless request activation without redundant Request completion state;
-- native server request-check/Expect classification;
-- compact one-key server Response with implicit status/version/empty headers.
+Exact pre-candidate baseline: `2245560e8a3dfddd88a4974d52d2168da4cbbbc3`.
+Both sides include the same threaded-Perl compile fix and use the pinned core.
+Seven rotated repeats per workload; all responses include Content-Type.
 
-Latest compact-Response lower-bound run `35495614308`:
+Local preliminary results were +5.8% GET/32 bytes, +8.1% GET/16 KiB, and -0.18%
+POST/4 KiB. Do not present those as a validated improvement: CI contradicted them.
 
-- parse + prebuilt Content-Type write: 120,227.4 req/s;
-- + empty Response object: 119,423.2 (-0.7%);
-- + one-key server Response: 118,580.3 (-0.7%);
-- + prior eager sparse Response defaults: 104,014.0 (-12.3%).
+CI run `35520275873`, both jobs successful:
 
-This proved that Response allocation itself is nearly free; eagerly populating
-default hash fields was the real constructor cost.
+| Perl build / workload | Baseline req/s | Candidate req/s | Change |
+| --- | ---: | ---: | ---: |
+| Non-threaded / GET 32 bytes | 63,221.2 | 63,127.4 | -0.15% |
+| Non-threaded / GET 16 KiB | 53,240.7 | 53,144.7 | -0.18% |
+| Non-threaded / POST 4 KiB | 42,381.5 | 42,041.8 | -0.80% |
+| Threaded / GET 32 bytes | 31,873.9 | 32,106.6 | +0.73% |
+| Threaded / GET 16 KiB | 23,613.7 | 23,689.5 | +0.32% |
+| Threaded / POST 4 KiB | 19,184.4 | 18,753.3 | -2.25% |
 
-Latest compact-Response end-to-end A/B run `35495843785`, exact pre-compact
-baseline `6005c2f64ebf120f0dbc01ed8145a0d8275adf37`, both full suites green:
+Compare only baseline/candidate within each job. The threaded and non-threaded
+jobs ran on different runners; this table does not measure a threading penalty.
+Evidence: `bench/results/single-pass-ci-{nonthreaded,threaded}.log` preserves
+per-repeat and summary lines from the job logs. Full JSON is in the run's
+`single-pass-response-threaded-{false,true}` artifacts. Local JSON remains in
+`bench/results/single-pass-{get32,get16k,post4k}.json` for traceability.
 
-- 32-byte GET + Content-Type:
-  68,855.7 -> 71,633.6 req/s (+4.0%);
-  Feersum 144,417.2 req/s.
-- 16 KiB GET + Content-Type:
-  56,819.7 -> 59,467.2 req/s (+4.7%);
-  Feersum 114,457.5 req/s.
-- 4 KiB POST + Content-Type / 32-byte response:
-  46,424.4 -> 48,017.7 req/s (+3.4%).
+Validation: CI candidate passed 40 files / 1,015 tests on both Perl builds;
+CI baseline passed 40 files / 1,014 tests. After reverting the candidate, the
+expanded local suite passes 40 files / 1,015 tests and all six default diagnostic
+smoke stages pass. The new regression verifies that a bad later header neither
+commits the Response nor inserts Content-Length, and that repair preserves order.
 
-Latest lifecycle profile after compact Response, run `35495984551`, all green:
+### Maintained architecture and next work
 
-- parse + prebuilt Content-Type write: 62,191.8 req/s;
-- + empty Response: 61,869.3 (-0.5%);
-- + one-key Response: 61,445.7 (-0.7%);
-- + prior sparse defaults: 59,757.5 (-2.8%);
-- + Content-Type setter: 54,375.7 (-9.0%);
-- + scalar body setter: 49,435.1 (-9.1%);
-- + generated Content-Length: 47,367.2 (-4.2%);
-- + native head serialization: 41,961.7 (-11.4%);
-- + minimal active exchange fields: 37,372.1 (-10.9%);
-- guarded application callback: 28,772.2 after the full legacy exchange stage;
-- scalar-final send: 27,336.9 (-5.0%);
-- production request-check stage in this copied ladder remains diagnostic and
-  does not yet model the newer native request-check path exactly;
-- production Connection: 30,206.3 req/s;
-- full Server: 30,971.4 req/s.
+Keep the previously validated optimizations: trusted/lazy Transaction,
+Connection-owned output state, general scalar-final fast path, native Response
+mutation and framing/wire builder, direct bodyless retirement, lean bodyless
+activation, native request/Expect checks, and compact server Response defaults.
+Do not optimize Response construction again. No new throughput improvement was
+accepted in this continuation.
 
-Do not compare absolute ladder rates across different GitHub jobs. Use the
-within-run stage deltas diagnostically.
+Next: revisit raw native HTTP input against the current core and current HTTP
+lifecycle. The old branch is `experiment/native-raw-http1-input` at `bf29718`.
+Its copied `_http_native_request` eagerly creates a Transaction and repeats old
+Expect checks and Request completion work. Do not transplant that stale lifecycle.
+Prefer delivering the parsed native Request into the current driver while the
+core retains unconsumed input. Keep body-bearing fallback, deferred responses,
+read pause/resume, reentrant close, and post-Upgrade/CONNECT byte ordering correct.
+Retain the provider context through its final access around callback re-entry.
+Use the existing Upgrade/CONNECT tests with the raw provider actually enabled;
+passing them on the ordinary input path is insufficient evidence.
 
-Current interpretation:
-
-1. Response object allocation is solved as a constructor concern.
-2. The remaining Response hot costs are mutation and head preparation, not
-   object creation.
-3. Minimal active exchange bookkeeping is still material.
-4. The old copied ladder stages for callback/request checks have some historical
-   baggage; prefer production-path A/B measurements for decisions.
-5. The remaining overall realistic gap to Feersum is now roughly 2x on recent
-   same-run Content-Type comparisons, down substantially from the original gap.
-
-Next work:
-
-- do not spend more time on Response construction;
-- refresh the lifecycle decomposition around the *actual* production Connection
-  path, especially head preparation and minimal exchange bookkeeping;
-- then revisit raw native HTTP input now that current Linux::Event can safely
-  replace native consumer providers during protocol transition.
-
-Everything below this section is retained as chronological experiment history.
-When an older section conflicts with this CURRENT STATE section, this section is
-authoritative.
+Use realistic production same-run A/B GET and POST measurements. Update this
+section immediately after each meaningful result. Do not merge main without
+explicit authorization. Everything below is historical; this section wins.
 
 ## Active HTTP server lifecycle performance work
 
