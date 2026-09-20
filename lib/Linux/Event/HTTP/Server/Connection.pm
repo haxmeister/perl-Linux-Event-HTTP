@@ -188,14 +188,22 @@ sub _invoke_http_callback ($self, $handler, $request, $response, @extra) {
 }
 
 sub _response_body_ready ($self, $response) {
-    return if !$response || !$response->_has_scalar_body;
+    return if !$response;
     return if $self->{_http_dispatching};
 
     my $transaction = $self->{_http_active_transaction} or return;
-    return if $transaction->_is_response_output_complete;
-    my $active = $transaction->response;
+    return if $transaction->{response_output_complete};
+    my $active = $transaction->{response};
     return if !$active || refaddr($active) != refaddr($response);
 
+    if ($response->{_server_default_final}
+        && ($response->{body_kind} // '') eq 'scalar') {
+        return if $self->_try_native_default_final(
+            $transaction, $response->{body},
+        );
+    }
+
+    return if !$response->_has_scalar_body;
     $self->_send_http_response($transaction);
     return;
 }

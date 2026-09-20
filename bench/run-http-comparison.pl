@@ -29,6 +29,12 @@ my %server = (
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
         available => sub { 1 },
     },
+    linuxevent_legacy_ready => {
+        label => 'Linux::Event::HTTP old readiness path',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'legacy-ready',
+    },
     linuxevent_legacy_eligibility => {
         label => 'Linux::Event::HTTP old native-final checks',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
@@ -603,7 +609,7 @@ sub usage ($status) {
     print <<'USAGE';
 usage: bench/run-http-comparison.pl [options]
 
-  --servers=LIST           linuxevent,linuxevent_legacy_eligibility,linuxevent_legacy_callback,linuxevent_main,feersum,mojo,twiggy,node,go,h2o,aiohttp
+  --servers=LIST           linuxevent,linuxevent_legacy_ready,linuxevent_legacy_eligibility,linuxevent_legacy_callback,linuxevent_main,feersum,mojo,twiggy,node,go,h2o,aiohttp
   --requests=N             measured requests per server/repeat (default 20000)
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)

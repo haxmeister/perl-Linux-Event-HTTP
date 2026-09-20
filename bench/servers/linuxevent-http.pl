@@ -104,6 +104,34 @@ my $payload = 'x' x $response_bytes;
 }
 
 {
+    package Linux::Event::HTTP::Bench::LegacyReadyCompareConnection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+    use Scalar::Util qw(refaddr);
+
+    sub stream_tuning ($class) {
+        return read_budget_bytes => $main::READ_BUDGET_BYTES;
+    }
+
+    sub on_request ($self, $request, $response) {
+        $response->body($self->data->{payload});
+        return;
+    }
+
+    sub _response_body_ready ($self, $response) {
+        return if !$response || !$response->_has_scalar_body;
+        return if $self->{_http_dispatching};
+
+        my $transaction = $self->{_http_active_transaction} or return;
+        return if $transaction->_is_response_output_complete;
+        my $active = $transaction->response;
+        return if !$active || refaddr($active) != refaddr($response);
+
+        $self->_send_http_response($transaction);
+        return;
+    }
+}
+
+{
     package Linux::Event::HTTP::Bench::NaturalCompareConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
@@ -137,8 +165,10 @@ my $payload = 'x' x $response_bytes;
 
 my $connection_class = $mode eq 'natural'
     ? 'Linux::Event::HTTP::Bench::NaturalCompareConnection'
-    : $mode eq 'legacy-eligibility'
-        ? 'Linux::Event::HTTP::Bench::LegacyEligibilityCompareConnection'
+    : $mode eq 'legacy-ready'
+        ? 'Linux::Event::HTTP::Bench::LegacyReadyCompareConnection'
+        : $mode eq 'legacy-eligibility'
+            ? 'Linux::Event::HTTP::Bench::LegacyEligibilityCompareConnection'
     : $mode eq 'legacy-callback'
         ? 'Linux::Event::HTTP::Bench::LegacyCallbackCompareConnection'
         : $mode eq 'request-end'

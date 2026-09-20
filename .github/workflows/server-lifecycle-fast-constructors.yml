@@ -1,4 +1,4 @@
-name: HTTP native-final fast-path experiment
+name: HTTP response readiness fast-path experiment
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: http-native-final-experiment
+  group: http-response-readiness-experiment
   cancel-in-progress: true
 
 jobs:
@@ -44,10 +44,10 @@ jobs:
           make
           make test
 
-      - name: Native-final eligibility A/B vs Feersum
+      - name: Response readiness A/B vs Feersum
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_legacy_eligibility,linuxevent,feersum \
+            --servers=linuxevent_legacy_ready,linuxevent,feersum \
             --strict \
             --requests=50000 \
             --warmup=5000 \
@@ -55,10 +55,10 @@ jobs:
             --pipeline=1 \
             --response-bytes=32 \
             --repeats=7 \
-            --json=bench/results/native-final-eligibility.json
+            --json=bench/results/response-readiness-fastpath.json
 
       - name: Upload benchmark result
         uses: actions/upload-artifact@v4
         with:
-          name: native-final-eligibility
-          path: bench/results/native-final-eligibility.json
+          name: response-readiness-fastpath
+          path: bench/results/response-readiness-fastpath.json
