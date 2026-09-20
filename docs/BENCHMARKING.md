@@ -165,6 +165,22 @@ perl -Mblib bench/run-http-comparison.pl \
   --request-body-bytes=65536 --response-bytes=32 --repeats=5
 ```
 
+To send the same decoded body using HTTP/1.1 chunked transfer coding:
+
+```sh
+perl -Mblib bench/run-http-comparison.pl \
+  --servers=linuxevent_body_ignore,linuxevent_body_ignore_native,linuxevent_body_callback,linuxevent_body_callback_native,linuxevent_body_end,linuxevent_body_end_native,linuxevent_body_callback_end,linuxevent_body_callback_end_native \
+  --request-body-bytes=65536 \
+  --request-body-framing=chunked \
+  --request-chunk-bytes=4096 \
+  --response-bytes=32 --repeats=5
+```
+
+`--request-body-bytes` always means decoded application body bytes.
+`--request-chunk-bytes` controls only the payload size of each chunk on the
+wire; the harness adds hexadecimal chunk lengths, CRLF delimiters, and the final
+zero chunk.
+
 The current raw Content-Length path consumes drained body bytes directly from the
 native ordered-byte buffer and delivers requested `on_body` chunks directly to
 the existing HTTP callback lifecycle. Chunked request bodies deliberately remain
