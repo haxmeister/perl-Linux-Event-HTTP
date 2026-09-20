@@ -32,6 +32,13 @@ use Linux::Event::HTTP::Server;
         } elsif (($state->{mode} // '') eq 'bad-length') {
             $response->header('Content-Length', '99');
             $response->body($state->{response_body});
+        } elsif (($state->{mode} // '') eq 'no-content') {
+            $response->status(204);
+            $response->header('X-No-Content', 'yes');
+            $response->body('');
+        } elsif (($state->{mode} // '') eq 'response-close') {
+            $response->header('Connection', 'close');
+            $response->body($state->{response_body});
         } elsif (($state->{mode} // '') eq 'early-body') {
             $response->body($state->{response_body});
         } elsif (($state->{mode} // '') ne 'body') {
@@ -212,6 +219,41 @@ is(
     $state->{response_ref}->header('Content-Length'),
     '7',
     'custom-header fast scalar final retains generated Content-Length metadata',
+);
+
+$state = new_state(mode => 'custom-header', response_body => 'head-body');
+$wire = run_exchange(
+    "HEAD /custom-head HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    $state,
+    0,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 200 OK\r\nX-Fastpath-Fallback: yes\r\nContent-Length: 9\r\n\r\n\z/s,
+    'general scalar fast path preserves HEAD representation length and suppresses body bytes',
+);
+
+$state = new_state(mode => 'no-content');
+$wire = run_exchange(
+    "GET /no-content HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    $state,
+    0,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 204 No Content\r\nX-No-Content: yes\r\n\r\n\z/s,
+    'general scalar fast path preserves body-forbidden 204 semantics without Content-Length',
+);
+
+$state = new_state(mode => 'response-close', response_body => "close\n");
+$wire = run_exchange(
+    "GET /response-close HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    $state,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 200 OK\r\nConnection: close\r\nContent-Length: 6\r\n\r\nclose\n\z/s,
+    'explicit Connection response semantics fall back to the general response state machine',
 );
 
 $state = new_state(mode => 'bad-length', response_body => "bad\n");
