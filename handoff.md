@@ -212,6 +212,12 @@ accepting a body-bearing regression.
 Do not merge PR #31 or merge this experiment to main without explicit
 authorization.
 
+Current distribution metadata requires Linux::Event 0.116 because the
+shipped HTTP raw-input capability and transition regressions depend on the
+raw-consumer ABI and native-consumer retirement semantics. Until Linux::Event
+0.116 is released, CI pins exact core commit
+`51f2e1eab28f6f1234024a0cf37be03b36780e84`.
+
 Everything below is experiment/history context. This section is authoritative.
 
 ## Active HTTP server lifecycle performance work
@@ -709,7 +715,7 @@ next priority.
 - That commit performs the 0.001 release-readiness audit and fixes found issues.
 - PR #29 (Uniform authentication) and PR #30 (Uniform message conformance) are merged.
 - No active feature branch is required.
-- Linux::Event minimum: `0.113`.
+- Linux::Event minimum: `0.116`.
 - Linux::Event::HTTP remains `0.001 UNRELEASED` until the actual release is authorized.
 
 ## 0.001 release-readiness audit
