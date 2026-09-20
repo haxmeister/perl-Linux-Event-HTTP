@@ -117,6 +117,38 @@ Benchmark fairness note:
   Linux::Event::HTTP Content-Type response and keeps the old no-header response
   only as a diagnostic ceiling.
 
+Realistic Content-Type baseline, run `35483079246` before the
+Connection-owned output-state refactor:
+
+- 32-byte no-header diagnostic: 18,246.3 req/s;
+- 32-byte Content-Type response: 6,693.2 req/s;
+- 16 KiB no-header diagnostic: 13,650.5 req/s;
+- 16 KiB Content-Type response: 6,108.2 req/s.
+
+This exposed the generic final scalar-response path as a major real-world
+bottleneck: one ordinary application header forced a roughly 63% / 55%
+throughput collapse.
+
+Connection-owned response output state, exact same-run A/B run
+`35483238544`:
+
+- 32-byte Content-Type: 8,689.4 -> 10,014.3 req/s (+15.2%);
+- 16 KiB Content-Type: 7,823.1 -> 8,715.8 req/s (+11.4%);
+- no-header diagnostic on that runner: 22,149.1 / 17,837.0 req/s;
+- Feersum with Content-Type: 73,217.7 / 62,204.1 req/s;
+- experiment and exact baseline test suites both passed.
+
+Conclusion: keep Connection-owned response output state. It extends lazy
+Transaction materialization into ordinary scalar responses and is materially
+faster, but the generic scalar final-response machinery remains the next major
+target.
+
+Active follow-up branch work adds a common persistent HTTP/1.1 scalar-final
+fast path for ordinary status/custom-header responses. It reuses the existing
+native Response head serializer and retains the generic response state machine
+for Transfer-Encoding, explicit Connection semantics, HTTP/1.0, streaming, and
+other uncommon cases.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
