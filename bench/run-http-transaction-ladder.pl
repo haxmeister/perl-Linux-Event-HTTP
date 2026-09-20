@@ -30,6 +30,12 @@ my %case = (
         stage => 'current_response_empty',
         description => 'Parsed Request plus an otherwise-empty blessed Response hash; estimates the lower bound for implicit server defaults',
     },
+    current_response_flagged => {
+        label => 'C2b + one-key server Response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_response_flagged',
+        description => 'Parsed Request plus a Response carrying one compact server-default flag key',
+    },
     current_response => {
         label => 'C2 + trusted sparse Response',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
@@ -248,7 +254,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(current_parse current_response_empty current_response current_header current_api current_frame current_head current_exchange_minimal current_exchange_nomark current_exchange current_callback current_send current_checked current_bodyless current_http);
+my @names = qw(current_parse current_response_empty current_response_flagged current_response current_header current_api current_frame current_head current_exchange_minimal current_exchange_nomark current_exchange current_callback current_send current_checked current_bodyless current_http);
 if (defined $case_list) {
     my %known = map { $_ => 1 } @names;
     my @selected = grep { length } split /,/, $case_list;
