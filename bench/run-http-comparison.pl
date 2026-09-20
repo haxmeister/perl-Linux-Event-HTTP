@@ -47,6 +47,24 @@ my %server = (
         available => sub { 1 },
         linuxevent_mode => 'legacy-callback',
     },
+    linuxevent_baseline => {
+        label => 'Linux::Event::HTTP before lazy Transaction',
+        command => sub {
+            my $tree = $ENV{BENCH_BASE_TREE}
+                // die "BENCH_BASE_TREE is required for linuxevent_baseline\n";
+            return [
+                $^X,
+                "-I$tree/blib/lib",
+                "-I$tree/blib/arch",
+                "$tree/bench/servers/linuxevent-http.pl",
+            ];
+        },
+        available => sub {
+            my $tree = $ENV{BENCH_BASE_TREE} // return 0;
+            return -f "$tree/bench/servers/linuxevent-http.pl"
+                && -d "$tree/blib/lib" && -d "$tree/blib/arch";
+        },
+    },
     linuxevent_main => {
         label => 'Linux::Event::HTTP main',
         command => sub {
@@ -609,7 +627,7 @@ sub usage ($status) {
     print <<'USAGE';
 usage: bench/run-http-comparison.pl [options]
 
-  --servers=LIST           linuxevent,linuxevent_legacy_ready,linuxevent_legacy_eligibility,linuxevent_legacy_callback,linuxevent_main,feersum,mojo,twiggy,node,go,h2o,aiohttp
+  --servers=LIST           linuxevent,linuxevent_baseline,linuxevent_legacy_ready,linuxevent_legacy_eligibility,linuxevent_legacy_callback,linuxevent_main,feersum,mojo,twiggy,node,go,h2o,aiohttp
   --requests=N             measured requests per server/repeat (default 20000)
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)

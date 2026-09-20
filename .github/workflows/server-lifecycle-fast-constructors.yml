@@ -1,4 +1,4 @@
-name: HTTP response readiness fast-path experiment
+name: HTTP lazy server Transaction experiment
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: http-response-readiness-experiment
+  group: http-lazy-server-transaction-experiment
   cancel-in-progress: true
 
 jobs:
@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Check out experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Perl
         uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
@@ -38,16 +40,25 @@ jobs:
           cpanm --notest Feersum
           cpanm --notest --installdeps .
 
-      - name: Build and test
+      - name: Build and test experiment
         run: |
           perl Makefile.PL
           make
           make test
 
-      - name: Response readiness A/B vs Feersum
+      - name: Build pre-lazy baseline
+        run: |
+          git worktree add /tmp/le-http-before 0dd7f462a6eec030ac8d13484f668109d05399ce
+          cd /tmp/le-http-before
+          perl Makefile.PL
+          make
+
+      - name: Lazy Transaction small-response A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_legacy_ready,linuxevent,feersum \
+            --servers=linuxevent_baseline,linuxevent,feersum \
             --strict \
             --requests=50000 \
             --warmup=5000 \
@@ -55,10 +66,28 @@ jobs:
             --pipeline=1 \
             --response-bytes=32 \
             --repeats=7 \
-            --json=bench/results/response-readiness-fastpath.json
+            --json=bench/results/lazy-transaction-small.json
 
-      - name: Upload benchmark result
+      - name: Lazy Transaction request-body A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline,linuxevent \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --request-body-bytes=4096 \
+            --response-bytes=32 \
+            --repeats=5 \
+            --json=bench/results/lazy-transaction-body.json
+
+      - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: response-readiness-fastpath
-          path: bench/results/response-readiness-fastpath.json
+          name: lazy-server-transaction
+          path: |
+            bench/results/lazy-transaction-small.json
+            bench/results/lazy-transaction-body.json

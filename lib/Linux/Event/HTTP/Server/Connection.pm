@@ -93,7 +93,16 @@ sub connect ($class, %option) {
 }
 
 sub transaction ($self) {
-    return $self->{_http_active_transaction};
+    my $transaction = $self->{_http_active_transaction};
+    return $transaction if $transaction;
+
+    my $request = $self->{_http_active_request} or return;
+    my $response = $self->{_http_active_response} or return;
+
+    $transaction = Linux::Event::HTTP::Transaction
+        ->_new_server_active($request, $response, $self);
+    $self->{_http_active_transaction} = $transaction;
+    return $transaction;
 }
 
 sub on_data ($self, $bytes) {
@@ -191,10 +200,11 @@ sub _response_body_ready ($self, $response) {
     return if !$response;
     return if $self->{_http_dispatching};
 
-    my $transaction = $self->{_http_active_transaction} or return;
-    return if $transaction->{response_output_complete};
-    my $active = $transaction->{response};
-    return if !$active || refaddr($active) != refaddr($response);
+    my $active_response = $self->{_http_active_response} or return;
+    return if refaddr($active_response) != refaddr($response);
+
+    my $transaction = $self->{_http_active_transaction};
+    return if $transaction && $transaction->{response_output_complete};
 
     if ($response->{_server_default_final}
         && ($response->{body_kind} // '') eq 'scalar') {
@@ -204,6 +214,8 @@ sub _response_body_ready ($self, $response) {
     }
 
     return if !$response->_has_scalar_body;
+    $transaction //= $self->transaction;
+    return if !$transaction || $transaction->{response_output_complete};
     $self->_send_http_response($transaction);
     return;
 }
@@ -231,7 +243,10 @@ sub _send_http_response ($self, $transaction) {
 }
 
 sub _try_native_default_final ($self, $transaction, $body) {
-    my $response = $transaction->{response} or return 0;
+    my $response = $transaction
+        ? $transaction->{response}
+        : $self->{_http_active_response};
+    return 0 if !$response;
     return 0 if !$response->{_server_default_final};
     return 0 if ($response->{status} // 0) != 200;
     return 0 if defined $response->{reason};
@@ -242,18 +257,23 @@ sub _try_native_default_final ($self, $transaction, $body) {
     my $request_state = $self->{_http_request_state} or return 0;
     return 0 if !$request_state->{body_done};
 
-    my $request = $transaction->{request} or return 0;
+    my $request = $transaction
+        ? $transaction->{request}
+        : $self->{_http_active_request};
+    return 0 if !$request;
     my $wire = Linux::Event::HTTP::_HTTP1
         ->build_default_final($request, $body);
     return 0 if !defined $wire;
 
     $response->{committed} = 1;
-    $transaction->{response_output_started} = 1;
-    $transaction->{response_output_complete} = 1;
+    if ($transaction) {
+        $transaction->{response_output_started} = 1;
+        $transaction->{response_output_complete} = 1;
+    }
     $self->{_http_response_state} = undef;
 
     $self->write($wire);
-    $transaction->{state} = 'complete';
+    $transaction->{state} = 'complete' if $transaction;
     $self->_clear_transaction;
 
     $self->resume_read if $self->is_read_paused;
@@ -545,8 +565,6 @@ sub _drive_http1 ($self) {
 
         my $response = Linux::Event::HTTP::Response
             ->_new_server_default($request->version);
-        my $transaction = Linux::Event::HTTP::Transaction
-            ->_new_server_active($request, $response, $self);
 
         my $request_state;
         if ($bodyless) {
@@ -562,7 +580,7 @@ sub _drive_http1 ($self) {
             $request_state = _new_request_state($request, $body_mode);
         }
 
-        $self->{_http_active_transaction} = $transaction;
+        $self->{_http_active_transaction} = undef;
         $self->{_http_active_request} = $request;
         $self->{_http_active_response} = $response;
         $self->{_http_request_state} = $request_state;
@@ -590,7 +608,8 @@ sub _drive_http1 ($self) {
                 next if !$self->{_http_active_request};
             }
 
-            if ($transaction->_is_response_output_complete) {
+            my $transaction = $self->{_http_active_transaction};
+            if ($transaction && $transaction->_is_response_output_complete) {
                 $self->_finalize_transaction;
                 next;
             }
