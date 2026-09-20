@@ -239,11 +239,12 @@ sub _try_simple_scalar_final ($self, $response, $body) {
     croak 'send_response(): informational responses require a future interim-response API'
         if $status >= 100 && $status < 200;
 
+    my $body_len = length($body);
     my $method = $request->method;
     my $head_request = $method eq 'HEAD';
     my $body_forbidden = $status == 204 || $status == 304;
     croak 'send_response(): this response status cannot carry a message body'
-        if $body_forbidden && length($body);
+        if $body_forbidden && $body_len;
 
     my $headers = $response->{headers};
     return 0 if ref($headers) ne 'ARRAY';
@@ -269,12 +270,12 @@ sub _try_simple_scalar_final ($self, $response, $body) {
 
     if (defined($content_length)
         && !$head_request && !$body_forbidden
-        && _compare_count(length($body), $content_length) != 0) {
+        && _compare_count($body_len, $content_length) != 0) {
         croak 'send_response(): Content-Length does not match scalar body length';
     }
 
     if (!defined($content_length) && !$body_forbidden) {
-        my $pair = [ 'Content-Length', '' . length($body) ];
+        my $pair = [ 'Content-Length', "$body_len" ];
         if (@$headers) {
             push @$headers, $pair;
         } else {
