@@ -306,11 +306,31 @@ The temporary branch-only benchmark workflow used to collect this evidence has
 been removed. The permanent comparison harness retains the useful
 `--request-body-framing=chunked` and `--request-chunk-bytes` options.
 
+### Final chunked merge gate
+
+Temporary standard-matrix run `35540415798` completed successfully against
+Linux::Event 0.116:
+
+- Perl 5.36: success;
+- latest Perl: success;
+- latest threaded Perl: success;
+- 41 test files / 1,026 tests;
+- distribution integrity / disttest: success;
+- standard same-run raw HTTP comparisons: success.
+
+Latest-Perl same-run medians remained positive for raw input:
+
+- GET / 32-byte response: 31,417.3 baseline -> 34,285.6 raw (+9.1%);
+- GET / 16 KiB response: 23,187.8 baseline -> 26,298.1 raw (+13.4%);
+- POST 4 KiB / 32-byte response: 18,734.9 baseline -> 19,803.3 raw (+5.7%).
+
+The temporary merge-gate workflow was removed after the successful run. No
+production source changed after that gate.
+
 ### Next useful work
 
 The native chunked specialization is worth keeping. PR #35 is the clean merge
-candidate from this branch to main. Use normal repository CI as the final
-cross-Perl gate:
+candidate from this branch to main. Its final cross-Perl gate is green:
 
 - Perl 5.36;
 - latest Perl;
@@ -319,7 +339,7 @@ cross-Perl gate:
 - existing raw GET / Content-Length comparisons;
 - disttest.
 
-If PR #35's gate is green, squash-merge the chunked specialization to main.
+Squash-merge PR #35 to main.
 
 After that merge, all demonstrated common server input shapes have a validated
 raw-native path: bodyless request heads, Content-Length bodies, chunked bodies,
