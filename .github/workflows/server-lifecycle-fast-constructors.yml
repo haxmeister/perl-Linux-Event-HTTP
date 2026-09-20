@@ -1,16 +1,15 @@
-name: HTTP current lifecycle ladder
+name: HTTP Response mutation optimization
 
 on:
   push:
     branches:
-      - experiment/scalar-final-general-fastpath
+      - experiment/response-mutation-fastpath
     paths-ignore:
       - handoff.md
       - docs/**
-  workflow_dispatch:
 
 concurrency:
-  group: http-current-lifecycle-${{ github.ref }}
+  group: http-response-mutation-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +21,8 @@ jobs:
     steps:
       - name: Check out experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Perl
         uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
@@ -40,11 +41,65 @@ jobs:
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
           cpanm --notest --installdeps .
 
-      - name: Build and test
+      - name: Build and test experiment
         run: |
           perl Makefile.PL
           make
           make test
+
+      - name: Build exact pre-mutation baseline
+        run: |
+          git worktree add /tmp/le-http-before 9ad7cdffacda7a29e7f64d4b3b6731171637f088
+          cd /tmp/le-http-before
+          perl Makefile.PL
+          make
+          make test
+
+      - name: 32-byte Content-Type A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type \
+            --strict \
+            --requests=50000 \
+            --warmup=5000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=32 \
+            --repeats=7 \
+            --json=bench/results/response-mutation-32.json
+
+      - name: 16 KiB Content-Type A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=16384 \
+            --repeats=5 \
+            --json=bench/results/response-mutation-16k.json
+
+      - name: 4 KiB POST Content-Type A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --request-body-bytes=4096 \
+            --response-bytes=32 \
+            --repeats=5 \
+            --json=bench/results/response-mutation-post4k.json
 
       - name: Current lifecycle ladder
         run: |
@@ -56,10 +111,14 @@ jobs:
             --response-bytes=32 \
             --repeats=5 \
             --read-budget-bytes=0 \
-            --json=bench/results/current-lifecycle.json
+            --json=bench/results/response-mutation-ladder.json
 
-      - name: Upload benchmark result
+      - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: current-lifecycle
-          path: bench/results/current-lifecycle.json
+          name: response-mutation
+          path: |
+            bench/results/response-mutation-32.json
+            bench/results/response-mutation-16k.json
+            bench/results/response-mutation-post4k.json
+            bench/results/response-mutation-ladder.json
