@@ -28,9 +28,9 @@ use Linux::Event::HTTP::Server::Connection;
         return $class->SUPER::can($name);
     }
 
-    sub _http_native_request ($self, $request, $bytes = undef) {
+    sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
-        return $self->SUPER::_http_native_request($request, $bytes);
+        return $self->SUPER::_http_native_request($request);
     }
 
     sub _http_native_fallback_input ($self, $bytes) {
@@ -153,9 +153,9 @@ subtest 'raw native head parsing shares the current request lifecycle' => sub {
         return $class->SUPER::can($name);
     }
 
-    sub _http_native_request ($self, $request, $bytes = undef) {
+    sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
-        return $self->SUPER::_http_native_request($request, $bytes);
+        return $self->SUPER::_http_native_request($request);
     }
 
     sub on_request ($self, $request, $response) {
