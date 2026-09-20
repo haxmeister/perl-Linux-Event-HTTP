@@ -843,6 +843,7 @@ response_set_header_native(
     SSize_t first = -1;
     UV matches = 0;
     SSize_t i;
+    int framing_header = 0;
 
     if (response_hv_true(hv, "committed", 9))
         croak("response metadata cannot change after message commit");
@@ -853,6 +854,11 @@ response_set_header_native(
     );
     if (!valid_field_name(name, (size_t)name_len))
         croak("invalid response header field name");
+
+    framing_header =
+        ascii_equal_ci(name, (size_t)name_len, "Content-Length", 14) ||
+        ascii_equal_ci(name, (size_t)name_len, "Transfer-Encoding", 17) ||
+        ascii_equal_ci(name, (size_t)name_len, "Connection", 10);
 
     value = response_input_bytes(
         aTHX_ value_sv, "response header field value",
@@ -885,6 +891,13 @@ response_set_header_native(
             newRV_noinc((SV *)new_headers), 0
         );
         hv_delete(hv, "_server_default_final", 21, G_DISCARD);
+        if (framing_header)
+            hv_delete(
+                hv,
+                "_server_scalar_simple",
+                (I32)(sizeof("_server_scalar_simple") - 1),
+                G_DISCARD
+            );
         return;
     }
 
@@ -953,6 +966,13 @@ response_set_header_native(
     }
 
     hv_delete(hv, "_server_default_final", 21, G_DISCARD);
+    if (framing_header)
+        hv_delete(
+            hv,
+            "_server_scalar_simple",
+            (I32)(sizeof("_server_scalar_simple") - 1),
+            G_DISCARD
+        );
 }
 
 static void
