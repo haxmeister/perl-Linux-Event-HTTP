@@ -313,6 +313,28 @@ Conclusion: keep the native common scalar-final builder. The remaining work in
 this item is to isolate Connection-side output/completion bookkeeping now that
 wire/framing validation has been removed from that Perl hot path.
 
+## Bodyless completion retirement
+
+After the native scalar-final builder, the remaining common bodyless completion
+cleanup was isolated separately. The no-Transaction/bodyless case now keeps the
+response-started flag only across `write()` for exception safety and then
+retires the live Request/Response/request-state references directly instead of
+running the general exchange cleanup sequence.
+
+Focused same-run A/B, run `35488854169`, exact pre-direct-retire baseline
+`02de3b566039c6d1fdde77e7997cf488bddc47c1`, current Linux::Event main
+`1c3de59e395e05e79c735f5d5ef35cd5021e8c55`:
+
+- pre-direct-retire: 40,556.8 req/s;
+- direct bodyless retirement: 41,504.7 req/s (+2.3%);
+- both full test suites pass.
+
+Conclusion: keep the cleanup because it is small, simple, and positive, but do
+not spend more time micro-optimizing `_clear_transaction`. The earlier
+~13-14% scalar-final improvement came primarily from moving eligibility,
+framing validation, Content-Length generation, and wire construction out of
+the Perl hot path.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
