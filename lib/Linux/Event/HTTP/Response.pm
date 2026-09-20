@@ -137,13 +137,24 @@ sub header ($self, $name, @args) {
     }
 
     die 'header setter accepts exactly one value' if @args != 1;
-    $self->_assert_mutable;
+    die 'response metadata cannot change after message commit'
+        if $self->{committed};
     my $value = _validate_value($args[0]);
-    my $wanted = lc $name;
     my $headers = $self->{headers};
 
-    # The overwhelmingly common setter case is adding a new distinct field.
-    # Do not rebuild/copy the entire lossless header list just to append it.
+    # Fresh server Responses normally set one or more distinct fields. An
+    # empty list cannot contain a replacement target, so avoid case folding
+    # and the replacement scan entirely.
+    if (!@$headers) {
+        $self->{headers} = [ [ $name, $value ] ];
+        delete $self->{_server_default_final};
+        return $self;
+    }
+
+    my $wanted = lc $name;
+
+    # For non-empty lists, scan first so an absent distinct field can append
+    # in place without cloning every existing lossless header pair.
     my $first = -1;
     my $matches = 0;
     for my $i (0 .. $#$headers) {
@@ -153,9 +164,6 @@ sub header ($self, $name, @args) {
     }
 
     if (!$matches) {
-        if (refaddr($headers) == refaddr($EMPTY_HEADERS)) {
-            $headers = $self->{headers} = [];
-        }
         push @$headers, [ $name, $value ];
     } elsif ($matches == 1) {
         $headers->[$first] = [ $name, $value ];
@@ -264,7 +272,16 @@ sub body ($self, @args) {
     die 'body(): response already has an incremental body producer'
         if ($self->{body_kind} // '') eq 'stream';
 
-    $self->{body} = _body_bytes('body', $args[0]);
+    my $body = $args[0];
+    die 'body(): body must be a defined scalar byte string'
+        if !defined($body) || ref($body);
+    my $bytes = "$body";
+    if (utf8::is_utf8($bytes)) {
+        die 'body(): body contains wide characters; encode it to bytes first'
+            if !utf8::downgrade($bytes, 1);
+    }
+
+    $self->{body} = $bytes;
     $self->{body_kind} = 'scalar';
     $self->{complete} = 1;
     return $self;
