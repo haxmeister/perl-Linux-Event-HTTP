@@ -1,4 +1,4 @@
-name: HTTP Response mutation lifecycle diagnostic
+name: HTTP Response mutation end-to-end validation
 
 on:
   push:
@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out experiment
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Perl
         uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
@@ -37,28 +39,74 @@ jobs:
           cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/b0d5244f42f4c5bf48521406d24dd299341c9770.tar.gz
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
+          cpanm --notest Feersum
           cpanm --notest --installdeps .
 
-      - name: Build and test
+      - name: Build and test experiment
         run: |
           perl Makefile.PL
           make
           make test
 
-      - name: Refined current lifecycle ladder
+      - name: Build exact pre-mutation baseline
         run: |
-          perl -Mblib bench/run-http-transaction-ladder.pl \
-            --requests=40000 \
-            --warmup=4000 \
+          git worktree add /tmp/le-http-before 9ad7cdffacda7a29e7f64d4b3b6731171637f088
+          cd /tmp/le-http-before
+          perl Makefile.PL
+          make
+          make test
+
+      - name: 32-byte Content-Type A/B vs Feersum
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type,feersum \
+            --strict \
+            --requests=50000 \
+            --warmup=5000 \
             --connections=100 \
             --pipeline=1 \
             --response-bytes=32 \
-            --repeats=5 \
-            --read-budget-bytes=0 \
-            --json=bench/results/response-mutation-refined-ladder.json
+            --repeats=7 \
+            --json=bench/results/response-xs-32.json
 
-      - name: Upload benchmark result
+      - name: 16 KiB Content-Type A/B vs Feersum
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type,feersum \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=16384 \
+            --repeats=5 \
+            --json=bench/results/response-xs-16k.json
+
+      - name: 4 KiB POST Content-Type A/B
+        env:
+          BENCH_BASE_TREE: /tmp/le-http-before
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_baseline_content_type,linuxevent_content_type \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --request-body-bytes=4096 \
+            --response-bytes=32 \
+            --repeats=5 \
+            --json=bench/results/response-xs-post4k.json
+
+      - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: response-mutation-refined-ladder
-          path: bench/results/response-mutation-refined-ladder.json
+          name: response-xs-end-to-end
+          path: |
+            bench/results/response-xs-32.json
+            bench/results/response-xs-16k.json
+            bench/results/response-xs-post4k.json
