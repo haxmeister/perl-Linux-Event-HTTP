@@ -50,6 +50,7 @@ jobs:
           make test
 
       - name: Build exact pre-fast-path baseline
+        if: github.event_name == 'workflow_dispatch'
         run: |
           git worktree add /tmp/le-http-before 9663590bdbfab9e705c0760efa06a118c08f310c
           cd /tmp/le-http-before
@@ -58,6 +59,7 @@ jobs:
           make test
 
       - name: 32-byte Content-Type scalar A/B
+        if: github.event_name == 'workflow_dispatch'
         env:
           BENCH_BASE_TREE: /tmp/le-http-before
         run: |
@@ -73,6 +75,7 @@ jobs:
             --json=bench/results/general-scalar-content-type.json
 
       - name: 16 KiB Content-Type scalar A/B
+        if: github.event_name == 'workflow_dispatch'
         env:
           BENCH_BASE_TREE: /tmp/le-http-before
         run: |
@@ -88,6 +91,7 @@ jobs:
             --json=bench/results/general-scalar-content-type-16k.json
 
       - name: 4 KiB POST Content-Type A/B
+        if: github.event_name == 'workflow_dispatch'
         env:
           BENCH_BASE_TREE: /tmp/le-http-before
         run: |
@@ -104,6 +108,7 @@ jobs:
             --json=bench/results/general-scalar-content-type-post4k.json
 
       - name: Upload benchmark results
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: general-scalar-final
