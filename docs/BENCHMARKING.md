@@ -183,10 +183,19 @@ zero chunk.
 
 The current raw Content-Length path consumes drained body bytes directly from the
 native ordered-byte buffer and delivers requested `on_body` chunks directly to
-the existing HTTP callback lifecycle. Chunked request bodies deliberately remain
-on the generic fallback path. A following request head that shares the same read
-with the end of a Content-Length body must therefore remain native input and be
-parsed by the raw request-head consumer.
+the existing HTTP callback lifecycle.
+
+Chunked request bodies also remain on the raw native path. The provider keeps a
+persistent pico chunk decoder and copies each borrowed encoded input window only
+into mutable native scratch because pico's decoder rewrites its input. Drained
+chunked bodies do not materialize body bytes in Perl; when `on_body` is present,
+only decoded payload bytes cross into Perl. Trailers are consumed by the decoder,
+and any bytes following the terminating chunk remain in Linux::Event's native
+ordered-byte buffer for request-head parsing.
+
+A following request head that shares the same read with either a Content-Length
+body boundary or a completed chunked body must therefore remain native input and
+be parsed by the raw request-head consumer.
 
 The comparison is a protocol-stack comparison, not an attempt to make each
 framework perform an identical amount of application-layer work. Each adapter
