@@ -18,6 +18,60 @@ use Time::HiRes qw(time sleep);
 $SIG{PIPE} = 'IGNORE';
 
 my %case = (
+    current_parse => {
+        label => 'C1 current parse + prebuilt Content-Type write',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_parse',
+        description => 'Current Perl input buffer plus pico/native Request construction; prebuilt Content-Type response write',
+    },
+    current_response => {
+        label => 'C2 + trusted sparse Response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_response',
+        description => 'Current parse plus trusted sparse server Response construction; prebuilt Content-Type response write',
+    },
+    current_api => {
+        label => 'C3 + public header/body API',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_api',
+        description => 'Trusted Response plus Content-Type header setter and public scalar body setter; prebuilt response write',
+    },
+    current_callback => {
+        label => 'C4 + guarded application callback',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_callback',
+        description => 'Current active bodyless exchange plus production guarded on_request dispatch; response readiness suppressed; prebuilt response write',
+    },
+    current_head => {
+        label => 'C5 + native Response head serialization',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_head',
+        description => 'Public Content-Type/body API plus native Response head serialization and scalar body concatenation',
+    },
+    current_send => {
+        label => 'C6 + current scalar-final send',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_send',
+        description => 'Production guarded callback plus current response-readiness and general scalar-final fast path',
+    },
+    current_checked => {
+        label => 'C7 + production request checks',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_checked',
+        description => 'Current scalar-final send plus parser eval/error boundary, request-head guard, and Expect validation',
+    },
+    current_bodyless => {
+        label => 'C8 production Connection + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
+        stage => 'current_bodyless',
+        description => 'Actual current Server::Connection bodyless driver through raw Listener with Content-Type scalar response',
+    },
+    current_http => {
+        label => 'C9 full Server + Content-Type',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        linuxevent_mode => 'content-type',
+        description => 'Current Server plus Server::Connection lifecycle with ordinary Content-Type scalar response',
+    },
     parse => {
         label => '3a Parsed Request + prebuilt write',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-transaction-stage.pl"],
@@ -158,7 +212,7 @@ die "timeout must be > 0\n" if $timeout <= 0;
 die "read-budget-bytes must be >= 0\n" if $read_budget_bytes < 0;
 
 my $request_wire = "GET /bench HTTP/1.1\r\nHost: benchmark.test\r\n\r\n";
-my @names = qw(parse bound fastbound state faststate callbacks fused eligibility build mark commit complete checked bodyless http);
+my @names = qw(current_parse current_response current_api current_callback current_head current_send current_checked current_bodyless current_http);
 if (defined $case_list) {
     my %known = map { $_ => 1 } @names;
     my @selected = grep { length } split /,/, $case_list;
@@ -218,11 +272,11 @@ for my $i (1 .. $#summary) {
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
     my %contract = map { $_ => $case{$_}{description} } @names;
-    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; parse through checked are cumulative staged costs; bodyless uses the production Server::Connection driver through a raw Listener; full HTTP adds the Server convenience wrapper';
+    $contract{common} = 'same raw client, 45-byte GET request wire, persistent loopback TCP sockets, unframed Linux::Event Stream transport, read budget, response payload size, and write transport; current stages decompose the current lazy-Transaction/Connection-output-state/general-scalar architecture under a Content-Type response; current_bodyless uses the production Server::Connection through a raw Listener; current_http adds the Server wrapper';
 
     my $report = {
         benchmark => 'linux-event-http-transaction-ladder',
-        benchmark_contract_version => 7,
+        benchmark_contract_version => 8,
         generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
         environment => {
             perl => "$^V",
@@ -308,6 +362,11 @@ sub start_server ($name, $port) {
             $ENV{BENCH_TRANSACTION_STAGE} = $case{$name}{stage};
         } else {
             delete $ENV{BENCH_TRANSACTION_STAGE};
+        }
+        if (defined $case{$name}{linuxevent_mode}) {
+            $ENV{BENCH_LINUXEVENT_MODE} = $case{$name}{linuxevent_mode};
+        } else {
+            delete $ENV{BENCH_LINUXEVENT_MODE};
         }
         open STDOUT, '>', $stdout_path or POSIX::_exit(126);
         open STDERR, '>', $stderr_path or POSIX::_exit(126);
