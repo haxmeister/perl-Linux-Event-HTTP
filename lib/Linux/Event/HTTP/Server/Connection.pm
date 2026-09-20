@@ -237,6 +237,24 @@ sub _try_simple_scalar_final ($self, $response, $body) {
         ->build_simple_scalar_final($request, $response, $body);
     return 0 if !defined $wire;
 
+    my $request_state = $self->{_http_request_state};
+
+    # The ordinary synchronous bodyless response has no materialized
+    # Transaction and no later request-body phase that needs output state.
+    # Keep only the started bit across write() for exception safety, then
+    # retire the three live exchange references directly.
+    if ($request_state && $request_state->{body_done}
+        && !$self->{_http_active_transaction}) {
+        $self->{_http_response_output_started} = 1;
+        $self->write($wire);
+        $self->{_http_active_request} = undef;
+        $self->{_http_active_response} = undef;
+        $self->{_http_request_state} = undef;
+        $self->{_http_response_output_started} = 0;
+        $self->resume_read if $self->is_read_paused;
+        return 1;
+    }
+
     $self->{_http_response_output_started} = 1;
     $self->{_http_response_output_complete} = 1;
     if (my $transaction = $self->{_http_active_transaction}) {
@@ -246,7 +264,6 @@ sub _try_simple_scalar_final ($self, $response, $body) {
 
     $self->write($wire);
 
-    my $request_state = $self->{_http_request_state};
     if ($request_state && $request_state->{body_done}) {
         if (my $transaction = $self->{_http_active_transaction}) {
             $transaction->{state} = 'complete';
