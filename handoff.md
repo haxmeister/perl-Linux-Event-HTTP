@@ -149,6 +149,31 @@ native Response head serializer and retains the generic response state machine
 for Transfer-Encoding, explicit Connection semantics, HTTP/1.0, streaming, and
 other uncommon cases.
 
+General scalar-final fast path, run `35483452146`:
+
+- exact pre-fast-path Content-Type baseline, 32-byte response:
+  19,553.7 req/s;
+- fast scalar-final Content-Type path: 35,205.3 req/s (+80.0%);
+- no-header diagnostic ceiling on the same runner: 48,324.7 req/s;
+- Feersum with the same Content-Type header: 122,949.2 req/s;
+- 16 KiB Content-Type response: 17,678.6 -> 31,707.4 req/s (+79.4%);
+- 4 KiB POST / Content-Type / 32-byte response:
+  16,478.1 -> 26,275.3 req/s (+59.5%);
+- experiment and exact pre-fast-path baseline test suites both pass.
+
+This fast path is intentionally HTTP/1.1 persistent scalar-response work, not
+an echo-only shortcut. It supports ordinary custom status/reason and arbitrary
+non-framing headers, preserves generated Content-Length in Response metadata,
+supports response-before-request-body-completion, and falls back to the general
+state machine for Transfer-Encoding, explicit Connection handling, HTTP/1.0,
+streaming, malformed/tampered metadata, and other uncommon cases.
+
+The benchmark entry label inherited from an earlier experiment still says
+"pre-output-state"; the exact baseline used here is commit
+`9663590bdbfab9e705c0760efa06a118c08f310c`, which already includes the
+Connection-owned output-state optimization. Treat these numbers strictly as
+pre-general-scalar-fast-path vs general-scalar-fast-path.
+
 ## Repository state
 
 - Repo: `haxmeister/perl-Linux-Event-HTTP`
