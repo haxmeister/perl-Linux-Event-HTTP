@@ -22,10 +22,15 @@ use Linux::Event::HTTP::Server;
         if (($state->{mode} // '') eq 'invalid-body') {
             $response->body([]);
         } elsif (($state->{mode} // '') eq 'custom-status') {
+            $state->{response_ref} = $response;
             $response->status(201);
             $response->body($state->{response_body});
         } elsif (($state->{mode} // '') eq 'custom-header') {
+            $state->{response_ref} = $response;
             $response->header('X-Fastpath-Fallback', 'yes');
+            $response->body($state->{response_body});
+        } elsif (($state->{mode} // '') eq 'bad-length') {
+            $response->header('Content-Length', '99');
             $response->body($state->{response_body});
         } elsif (($state->{mode} // '') eq 'early-body') {
             $response->body($state->{response_body});
@@ -186,6 +191,12 @@ like(
     'status mutation leaves the trusted default fast path and preserves wire semantics',
 );
 
+is(
+    $state->{response_ref}->header('Content-Length'),
+    '8',
+    'fast scalar final preserves generated Content-Length on Response metadata',
+);
+
 $state = new_state(mode => 'custom-header', response_body => "header\n");
 $wire = run_exchange(
     "GET /custom-header HTTP/1.1\r\nHost: example.test\r\n\r\n",
@@ -195,6 +206,23 @@ like(
     $wire,
     qr/\AHTTP\/1\.1 200 OK\r\nX-Fastpath-Fallback: yes\r\nContent-Length: 7\r\n\r\nheader\n\z/s,
     'header mutation leaves the trusted default fast path and preserves custom fields',
+);
+
+is(
+    $state->{response_ref}->header('Content-Length'),
+    '7',
+    'custom-header fast scalar final retains generated Content-Length metadata',
+);
+
+$state = new_state(mode => 'bad-length', response_body => "bad\n");
+$wire = run_exchange(
+    "GET /bad-length HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    $state,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 500 [^\r\n]+\r\nContent-Length: 0\r\nConnection: close\r\n\r\n\z/s,
+    'fast scalar final rejects mismatched explicit Content-Length safely',
 );
 
 $state = new_state(response_body => 'head-body');
