@@ -120,52 +120,67 @@ Conclusion:
 
 Do not optimize for one exact hosted-run percentage.
 
-### Body-bearing application-behavior matrix
+### Native Content-Length body path: validated
 
-Draft PR #32 adds benchmark-only modes; no production semantics have changed.
+The first body-behavior matrix on run `35538317533` proved the old generic
+fallback was a general Content-Length cost: ordinary input beat raw input by
+roughly 3-7% across drained/on_body and early/request-end response shapes at
+4 KiB and 64 KiB.
 
-GitHub Actions run `35538317533` is green on Perl 5.36, latest Perl, and latest
-threaded Perl. The new benchmark compared ordinary and raw input under four
-application behaviors at 4 KiB and 64 KiB Content-Length bodies:
+A narrow replacement is now implemented on this branch:
+
+- Content-Length remaining is tracked inside the raw provider;
+- when no `on_body` consumer exists, request body bytes are consumed directly
+  from the native ordered-byte buffer and Perl is notified only at completion;
+- when `on_body` exists, only the body chunk is materialized and delivered
+  directly into the existing HTTP callback lifecycle, without staging through
+  `_http_input` or running the general `_drive_http1` parser loop;
+- only the body prefix is consumed, so any same-read following request head
+  stays native and is parsed immediately by the raw request-head parser;
+- chunked request bodies intentionally remain on the existing generic fallback.
+
+Focused coverage in `t/15-native-raw-server.t` proves:
+
+- direct Content-Length `on_body` delivery;
+- native draining with no `on_body`;
+- same-read pipelined request-head preservation after the body boundary;
+- chunked bodies still use the generic fallback;
+- reentrant Stream close from direct raw `on_body` is safe.
+
+GitHub Actions run `35538759809` is fully green:
+
+- Perl 5.36: success;
+- latest Perl: success;
+- latest threaded Perl: success;
+- 41 test files / 1,022 tests;
+- distribution integrity / disttest: success.
+
+Same-run body-behavior medians:
 
 | Body | Behavior | Ordinary req/s | Raw req/s | Raw change |
 | --- | --- | ---: | ---: | ---: |
-| 4 KiB | drain / early response | 18,277.6 | 17,667.5 | -3.3% |
-| 4 KiB | on_body / early response | 16,995.9 | 16,423.7 | -3.4% |
-| 4 KiB | drain / request-end response | 19,233.2 | 18,337.7 | -4.7% |
-| 4 KiB | on_body / request-end response | 17,801.2 | 17,009.1 | -4.5% |
-| 64 KiB | drain / early response | 11,915.8 | 11,328.7 | -4.9% |
-| 64 KiB | on_body / early response | 9,871.2 | 9,334.9 | -5.4% |
-| 64 KiB | drain / request-end response | 12,423.1 | 11,508.1 | -7.4% |
-| 64 KiB | on_body / request-end response | 10,258.9 | 9,866.5 | -3.8% |
+| 4 KiB | drain / early response | 47,841.4 | 50,273.7 | +5.1% |
+| 4 KiB | on_body / early response | 44,425.5 | 45,454.9 | +2.3% |
+| 4 KiB | drain / request-end response | 47,719.7 | 52,766.8 | +10.6% |
+| 4 KiB | on_body / request-end response | 45,452.9 | 48,127.6 | +5.9% |
+| 64 KiB | drain / early response | 28,131.4 | 34,272.4 | +21.8% |
+| 64 KiB | on_body / early response | 23,001.1 | 28,532.9 | +24.0% |
+| 64 KiB | drain / request-end response | 27,905.2 | 36,874.0 | +32.1% |
+| 64 KiB | on_body / request-end response | 23,458.6 | 29,731.3 | +26.7% |
 
-Repeat-by-repeat paired deltas are noisier at 4 KiB but remain directionally
-negative. At 64 KiB the median paired penalties are about -6.6%, -6.1%, -6.6%,
-and -3.3% for the four rows respectively.
+Every one of the five paired repeats was positive for all eight comparisons.
+Median paired gains ranged from +2.6% to +12.4% at 4 KiB and from +23.0% to
++30.9% at 64 KiB.
 
-Conclusion: the raw body regression is general to the current Content-Length
-fallback path. It is not primarily caused by early-response behavior, and adding
-a no-op `on_body` does not reveal a uniquely dominant callback penalty. The
-current raw provider parses the head natively, then switches to a generic Perl
-fallback that materializes the native window, appends it into `_http_input`,
-runs `_drive_http1`, and may surface pipelined post-body request bytes through
-that fallback as well.
+The ordinary raw comparison in the same run also remained positive:
 
-The next justified experiment is a narrowly scoped native Content-Length body
-path:
+- GET / 32-byte response: 72,621.4 baseline -> 76,241.0 raw (+5.0%);
+- GET / 16 KiB response: 58,397.9 baseline -> 62,451.6 raw (+6.9%);
+- POST 4 KiB / 32-byte response: 48,159.0 baseline -> 50,491.0 raw (+4.8%).
 
-- keep the existing generic fallback for chunked bodies;
-- track Content-Length remaining in the raw provider;
-- for drained bodies, consume native body bytes without materializing them in
-  Perl and notify the HTTP lifecycle only at completion;
-- for `on_body`, deliver body chunks directly to the existing callback lifecycle
-  without staging through `_http_input`;
-- consume only the body prefix so a same-read following request head remains in
-  the native buffer and is parsed natively;
-- preserve all current reentrant close/transition and provider lifetime rules.
-
-Accept this only if same-run measurements improve body-bearing workloads without
-reducing the established bodyless GET gain.
+Absolute rates vary sharply across GitHub runners; use only same-run deltas.
+The important result is that the Content-Length specialization removes the
+previous raw-body regression while preserving the bodyless GET benefit.
 
 ### Rejected body fallback idea
 
@@ -179,14 +194,16 @@ Do not revive the nested inline-tail design without new evidence.
 
 ### Next useful work
 
-Prototype the native Content-Length body path described above on this branch,
-with focused correctness coverage first. Measure the existing eight body
-behavior modes again at 4 KiB and 64 KiB. Keep chunked requests on the current
-fallback so the experiment stays narrow.
+The native Content-Length body specialization is worth keeping. Clean permanent
+CI/documentation, run a final validation gate, and squash-merge PR #32 to main.
 
-If the candidate is not clearly positive, revert it and retain the benchmark
-tooling/evidence only. Do not make raw input the default until the body result is
-resolved.
+After merge, the remaining input-mode question is chunked request bodies. Raw
+request heads and Content-Length bodies are now positive, Upgrade/CONNECT
+transitions are correct, and the ordinary path remains available. Before making
+raw input the production Server::Connection default, measure ordinary vs raw
+chunked requests under the same body-drain/on_body/request-end application
+shapes. Keep the existing chunked fallback unless measurement justifies a native
+chunked-body specialization.
 
 Everything below is experiment/history context. This section is authoritative.
 
