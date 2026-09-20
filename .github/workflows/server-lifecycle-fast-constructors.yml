@@ -4,14 +4,12 @@ on:
   push:
     branches:
       - experiment/http-server-lifecycle-fast-constructors
+    paths-ignore:
+      - handoff.md
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: http-early-native-final-experiment
-  cancel-in-progress: true
 
 jobs:
   benchmark:
