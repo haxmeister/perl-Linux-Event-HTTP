@@ -15,7 +15,7 @@ my $response_bytes = 0 + ($ENV{BENCH_RESPONSE_BYTES} // 32);
 our $READ_BUDGET_BYTES = 0 + ($ENV{BENCH_READ_BUDGET_BYTES} // 0);
 our $STAGE = $ENV{BENCH_TRANSACTION_STAGE} // die "BENCH_TRANSACTION_STAGE is required\n";
 die "unknown BENCH_TRANSACTION_STAGE=$STAGE\n"
-    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response|current_header|current_api|current_frame|current_exchange|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
+    if $STAGE !~ /\A(?:parse|bound|fastbound|state|faststate|callbacks|fused|eligibility|build|mark|commit|complete|checked|bodyless|current_parse|current_response|current_header|current_api|current_frame|current_exchange_minimal|current_exchange_nomark|current_exchange|current_callback|current_head|current_send|current_checked|current_bodyless)\z/;
 
 my $payload = 'x' x $response_bytes;
 my $wire = "HTTP/1.1 200 OK\r\nContent-Length: $response_bytes\r\n\r\n$payload";
@@ -63,6 +63,38 @@ my $wire_ct = "HTTP/1.1 200 OK\r\n"
         $self->{_http_response_state} = undef;
         $self->{_http_response_output_started} = 0;
         $self->{_http_response_output_complete} = 0;
+        return;
+    }
+
+    sub _activate_bodyless_nomark ($self, $request, $response) {
+        my $state = $self->{_http_bodyless_state} //= {
+            mode      => 'none',
+            body_done => 1,
+        };
+        $state->{body_done} = 1;
+        delete $state->{close_after_response};
+
+        $self->{_http_active_transaction} = undef;
+        $self->{_http_active_request} = $request;
+        $self->{_http_active_response} = $response;
+        $self->{_http_request_state} = $state;
+        $self->{_http_response_state} = undef;
+        $self->{_http_response_output_started} = 0;
+        $self->{_http_response_output_complete} = 0;
+        return;
+    }
+
+    sub _activate_bodyless_minimal ($self, $request, $response) {
+        my $state = $self->{_http_bodyless_state} //= {
+            mode      => 'none',
+            body_done => 1,
+        };
+        $state->{body_done} = 1;
+        delete $state->{close_after_response};
+
+        $self->{_http_active_request} = $request;
+        $self->{_http_active_response} = $response;
+        $self->{_http_request_state} = $state;
         return;
     }
 
@@ -175,10 +207,18 @@ my $wire_ct = "HTTP/1.1 200 OK\r\n"
                 next;
             }
 
-            $self->_activate_bodyless($request, $response);
+            if ($main::STAGE eq 'current_exchange_minimal') {
+                $self->_activate_bodyless_minimal($request, $response);
+            } elsif ($main::STAGE eq 'current_exchange_nomark') {
+                $self->_activate_bodyless_nomark($request, $response);
+            } else {
+                $self->_activate_bodyless($request, $response);
+            }
             my $handler = $self->{_http_on_request};
 
-            if ($main::STAGE eq 'current_exchange') {
+            if ($main::STAGE eq 'current_exchange'
+                || $main::STAGE eq 'current_exchange_nomark'
+                || $main::STAGE eq 'current_exchange_minimal') {
                 $response->header(
                     'Content-Type', 'application/octet-stream',
                 );
