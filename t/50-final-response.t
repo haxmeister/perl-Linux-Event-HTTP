@@ -21,6 +21,12 @@ use Linux::Event::HTTP::Server;
 
         if (($state->{mode} // '') eq 'invalid-body') {
             $response->body([]);
+        } elsif (($state->{mode} // '') eq 'custom-status') {
+            $response->status(201);
+            $response->body($state->{response_body});
+        } elsif (($state->{mode} // '') eq 'custom-header') {
+            $response->header('X-Fastpath-Fallback', 'yes');
+            $response->body($state->{response_body});
         } elsif (($state->{mode} // '') ne 'body') {
             $response->body($state->{response_body});
         }
@@ -127,6 +133,28 @@ like(
     'ordinary on_request plus Response->body completes eligible scalar response',
 );
 is($state->{request_hits}, 1, 'ordinary request callback runs once');
+
+$state = new_state(mode => 'custom-status', response_body => "created\n");
+$wire = run_exchange(
+    "GET /custom-status HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    $state,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 201 Created\r\nContent-Length: 8\r\n\r\ncreated\n\z/s,
+    'status mutation leaves the trusted default fast path and preserves wire semantics',
+);
+
+$state = new_state(mode => 'custom-header', response_body => "header\n");
+$wire = run_exchange(
+    "GET /custom-header HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    $state,
+);
+like(
+    $wire,
+    qr/\AHTTP\/1\.1 200 OK\r\nX-Fastpath-Fallback: yes\r\nContent-Length: 7\r\n\r\nheader\n\z/s,
+    'header mutation leaves the trusted default fast path and preserves custom fields',
+);
 
 $state = new_state(response_body => 'head-body');
 $wire = run_exchange(
