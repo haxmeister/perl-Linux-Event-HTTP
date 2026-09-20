@@ -793,6 +793,70 @@ le_http_raw_call_scalar_int(
     return result;
 }
 
+static int
+le_http_raw_call_request(
+    pTHX_
+    le_http_raw_consumer_context *context,
+    SV *request,
+    const char *tail,
+    size_t tail_len
+)
+{
+    const les_consumer_host_api_v1_t *host;
+    void *host_context;
+    CV *cv;
+    int result = 0;
+    int count;
+    int jump_status;
+    dJMPENV;
+    dSP;
+
+    host = context->host;
+    host_context = context->host_context;
+    if (!host
+        || host->struct_size < LES_CONSUMER_HOST_V1_RETAIN_REQUIRED_SIZE
+        || !host->retain || !host->release)
+        croak("Linux::Event raw consumer host lifetime extension is unavailable");
+
+    cv = le_http_raw_method_cv(
+        aTHX_ context,
+        &context->request_cv,
+        "_http_native_request"
+    );
+
+    if (!host->retain(aTHX_ host_context))
+        croak("Linux::Event raw consumer host is no longer available");
+
+    JMPENV_PUSH(jump_status);
+    if (jump_status == 0) {
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+        XPUSHs(context->stream);
+        XPUSHs(request);
+        if (tail_len > 0)
+            XPUSHs(sv_2mortal(newSVpvn(tail, (STRLEN)tail_len)));
+        PUTBACK;
+        count = call_sv((SV *)cv, G_SCALAR);
+        SPAGAIN;
+        if (count > 0)
+            result = POPi;
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+        JMPENV_POP;
+    } else {
+        JMPENV_POP;
+        host->release(aTHX_ host_context);
+        JMPENV_JUMP(jump_status);
+    }
+
+    context->fallback_input = (result & 1) ? 1 : 0;
+
+    host->release(aTHX_ host_context);
+    return result;
+}
+
 static void *
 le_http_raw_consumer_create(
     pTHX_
@@ -842,6 +906,8 @@ le_http_raw_consumer_input(
     le_http_request_semantics semantics;
     const char *detail;
     int semantic_status;
+    int request_result;
+    size_t tail_len;
     SV *request;
 
     *host_consumed = 0;
@@ -941,13 +1007,22 @@ le_http_raw_consumer_input(
     );
 
     *host_consumed = (size_t)consumed;
-    (void)le_http_raw_call_scalar_int(
+    tail_len = 0;
+    if (semantics.body_mode == LE_HTTP_BODY_CHUNKED
+        || (semantics.body_mode == LE_HTTP_BODY_CONTENT_LENGTH
+            && semantics.content_length > 0)) {
+        tail_len = buffer_len - (size_t)consumed;
+    }
+
+    request_result = le_http_raw_call_request(
         aTHX_ context,
-        &context->request_cv,
-        "_http_native_request",
         sv_2mortal(request),
-        1
+        buf + consumed,
+        tail_len
     );
+    if (request_result & 2)
+        *host_consumed = buffer_len;
+
     return LES_CONSUMER_CONTINUE;
 }
 
