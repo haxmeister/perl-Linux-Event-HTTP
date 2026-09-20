@@ -223,31 +223,25 @@ sub _send_http_response ($self, $transaction) {
 }
 
 sub _try_native_default_final ($self, $transaction, $body) {
-    my $response = $transaction->response or return 0;
-    return 0 if ref($response) ne 'Linux::Event::HTTP::Response';
-    return 0 if $response->status != 200 || defined($response->reason);
-    return 0 if $response->header_count;
-    return 0 if $self->{_http_closing} || $self->is_closed;
+    my $response = $transaction->{response} or return 0;
+    return 0 if !$response->{_server_default_final};
     return 0 if $self->{_http_response_state};
 
-    my $active = $self->{_http_active_transaction} or return 0;
-    return 0 if refaddr($active) != refaddr($transaction);
-
-    my $request = $transaction->request or return 0;
     my $request_state = $self->{_http_request_state} or return 0;
     return 0 if !$request_state->{body_done};
 
+    my $request = $transaction->{request} or return 0;
     my $wire = Linux::Event::HTTP::_HTTP1
         ->build_default_final($request, $body);
     return 0 if !defined $wire;
 
-    $response->_commit;
-    $transaction->_mark_response_started;
-    $transaction->_mark_response_output_complete;
+    $response->{committed} = 1;
+    $transaction->{response_output_started} = 1;
+    $transaction->{response_output_complete} = 1;
     $self->{_http_response_state} = undef;
 
     $self->write($wire);
-    $self->_complete_active_transaction_state;
+    $transaction->{state} = 'complete';
     $self->_clear_transaction;
 
     $self->resume_read if $self->is_read_paused;
