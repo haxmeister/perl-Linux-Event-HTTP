@@ -41,6 +41,54 @@ my %server = (
         available => sub { 1 },
         linuxevent_mode => 'content-type-native',
     },
+    linuxevent_body_ignore => {
+        label => 'Linux::Event::HTTP body drain / early response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-ignore',
+    },
+    linuxevent_body_ignore_native => {
+        label => 'Linux::Event::HTTP raw body drain / early response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-ignore-native',
+    },
+    linuxevent_body_callback => {
+        label => 'Linux::Event::HTTP on_body / early response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-callback',
+    },
+    linuxevent_body_callback_native => {
+        label => 'Linux::Event::HTTP raw on_body / early response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-callback-native',
+    },
+    linuxevent_body_end => {
+        label => 'Linux::Event::HTTP body drain / request-end response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-end',
+    },
+    linuxevent_body_end_native => {
+        label => 'Linux::Event::HTTP raw body drain / request-end response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-end-native',
+    },
+    linuxevent_body_callback_end => {
+        label => 'Linux::Event::HTTP on_body / request-end response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-callback-end',
+    },
+    linuxevent_body_callback_end_native => {
+        label => 'Linux::Event::HTTP raw on_body / request-end response',
+        command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
+        available => sub { 1 },
+        linuxevent_mode => 'body-callback-end-native',
+    },
     linuxevent_legacy_ready => {
         label => 'Linux::Event::HTTP old readiness path',
         command => [$^X, '-Mblib', "$Bin/servers/linuxevent-http.pl"],
@@ -658,7 +706,10 @@ sub usage ($status) {
     print <<'USAGE';
 usage: bench/run-http-comparison.pl [options]
 
-  --servers=LIST           linuxevent,linuxevent_baseline,linuxevent_legacy_ready,linuxevent_legacy_eligibility,linuxevent_legacy_callback,linuxevent_main,feersum,mojo,twiggy,node,go,h2o,aiohttp
+  --servers=LIST           comma-separated server keys; includes linuxevent, linuxevent_content_type,
+                           linuxevent_content_type_native, linuxevent_body_ignore[_native],
+                           linuxevent_body_callback[_native], linuxevent_body_end[_native],
+                           linuxevent_body_callback_end[_native], competitors, and diagnostic baselines
   --requests=N             measured requests per server/repeat (default 20000)
   --warmup=N               warmup requests per server/repeat (default 2000)
   --connections=N          concurrent TCP connections (default 100)
