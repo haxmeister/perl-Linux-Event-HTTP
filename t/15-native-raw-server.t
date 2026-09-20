@@ -332,6 +332,87 @@ subtest 'raw chunked body delivery stays native through a pipelined next head' =
         'chunked body does not enter the generic Perl input fallback');
 };
 
+subtest 'raw chunked decoder preserves state across separate reads' => sub {
+    my $loop = Linux::Event::Loop->new;
+    my $state = {
+        wire => '',
+        body => '',
+        paths => [],
+        raw_request_hits => 0,
+        fallback_hits => 0,
+        native_body_hits => 0,
+        native_chunked_body_hits => 0,
+    };
+    my $server = Linux::Event::HTTP::Server->new(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => 0,
+        data => $state,
+        connection_class => 'T::RawHTTPConnection',
+    );
+
+    my $guard = Linux::Event::Kernel::Timer->new(
+        loop => $loop,
+        after => 2,
+        on_timer => sub ($timer) {
+            die "raw fragmented chunked test timed out\n";
+        },
+    );
+    my $second_write;
+
+    Linux::Event::IO::Sock::Stream->connect(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => $server->port,
+        on_ready => sub ($stream) {
+            $stream->write(
+                "POST /upload HTTP/1.1\r\n" .
+                "Host: example.test\r\n" .
+                "Transfer-Encoding: chunked\r\n\r\n" .
+                "4\r\nDA"
+            );
+            $second_write = Linux::Event::Kernel::Timer->new(
+                loop => $loop,
+                after => 0.02,
+                on_timer => sub ($timer) {
+                    $stream->write(
+                        "TA\r\n0\r\n\r\n" .
+                        "GET /after HTTP/1.1\r\n" .
+                        "Host: example.test\r\n\r\n"
+                    );
+                },
+            );
+        },
+        on_data => sub ($stream, $bytes) {
+            $state->{wire} .= $bytes;
+            my $responses = () = $state->{wire} =~ /HTTP\/1\.1 200 OK/g;
+            if ($responses >= 2) {
+                $guard->cancel;
+                $second_write->cancel if $second_write;
+                $stream->close;
+                $server->close;
+                $loop->stop;
+            }
+        },
+        on_error => sub ($stream, $error) {
+            die "raw fragmented chunked client failed: $error\n";
+        },
+    );
+
+    $loop->run;
+
+    is($state->{body}, 'DATA',
+        'chunked payload split across reads is decoded exactly once');
+    is_deeply($state->{paths}, [ '/upload', '/after' ],
+        'fragmented chunked completion preserves following request');
+    is($state->{raw_request_hits}, 2,
+        'next request returns to native request-head parsing');
+    cmp_ok($state->{native_chunked_body_hits}, '>=', 2,
+        'persistent native chunked decoder delivered across multiple reads');
+    is($state->{fallback_hits}, 0,
+        'fragmented chunked body never enters generic fallback');
+};
+
 subtest 'raw chunked drain consumes trailers and preserves next request' => sub {
     my $loop = Linux::Event::Loop->new;
     my $state = {
