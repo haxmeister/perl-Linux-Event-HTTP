@@ -2,41 +2,78 @@
 
 Updated: 2026-09-19 (America/Chicago)
 
-## Active server lifecycle constructor experiment
+## Active HTTP server lifecycle performance work
 
 Branch: `experiment/http-server-lifecycle-fast-constructors`.
 
-This branch keeps the public Response and Transaction constructors strict, but
-adds private trusted constructors for the server executor, which is creating
-values it already validated/produced itself.
+The branch now contains several independently measured HTTP-local optimizations.
+The public Request/Response/Transaction API remains unchanged and strict.
 
-GitHub Actions run `35476298230` built and tested both the experiment and an
-untouched `main` worktree on the same runner. Both suites passed all 971 tests.
+Validated changes:
 
-Constructor ladder medians:
+- private trusted sparse server Response construction;
+- private trusted sparse active Transaction construction;
+- fused callback/readiness exception boundary (small effect only);
+- trusted-default Response marker with invalidation on metadata mutation;
+- collapsed native-final eligibility and completion bookkeeping;
+- direct trusted scalar-response dispatch from response-readiness handling;
+- lazy server Transaction materialization: ordinary exchanges do not allocate a
+  Transaction unless application/protocol behavior actually requests one.
 
-- parsed Request + ordinary Response construction: 64,538.7 req/s;
-- parsed Request + trusted Response construction: 73,389.5 req/s (+13.7%);
-- ordinary Transaction/body state: 45,756.8 req/s;
-- trusted active Transaction/body state: 55,959.0 req/s (+22.3%).
+Correctness remains green after lazy Transaction materialization: GitHub Actions
+run `35479564228` passed all 40 test programs / 975 tests, including server
+Transaction semantics, request-body lifecycle, deferred responses, Upgrade, and
+CONNECT.
 
-Same-run full server, 100 persistent connections, pipeline depth 1, 32-byte
-response:
+Key same-run measurements:
+
+Trusted constructors, run `35476298230`:
 
 - main: 27,168.3 req/s;
 - trusted constructors: 31,214.7 req/s (+14.9%);
-- Feersum native HTTP: 97,252.8 req/s.
+- Feersum native HTTP: 97,252.8 req/s;
+- 4 KiB request body: 14,116.1 -> 15,495.8 req/s (+9.8%).
 
-The 4 KiB request-body workload also improved:
+Callback fusion, run `35476854038`:
 
-- main: 14,116.1 req/s;
-- trusted constructors: 15,495.8 req/s (+9.8%).
+- old callback boundary: 15,853.0 req/s;
+- fused boundary: 16,059.2 req/s (+1.3%);
+- 4 KiB request-body result was slightly lower with fusion.
 
-Conclusion: private trusted server-side construction is a successful
-optimization. The public validation API remains unchanged. The remaining
-Feersum gap is still large (about 3.1x on this runner), so the next HTTP-local
-targets remain callback/eval boundaries, fast-path eligibility checks, and
-transaction completion bookkeeping.
+Conclusion: callback fusion is not a major performance lever.
+
+Native-final eligibility/completion, safe final version run `35479265021`:
+
+- old checks: 15,781.9 req/s;
+- optimized checks/completion: 19,278.2 req/s (+22.2%);
+- Feersum: 73,160.0 req/s;
+- all 975 tests pass, including explicit custom-status/custom-header fallback
+  coverage.
+
+Response-readiness dispatch, run `35479427018`:
+
+- old readiness path: 19,239.3 req/s;
+- direct trusted readiness path: 21,868.2 req/s (+13.7%);
+- Feersum: 71,995.5 req/s;
+- all 975 tests pass.
+
+Lazy Transaction materialization, run `35479564228`:
+
+- exact pre-lazy baseline: 20,978.5 req/s;
+- lazy Transaction: 22,793.5 req/s (+8.7%);
+- Feersum: 73,212.0 req/s;
+- 4 KiB request body: 8,156.8 -> 8,108.3 req/s (-0.6%, effectively neutral).
+
+The next benchmark is a cumulative same-run comparison of untouched `main`
+versus the complete optimized branch versus Feersum. Do not infer cumulative
+improvement by multiplying the independent experiment percentages because
+runner performance varies and the optimizations overlap.
+
+The earlier raw-native-input experiment remains separate. Its full-server gain
+was only about 5.8%, and Linux::Event currently cannot transition away from an
+active native consumer during same-object Upgrade/CONNECT. Do not make raw input
+the default Server::Connection path without resolving that core transition
+contract.
 
 ## Repository state
 

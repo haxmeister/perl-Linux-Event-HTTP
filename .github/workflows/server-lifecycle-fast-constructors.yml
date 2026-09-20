@@ -1,4 +1,4 @@
-name: HTTP lazy server Transaction experiment
+name: HTTP cumulative server performance comparison
 
 on:
   push:
@@ -10,14 +10,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: http-lazy-server-transaction-experiment
+  group: http-cumulative-server-performance
   cancel-in-progress: true
 
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out experiment
+      - name: Check out optimized branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
@@ -40,25 +40,26 @@ jobs:
           cpanm --notest Feersum
           cpanm --notest --installdeps .
 
-      - name: Build and test experiment
+      - name: Build and test optimized branch
         run: |
           perl Makefile.PL
           make
           make test
 
-      - name: Build pre-lazy baseline
+      - name: Build and test untouched main
         run: |
-          git worktree add /tmp/le-http-before 0dd7f462a6eec030ac8d13484f668109d05399ce
-          cd /tmp/le-http-before
+          git worktree add /tmp/le-http-main origin/main
+          cd /tmp/le-http-main
           perl Makefile.PL
           make
+          make test
 
-      - name: Lazy Transaction small-response A/B
+      - name: Small response cumulative comparison
         env:
-          BENCH_BASE_TREE: /tmp/le-http-before
+          BENCH_MAIN_TREE: /tmp/le-http-main
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline,linuxevent,feersum \
+            --servers=linuxevent_main,linuxevent,feersum \
             --strict \
             --requests=50000 \
             --warmup=5000 \
@@ -66,14 +67,29 @@ jobs:
             --pipeline=1 \
             --response-bytes=32 \
             --repeats=7 \
-            --json=bench/results/lazy-transaction-small.json
+            --json=bench/results/cumulative-small.json
 
-      - name: Lazy Transaction request-body A/B
+      - name: 16 KiB response cumulative comparison
         env:
-          BENCH_BASE_TREE: /tmp/le-http-before
+          BENCH_MAIN_TREE: /tmp/le-http-main
         run: |
           perl -Mblib bench/run-http-comparison.pl \
-            --servers=linuxevent_baseline,linuxevent \
+            --servers=linuxevent_main,linuxevent,feersum \
+            --strict \
+            --requests=30000 \
+            --warmup=3000 \
+            --connections=100 \
+            --pipeline=1 \
+            --response-bytes=16384 \
+            --repeats=5 \
+            --json=bench/results/cumulative-16k.json
+
+      - name: 4 KiB request-body cumulative comparison
+        env:
+          BENCH_MAIN_TREE: /tmp/le-http-main
+        run: |
+          perl -Mblib bench/run-http-comparison.pl \
+            --servers=linuxevent_main,linuxevent \
             --strict \
             --requests=30000 \
             --warmup=3000 \
@@ -82,12 +98,13 @@ jobs:
             --request-body-bytes=4096 \
             --response-bytes=32 \
             --repeats=5 \
-            --json=bench/results/lazy-transaction-body.json
+            --json=bench/results/cumulative-body.json
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: lazy-server-transaction
+          name: cumulative-server-performance
           path: |
-            bench/results/lazy-transaction-small.json
-            bench/results/lazy-transaction-body.json
+            bench/results/cumulative-small.json
+            bench/results/cumulative-16k.json
+            bench/results/cumulative-body.json
