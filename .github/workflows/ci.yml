@@ -70,20 +70,20 @@ jobs:
           make
           make test
 
-      - name: Same-run raw HTTP input comparisons
+      - name: Same-run production native HTTP comparisons
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
           export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=50000 --warmup=5000 --repeats=7 --response-bytes=32 --json=bench/results/ci-raw-get32.json
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=30000 --warmup=3000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-raw-get16k.json
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type,linuxevent_content_type_native --requests=30000 --warmup=3000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-raw-post4k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --response-bytes=32 --json=bench/results/ci-native-default-get32.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=30000 --warmup=3000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-native-default-get16k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=30000 --warmup=3000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-native-default-post4k.json
 
-      - name: Upload raw HTTP benchmark results
+      - name: Upload production native HTTP benchmark results
         if: matrix.perl == '5' && matrix.multi_thread == false
         uses: actions/upload-artifact@v4
         with:
-          name: raw-http-current-lifecycle
-          path: bench/results/ci-raw-*.json
+          name: native-http-production-default
+          path: bench/results/ci-native-default-*.json
 
       - name: End-to-end benchmark smoke
         if: matrix.perl == '5' && matrix.multi_thread == false
