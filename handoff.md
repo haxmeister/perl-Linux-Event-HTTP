@@ -36,10 +36,40 @@ normal dependency resolution again.
 
 Do not lower the published Linux::Event dependency below 0.116.
 
+### Production native HTTP/1 input work
+
+Active branch: `feature/default-native-http-input`.
+
+The production-default conversion is now implemented on the branch and awaiting
+full validation.
+
+Design decision:
+
+- `Linux::Event::HTTP::Server::Connection` itself declares the HTTP raw native
+  consumer;
+- the base class no longer defines ordinary `on_data`;
+- this matches the existing public contract: Server and Connection already
+  reject constructor `on_data` because HTTP owns protocol byte input;
+- application subclasses continue to customize `on_request`, `on_body`,
+  `on_request_end`, transport lifecycle callbacks, and `stream_tuning`;
+- a subclass that defines `on_data` now fails explicitly because Linux::Event
+  forbids combining an inherited native consumer with ordinary `on_data`;
+- no Linux::Event core change is required.
+
+Focused `t/40-server.t` coverage now instruments an ordinary
+`Server::Connection` subclass and requires its request to enter through
+`_http_native_request`. It also verifies that a subclass attempting to define
+`on_data` is rejected at descriptor construction.
+
+Next validation steps are the full HTTP test matrix, disttest, same-run
+pre-native-baseline comparison, and a fresh Benchmark::Web competitor run using
+the normal public server path.
+
 ### Raw native HTTP/1 state
 
-Raw HTTP/1 request-head parsing is now retained in main as a validated internal
-capability. It is NOT yet the default production Server::Connection input mode.
+Raw HTTP/1 request-head parsing is retained in main as a validated internal
+capability. On the active production-default branch it is now the normal
+Server::Connection input mode.
 
 The raw provider:
 
