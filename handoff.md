@@ -153,12 +153,15 @@ metadata, test, disttest, and native-input regression perspectives.
 
 The release-prep branch has been squash-merged to main.
 
+Release 0.002 is now stamped `2026-09-20` in Changes at commit
+`3f18be8c1677f9e2704dcf718d3071a9e19359ad`.
+
 Remaining steps:
 
-1. wait for Linux::Event 0.116 to be publicly resolvable from CPAN;
-2. when the user explicitly authorizes release, replace
-   `0.002 UNRELEASED` with the release date, run the final gate, build/upload
-   the tarball, tag `v0.002`, and create the GitHub release.
+1. confirm Linux::Event 0.116 is publicly resolvable from CPAN before uploading HTTP 0.002;
+2. run the final stamped-tree CI gate;
+3. the user can then run `make dist` and upload `Linux-Event-HTTP-0.002.tar.gz`;
+4. after upload, tag `v0.002` and create the GitHub release if desired.
 
 ## Release summary draft
 
