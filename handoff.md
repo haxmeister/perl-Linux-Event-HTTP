@@ -8,7 +8,7 @@ Repository: `haxmeister/perl-Linux-Event-HTTP`
 
 Canonical branch: `main`
 
-Release-prep branch: `release/0.002-prep`
+Release-prep branch: merged; no active release branch is required.
 
 Project boundary: modify only Linux::Event::HTTP unless the user explicitly
 authorizes another repository in the current chat.
@@ -34,10 +34,13 @@ user explicitly authorizes the release.
 
 ### Current production architecture
 
-Current `main` before release prep:
+Current release-prepared `main` integration commit:
 
-`e1deabae5de9758b5aa2f594e166e4b056728393`
-"docs: make native-default handoff authoritative"
+`9d179aa78c0fe6cd10da0b6a7b5952c73aa525ba`
+"Prepare Linux::Event::HTTP 0.002 release"
+
+The pre-release-prep native-default main commit was
+`e1deabae5de9758b5aa2f594e166e4b056728393`.
 
 Production native-input implementation:
 
@@ -126,7 +129,7 @@ Completed on `release/0.002-prep`:
   picohttpparser license/source, documentation, and advertised benchmark
   backends.
 
-Final release-prep gate: GitHub Actions run `35551183855`.
+Final release-prep branch gate: GitHub Actions run `35551331335`.
 
 - Perl 5.36: PASS;
 - latest Perl: PASS;
@@ -148,11 +151,12 @@ Latest-Perl same-run production-native medians from the release-prep gate:
 The 0.002 repository state is therefore release-ready from the HTTP code,
 metadata, test, disttest, and native-input regression perspectives.
 
+The release-prep branch has been squash-merged to main.
+
 Remaining steps:
 
-1. merge the release-prep branch to main;
-2. wait for Linux::Event 0.116 to be publicly resolvable from CPAN;
-3. when the user explicitly authorizes release, replace
+1. wait for Linux::Event 0.116 to be publicly resolvable from CPAN;
+2. when the user explicitly authorizes release, replace
    `0.002 UNRELEASED` with the release date, run the final gate, build/upload
    the tarball, tag `v0.002`, and create the GitHub release.
 
