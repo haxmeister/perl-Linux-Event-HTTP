@@ -13,6 +13,9 @@ Revision history for Linux-Event-HTTP
       used by this distribution.
     - Add the raw native HTTP/1 server input path and preserve same-read bytes
       across Upgrade and CONNECT protocol transitions.
+    - Make the raw native HTTP/1 consumer the production Server::Connection
+      input path. HTTP owns byte input; application subclasses continue to
+      customize HTTP callbacks and may not replace protocol input with on_data.
     - Keep Content-Length request bodies in the raw native input path: drain
       unconsumed bodies without Perl materialization, deliver on_body chunks
       directly without staging through the generic input buffer, and return to
