@@ -1281,10 +1281,16 @@ high-watermark contract, and C<on_drain> is driven by the connection's native
 drain transition. C<on_cancel> runs if the connection disappears before the
 producer completes.
 
-C<on_data> is reserved by this HTTP connection implementation. Connection-level
-C<on_drain> and C<on_close> callbacks or subclass methods remain supported;
-HTTP composes its body-stream bookkeeping with those lifecycle callbacks rather
-than replacing them.
+HTTP request bytes are consumed by the class-level native HTTP/1 consumer
+before ordinary Perl C<on_data> delivery. C<on_data> is therefore protocol-owned
+and is not a Connection subclass extension point; defining it on a subclass is
+invalid. Customize request handling through C<on_request>, C<on_body>, and
+C<on_request_end>, and customize transport policy through C<stream_tuning> and
+the supported transport lifecycle callbacks.
+
+Connection-level C<on_drain> and C<on_close> callbacks or subclass methods remain
+supported; HTTP composes its body-stream bookkeeping with those lifecycle
+callbacks rather than replacing them.
 
 =head1 REQUEST BODY STREAMING
 
