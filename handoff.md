@@ -65,6 +65,14 @@ Next validation steps are the full HTTP test matrix, disttest, same-run
 pre-native-baseline comparison, and a fresh Benchmark::Web competitor run using
 the normal public server path.
 
+The first CI pass proved all 41 HTTP test files green on Perl 5.36, latest, and
+latest threaded. The only failure occurred later in the transaction-lifecycle
+diagnostic because an old benchmark-only Server::Connection subclass still
+defined `on_data`. That copied Perl-input diagnostic has now been retired
+rather than adding a compatibility path. Contract 10 keeps manual construction
+stages on a plain Stream and reserves the production Connection stage for the
+actual native-input Server::Connection.
+
 ### Raw native HTTP/1 state
 
 Raw HTTP/1 request-head parsing is retained in main as a validated internal
