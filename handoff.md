@@ -73,6 +73,27 @@ rather than adding a compatibility path. Contract 10 keeps manual construction
 stages on a plain Stream and reserves the production Connection stage for the
 actual native-input Server::Connection.
 
+Final branch gate: GitHub Actions run `35547549816`.
+
+- Perl 5.36: PASS;
+- Perl latest: PASS;
+- Perl latest threaded: PASS;
+- full suite: 41 files / 1,029 tests;
+- distribution integrity / disttest: PASS;
+- transaction-lifecycle diagnostic contract 10: PASS;
+- production-native same-run comparisons: PASS.
+
+Latest-Perl medians against the exact pre-native baseline:
+
+- GET / 32-byte response: 31,472.7 -> 33,506.0 req/s = +6.5%;
+- GET / 16 KiB response: 23,029.0 -> 25,705.8 req/s = +11.6%;
+- POST / 4 KiB request, 32-byte response:
+  19,000.9 -> 20,582.9 req/s = +8.3%.
+
+The production-default conversion therefore improves all three standard
+workloads while removing the Perl `on_data` handoff from the normal server
+input path.
+
 ### Raw native HTTP/1 state
 
 Raw HTTP/1 request-head parsing is retained in main as a validated internal
