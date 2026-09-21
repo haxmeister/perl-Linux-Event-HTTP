@@ -9,12 +9,18 @@ use Carp qw(croak);
 use Scalar::Util qw(refaddr);
 use utf8 ();
 
+use Linux::Event::Framer ();
 use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Request;
 use Linux::Event::HTTP::Response;
 use Linux::Event::HTTP::Transaction;
 
 our $VERSION = '0.001';
+
+Linux::Event::Framer->declare_native_consumer(
+    __PACKAGE__,
+    Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+);
 
 my $PARSER = 'Linux::Event::HTTP::_HTTP1';
 my $CHUNKED = 'Linux::Event::HTTP::_HTTP1::Chunked';
@@ -110,13 +116,6 @@ sub transaction ($self) {
         if $self->{_http_response_output_complete};
     $self->{_http_active_transaction} = $transaction;
     return $transaction;
-}
-
-sub on_data ($self, $bytes) {
-    return if $self->{_http_closing} || $self->is_closed;
-    $self->{_http_input} .= $bytes;
-    $self->_drive_http1;
-    return;
 }
 
 sub _http_native_protocol_400 ($self) {
@@ -1282,10 +1281,16 @@ high-watermark contract, and C<on_drain> is driven by the connection's native
 drain transition. C<on_cancel> runs if the connection disappears before the
 producer completes.
 
-C<on_data> is reserved by this HTTP connection implementation. Connection-level
-C<on_drain> and C<on_close> callbacks or subclass methods remain supported;
-HTTP composes its body-stream bookkeeping with those lifecycle callbacks rather
-than replacing them.
+HTTP request bytes are consumed by the class-level native HTTP/1 consumer
+before ordinary Perl C<on_data> delivery. C<on_data> is therefore protocol-owned
+and is not a Connection subclass extension point; defining it on a subclass is
+invalid. Customize request handling through C<on_request>, C<on_body>, and
+C<on_request_end>, and customize transport policy through C<stream_tuning> and
+the supported transport lifecycle callbacks.
+
+Connection-level C<on_drain> and C<on_close> callbacks or subclass methods remain
+supported; HTTP composes its body-stream bookkeeping with those lifecycle
+callbacks rather than replacing them.
 
 =head1 REQUEST BODY STREAMING
 

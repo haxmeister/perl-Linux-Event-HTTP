@@ -8,8 +8,6 @@ use Scalar::Util qw(refaddr);
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Framer ();
-use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Server::Connection;
 use Linux::Event::HTTP::Server;
 
@@ -165,19 +163,7 @@ is(
 {
     package T::RawUpgradeHTTP;
     use parent -norequire, 'T::UpgradeHTTP';
-    use Linux::Event::Framer ();
-    use Linux::Event::HTTP::_HTTP1 ();
-
-    Linux::Event::Framer->declare_native_consumer(
-        __PACKAGE__,
-        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
-    );
-
-    sub can ($class, $name) {
-        return undef if $name eq 'on_data';
-        return $class->SUPER::can($name);
-    }
-
+        
     sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
         return $self->SUPER::_http_native_request($request);
@@ -224,7 +210,7 @@ subtest 'raw native HTTP Upgrade retires into ordinary on_data target' => sub {
     is($state->{target_class}, 'T::UpgradedProtocol',
         'native HTTP consumer retires into ordinary target class');
     ok($state->{same_object},
-        'raw native Upgrade retains live Stream object identity');
+        'production native Upgrade retains live Stream object identity');
     is(
         $state->{wire},
         "HTTP/1.1 101 Switching Protocols\r\n" .

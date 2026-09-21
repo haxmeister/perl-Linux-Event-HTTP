@@ -16,7 +16,6 @@ bench/servers/feersum-http.pl
 bench/servers/go-http.go
 bench/servers/libh2o-http.c
 bench/servers/linuxevent-http.pl
-bench/servers/linuxevent-transaction-stage.pl
 bench/servers/mojo-http.pl
 bench/servers/node-http.js
 bench/servers/twiggy-http.pl
