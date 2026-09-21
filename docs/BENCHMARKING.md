@@ -250,7 +250,7 @@ Linux::Event profiling as separate views of the stack.
 
 ## Current production lifecycle diagnostic
 
-The default transaction ladder uses contract 9:
+The transaction ladder uses contract 10:
 
 ```sh
 perl -Mblib bench/run-http-transaction-ladder.pl \
@@ -261,25 +261,22 @@ perl -Mblib bench/run-http-transaction-ladder.pl \
 
 | Case | Work measured |
 | --- | --- |
-| `prod_api` | Native server request checks, compact Response, public Content-Type/body setters, prebuilt diagnostic wire |
-| `prod_wire` | Adds the actual native scalar-final builder, including validation, generated Content-Length, commit, and wire construction |
-| `prod_active` | Adds the three live exchange references and their retirement |
-| `prod_dispatch` | Uses the actual guarded callback, readiness, scalar send, and retirement methods |
-| `prod_connection` | Uses the unmodified production Connection driver through a raw Listener |
-| `current_http` | Uses the full Server wrapper with Content-Type |
+| `prod_api` | Manual Stream byte driver: native Request parse, sparse Response, public Content-Type/body setters, prebuilt diagnostic wire |
+| `prod_wire` | Adds the production native scalar-final builder and generated Content-Length/commit work |
+| `prod_active` | Adds the three live exchange references used by the HTTP Connection |
+| `prod_connection` | Actual production `Server::Connection` with inherited native HTTP input through a Listener |
+| `current_http` | Adds the full `Server` wrapper with Content-Type |
 
-All stages use the same bodyless GET workload, transport, and client. The
-intermediate stages are diagnostics; they do not implement a general HTTP
-server. In particular, `prod_api` skips generated framing metadata and commit.
-The callback stage includes readiness/send bookkeeping, so its delta cannot be
-attributed to exception handling alone. Stage differences include diagnostic
-control flow and are hypotheses for production A/B tests, not guaranteed gains.
+The first three stages intentionally use a plain `IO::Sock::Stream` because
+they manually drive bytes in order to isolate construction costs. They are not
+HTTP Connection subclasses and should not be interpreted as alternative server
+implementations. `prod_connection` is the first stage that runs the real
+production HTTP input provider.
 
-Earlier `current_*` and legacy cases remain explicitly selectable with
-`--cases`. Their copied lifecycle includes historical behavior, and their
-percentages should not guide optimization of the current production path.
-Do not combine the old generic head-serialization stage with the newer fused
-scalar-final builder as if they represented the same production work.
+The older copied Perl `on_data` lifecycle ladder was removed when native HTTP
+input became the production Connection contract. Keeping it as an HTTP subclass
+would misrepresent the public API and require an invalid native-consumer /
+`on_data` combination.
 
 For an actual optimization, build an exact baseline in another directory and
 run the production comparison with `BENCH_BASE_TREE` set to that directory:
@@ -293,7 +290,6 @@ BENCH_BASE_TREE=/path/to/built/baseline \
   --json=bench/results/production-ab.json
 ```
 
-Also measure a 16 KiB response and a 4 KiB POST (`--request-body-bytes=4096`).
-The historical baseline display label mentions an older fast-path experiment;
-`BENCH_BASE_TREE` determines the real baseline. Record its exact commit alongside
-the results. Both builds must use the same Perl and Linux::Event core.
+Also measure a 16 KiB response and a 4 KiB POST
+(`--request-body-bytes=4096`). Both builds must use the same Perl and
+Linux::Event core.
