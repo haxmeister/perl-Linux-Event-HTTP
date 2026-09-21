@@ -38,10 +38,12 @@ Do not lower the published Linux::Event dependency below 0.116.
 
 ### Production native HTTP/1 input work
 
-Active branch: `feature/default-native-http-input`.
+Merged to `main` as:
 
-The production-default conversion is now implemented on the branch and awaiting
-full validation.
+`71ec89135be61094a1599e3cee74dadd46addf02`
+"Make native HTTP input the production server path"
+
+The production-default conversion is complete and validated.
 
 Design decision:
 
@@ -97,8 +99,7 @@ input path.
 ### Raw native HTTP/1 state
 
 Raw HTTP/1 request-head parsing is retained in main as a validated internal
-capability. On the active production-default branch it is now the normal
-Server::Connection input mode.
+capability. It is now the normal production Server::Connection input mode on main.
 
 The raw provider:
 
