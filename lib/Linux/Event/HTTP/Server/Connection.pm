@@ -9,12 +9,18 @@ use Carp qw(croak);
 use Scalar::Util qw(refaddr);
 use utf8 ();
 
+use Linux::Event::Framer ();
 use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Request;
 use Linux::Event::HTTP::Response;
 use Linux::Event::HTTP::Transaction;
 
 our $VERSION = '0.001';
+
+Linux::Event::Framer->declare_native_consumer(
+    __PACKAGE__,
+    Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+);
 
 my $PARSER = 'Linux::Event::HTTP::_HTTP1';
 my $CHUNKED = 'Linux::Event::HTTP::_HTTP1::Chunked';
@@ -110,13 +116,6 @@ sub transaction ($self) {
         if $self->{_http_response_output_complete};
     $self->{_http_active_transaction} = $transaction;
     return $transaction;
-}
-
-sub on_data ($self, $bytes) {
-    return if $self->{_http_closing} || $self->is_closed;
-    $self->{_http_input} .= $bytes;
-    $self->_drive_http1;
-    return;
 }
 
 sub _http_native_protocol_400 ($self) {
