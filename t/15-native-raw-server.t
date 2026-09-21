@@ -7,27 +7,13 @@ use Test::More;
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Framer ();
-use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Server;
 use Linux::Event::HTTP::Server::Connection;
 
 {
     package T::RawHTTPConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
-    use Linux::Event::Framer ();
-    use Linux::Event::HTTP::_HTTP1 ();
-
-    Linux::Event::Framer->declare_native_consumer(
-        __PACKAGE__,
-        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
-    );
-
-    sub can ($class, $name) {
-        return undef if $name eq 'on_data';
-        return $class->SUPER::can($name);
-    }
-
+        
     sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
         return $self->SUPER::_http_native_request($request);
@@ -153,19 +139,7 @@ subtest 'raw native head parsing shares the current request lifecycle' => sub {
 {
     package T::RawDrainConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
-    use Linux::Event::Framer ();
-    use Linux::Event::HTTP::_HTTP1 ();
-
-    Linux::Event::Framer->declare_native_consumer(
-        __PACKAGE__,
-        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
-    );
-
-    sub can ($class, $name) {
-        return undef if $name eq 'on_data';
-        return $class->SUPER::can($name);
-    }
-
+        
     sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
         return $self->SUPER::_http_native_request($request);
@@ -574,19 +548,7 @@ subtest 'malformed raw chunked body fails the active request with 400' => sub {
 {
     package T::RawBodyCloseConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
-    use Linux::Event::Framer ();
-    use Linux::Event::HTTP::_HTTP1 ();
-
-    Linux::Event::Framer->declare_native_consumer(
-        __PACKAGE__,
-        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
-    );
-
-    sub can ($class, $name) {
-        return undef if $name eq 'on_data';
-        return $class->SUPER::can($name);
-    }
-
+        
     sub on_request ($self, $request, $response) {
         return;
     }
@@ -650,19 +612,7 @@ subtest 'reentrant close is safe inside direct raw Content-Length on_body' => su
 {
     package T::RawCloseConnection;
     use parent 'Linux::Event::HTTP::Server::Connection';
-    use Linux::Event::Framer ();
-    use Linux::Event::HTTP::_HTTP1 ();
-
-    Linux::Event::Framer->declare_native_consumer(
-        __PACKAGE__,
-        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
-    );
-
-    sub can ($class, $name) {
-        return undef if $name eq 'on_data';
-        return $class->SUPER::can($name);
-    }
-
+        
     sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
         return $self->SUPER::_http_native_request($request);
