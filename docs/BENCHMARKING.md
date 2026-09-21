@@ -137,31 +137,27 @@ included in JSON output when available.
 
 ### Linux::Event request-body diagnostics
 
-The comparison harness also exposes ordinary/raw Linux::Event::HTTP pairs for
-isolating request-body lifecycle costs:
+The comparison harness exposes production Linux::Event::HTTP request-body modes
+for isolating application lifecycle costs while keeping the same native HTTP
+input path:
 
 ```text
 linuxevent_body_ignore
-linuxevent_body_ignore_native
 linuxevent_body_callback
-linuxevent_body_callback_native
 linuxevent_body_end
-linuxevent_body_end_native
 linuxevent_body_callback_end
-linuxevent_body_callback_end_native
 ```
 
 They distinguish bodies drained without an application consumer from bodies
 delivered through `on_body`, and responses generated immediately in
 `on_request` from responses generated after completion in `on_request_end`.
-Use them in ordinary/raw pairs and rotate multiple repeats; they are diagnostic
-server modes, not separate public APIs.
+These are diagnostic server modes, not separate public APIs.
 
 For example:
 
 ```sh
 perl -Mblib bench/run-http-comparison.pl \
-  --servers=linuxevent_body_ignore,linuxevent_body_ignore_native,linuxevent_body_callback,linuxevent_body_callback_native,linuxevent_body_end,linuxevent_body_end_native,linuxevent_body_callback_end,linuxevent_body_callback_end_native \
+  --servers=linuxevent_body_ignore,linuxevent_body_callback,linuxevent_body_end,linuxevent_body_callback_end \
   --request-body-bytes=65536 --response-bytes=32 --repeats=5
 ```
 
@@ -169,7 +165,7 @@ To send the same decoded body using HTTP/1.1 chunked transfer coding:
 
 ```sh
 perl -Mblib bench/run-http-comparison.pl \
-  --servers=linuxevent_body_ignore,linuxevent_body_ignore_native,linuxevent_body_callback,linuxevent_body_callback_native,linuxevent_body_end,linuxevent_body_end_native,linuxevent_body_callback_end,linuxevent_body_callback_end_native \
+  --servers=linuxevent_body_ignore,linuxevent_body_callback,linuxevent_body_end,linuxevent_body_callback_end \
   --request-body-bytes=65536 \
   --request-body-framing=chunked \
   --request-chunk-bytes=4096 \
@@ -181,21 +177,22 @@ perl -Mblib bench/run-http-comparison.pl \
 wire; the harness adds hexadecimal chunk lengths, CRLF delimiters, and the final
 zero chunk.
 
-The current raw Content-Length path consumes drained body bytes directly from the
-native ordered-byte buffer and delivers requested `on_body` chunks directly to
-the existing HTTP callback lifecycle.
+Production `Server::Connection` uses the raw native HTTP/1 consumer. A
+Content-Length body is drained directly from the native ordered-byte buffer when
+there is no `on_body` callback; when `on_body` is present, only body bytes are
+materialized for that callback.
 
-Chunked request bodies also remain on the raw native path. The provider keeps a
+Chunked request bodies also remain on the native path. The provider keeps a
 persistent pico chunk decoder and copies each borrowed encoded input window only
 into mutable native scratch because pico's decoder rewrites its input. Drained
 chunked bodies do not materialize body bytes in Perl; when `on_body` is present,
 only decoded payload bytes cross into Perl. Trailers are consumed by the decoder,
-and any bytes following the terminating chunk remain in Linux::Event's native
-ordered-byte buffer for request-head parsing.
+and bytes following the terminating chunk remain in Linux::Event's native input
+buffer for the next request head.
 
 A following request head that shares the same read with either a Content-Length
-body boundary or a completed chunked body must therefore remain native input and
-be parsed by the raw request-head consumer.
+body boundary or a completed chunked body therefore remains native input and is
+parsed without an ordinary Perl `on_data` handoff.
 
 The comparison is a protocol-stack comparison, not an attempt to make each
 framework perform an identical amount of application-layer work. Each adapter
