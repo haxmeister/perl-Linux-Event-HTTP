@@ -8,8 +8,6 @@ use Scalar::Util qw(refaddr);
 use Linux::Event::Loop;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::IO::Sock::Stream;
-use Linux::Event::Framer ();
-use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Server;
 use Linux::Event::HTTP::Server::Connection;
 
@@ -171,26 +169,14 @@ subtest 'successful CONNECT hands the same live stream to the tunnel protocol' =
 {
     package T::RawConnectHTTP;
     use parent -norequire, 'T::ConnectHTTP';
-    use Linux::Event::Framer ();
-    use Linux::Event::HTTP::_HTTP1 ();
-
-    Linux::Event::Framer->declare_native_consumer(
-        __PACKAGE__,
-        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
-    );
-
-    sub can ($class, $name) {
-        return undef if $name eq 'on_data';
-        return $class->SUPER::can($name);
-    }
-
+        
     sub _http_native_request ($self, $request) {
         $self->data->{raw_request_hits}++;
         return $self->SUPER::_http_native_request($request);
     }
 }
 
-subtest 'raw native CONNECT retires into ordinary tunnel target' => sub {
+subtest 'production native CONNECT retires into ordinary tunnel target' => sub {
     my $loop = Linux::Event::Loop->new;
     my $state = {
         wire => '',
@@ -228,7 +214,7 @@ subtest 'raw native CONNECT retires into ordinary tunnel target' => sub {
     is($state->{target_class}, 'T::ServerTunnelProtocol',
         'native HTTP consumer retires into ordinary tunnel target');
     ok($state->{same_object},
-        'raw native CONNECT retains live Stream object identity');
+        'production native CONNECT retains live Stream object identity');
     is(
         $state->{wire},
         "HTTP/1.1 200 OK\r\n" .
