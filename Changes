@@ -1,30 +1,41 @@
 Revision history for Linux-Event-HTTP
 
-0.001  UNRELEASED
+0.002  UNRELEASED
 
-    - Fix interpreter context in native Response helpers on threaded Perl.
+    - Fix interpreter context handling in native Response helpers on threaded Perl.
+    - Require Linux::Event 0.116 for the ordered-byte raw-consumer ABI,
+      native-consumer retirement/transition semantics, and the current Stream and
+      Listener contracts used by HTTP.
+    - Optimize the server request/response lifecycle without changing the public
+      Request, Response, Transaction, or callback APIs.
+    - Parse production HTTP/1 request heads directly from Linux::Event's native
+      ordered-byte input buffer before bytes are surfaced through Perl on_data.
+    - Preserve unread same-read bytes across HTTP Upgrade and CONNECT handoff to
+      another native consumer or an ordinary Stream target.
+    - Keep Content-Length request bodies on native input: drain unused bodies
+      without Perl materialization, deliver on_body payload directly, and preserve
+      an immediately following pipelined request head at the exact body boundary.
+    - Keep chunked request bodies on native input with persistent picohttpparser
+      decoder state, native drain mode, direct decoded on_body delivery, trailer
+      consumption, fragmented-read support, and exact next-request preservation.
+    - Make the native HTTP/1 consumer the production Server::Connection input
+      contract. HTTP owns protocol bytes; application subclasses customize
+      on_request, on_body, on_request_end, transport lifecycle callbacks, and
+      stream_tuning rather than replacing HTTP input with on_data.
+    - Extend correctness coverage for native request input, reentrant close,
+      fragmented chunked bodies, pipelining, Upgrade, CONNECT, and invalid
+      Server::Connection on_data overrides.
+    - Update benchmark and CI coverage for the production-native server path and
+      retain same-run pre-native comparisons as regression evidence.
+
+0.001  2026-09-13
     - Initial distribution scaffold.
     - Establish HTTP protocol, transport, message, transaction, and high-level
       client-operation boundaries.
     - Use the flat Linux::Event::HTTP namespace and make the server-side transport
       class Linux::Event::HTTP::Server::Connection.
-    - Require Linux::Event 0.116 for the ordered-byte raw-consumer ABI,
-      native-consumer transition semantics, Listener, tuning, TLS, and stream APIs
-      used by this distribution.
-    - Add the raw native HTTP/1 server input path and preserve same-read bytes
-      across Upgrade and CONNECT protocol transitions.
-    - Make the raw native HTTP/1 consumer the production Server::Connection
-      input path. HTTP owns byte input; application subclasses continue to
-      customize HTTP callbacks and may not replace protocol input with on_data.
-    - Keep Content-Length request bodies in the raw native input path: drain
-      unconsumed bodies without Perl materialization, deliver on_body chunks
-      directly without staging through the generic input buffer, and return to
-      native request-head parsing at the exact body boundary.
-    - Keep chunked request bodies in the raw native input path with a persistent
-      picohttpparser chunk decoder. Decode borrowed encoded windows through
-      mutable native scratch, drain without Perl body materialization, deliver
-      only decoded payload to on_body, consume trailers, and preserve same-read
-      bytes after the terminating chunk for native request-head parsing.
+    - Require Linux::Event 0.113 for the Listener, tuning, TLS, and stream APIs used
+      by this distribution.
     - Vendor picohttpparser for self-contained native HTTP/1 request-head parsing.
     - Add strict obs-fold rejection and explicit header-count limits above pico.
     - Add native Request state with lazy method, target, and header materialization.
