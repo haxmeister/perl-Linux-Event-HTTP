@@ -126,15 +126,33 @@ Completed on `release/0.002-prep`:
   picohttpparser license/source, documentation, and advertised benchmark
   backends.
 
-Still required before calling the release ready:
+Final release-prep gate: GitHub Actions run `35551183855`.
 
-1. run the full branch CI matrix after the release-prep changes;
-2. confirm `make disttest` passes from the 0.002 versioned tree;
-3. inspect the final generated distribution metadata/version through CI output
-   if needed;
-4. merge the release-prep branch to main after green validation;
-5. wait for Linux::Event 0.116 to be publicly resolvable from CPAN;
-6. when the user explicitly authorizes release, replace
+- Perl 5.36: PASS;
+- latest Perl: PASS;
+- latest threaded Perl: PASS;
+- full current suite: 41 files / 1,029 tests;
+- exact pre-native baseline: PASS (40 files / 1,015 tests);
+- end-to-end benchmark smoke: PASS;
+- transaction-lifecycle diagnostic smoke: PASS;
+- distribution integrity / `make disttest`: PASS;
+- disttest explicitly built and tested `Linux-Event-HTTP-0.002`.
+
+Latest-Perl same-run production-native medians from the release-prep gate:
+
+- GET / 32-byte response: 31,133.8 -> 33,842.8 req/s (+8.7%);
+- GET / 16 KiB response: 23,032.8 -> 26,717.6 req/s (+16.0%);
+- POST / 4 KiB request, 32-byte response:
+  19,051.8 -> 20,186.5 req/s (+6.0%).
+
+The 0.002 repository state is therefore release-ready from the HTTP code,
+metadata, test, disttest, and native-input regression perspectives.
+
+Remaining steps:
+
+1. merge the release-prep branch to main;
+2. wait for Linux::Event 0.116 to be publicly resolvable from CPAN;
+3. when the user explicitly authorizes release, replace
    `0.002 UNRELEASED` with the release date, run the final gate, build/upload
    the tarball, tag `v0.002`, and create the GitHub release.
 
