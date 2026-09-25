@@ -430,6 +430,79 @@ The spike should prove Linux::Event transport integration, concurrent streams,
 streaming DATA defer/resume, h2spec viability, and basic overhead before the
 backend choice is frozen.
 
+### HTTP/2 nghttp2 integration spike result
+
+Active experiment branch:
+
+`experiment/http2-nghttp2-spike`
+
+Draft PR: #39.
+
+The transport/protocol-engine spike has validated Net::HTTP2::nghttp2 0.008 as
+the preferred HTTP/2 engine direction.
+
+Key spike commits:
+
+- `fc7d3039bfa50c68b6e35a94586bcacb74c647fe`
+  "experiment: add nghttp2 Linux::Event integration spike";
+- `af6f6fb0a6ecee6ece8fd576f38ccb79c52e3aa4`
+  "experiment: fix nghttp2 pseudo-header capture";
+- `1b42ecc80e1dac4d408993d4b3cdce36ce126aee`
+  "experiment: prove h2 ALPN selection with nghttp2".
+
+Validated CI run:
+
+`36195688110`
+
+Latest-Perl results:
+
+- Net::HTTP2::nghttp2 0.008 plus libnghttp2 installed successfully in CI;
+- `t/90-http2-nghttp2-spike.t` PASS;
+- `t/91-http2-alpn-spike.t` PASS;
+- full checkout test run with the two optional spike tests:
+  44 files / 1,084 tests, PASS;
+- existing HTTP end-to-end benchmark smoke PASS;
+- existing client receive-path benchmark smoke PASS;
+- `make disttest` PASS for the production MANIFEST.
+
+The plain-TCP spike proves one Linux::Event connection can host one nghttp2
+session with nine simultaneous streams:
+
+- seven concurrent GET streams;
+- one POST stream carrying request DATA;
+- one deferred response whose data provider returns no data until a
+  Linux::Event Timer fires, then resumes the stream.
+
+All streams completed independently.
+
+The TLS spike proves:
+
+- server and client both advertise `h2` before `http/1.1`;
+- both sides expose negotiated `selected_alpn eq 'h2'` before application
+  protocol bytes are processed;
+- nghttp2 sessions can be created after TLS transport readiness;
+- an HTTP/2 request/response completes over the encrypted Linux::Event Stream.
+
+The early spike failures were test-scaffolding errors, not protocol-engine or
+Linux::Event failures. One came from a pseudo-header test regex losing its
+backslash while being generated through JavaScript; another came from following
+a stale Session synopsis that showed a leading session callback argument. The
+actual 0.008 callback contract and XS implementation use the documented
+positional forms without a leading session object.
+
+Decision:
+
+Net::HTTP2::nghttp2 is the selected implementation direction for the first
+Linux::Event::HTTP HTTP/2 executor. Do not build a competing in-house HPACK/frame
+engine and do not use the higher-level Net::HTTP2 client abstraction.
+
+The spike remains experimental and does not yet add Net::HTTP2::nghttp2 to the
+production Makefile.PL dependency set.
+
+The next design/implementation boundary is HTTP/2 message mapping, specifically
+how `:scheme` and `:authority` are preserved in the protocol-neutral Request
+API without exposing pseudo-headers as ordinary headers.
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
