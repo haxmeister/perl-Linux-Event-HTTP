@@ -302,6 +302,15 @@ sub run_client_case (%opt) {
             port => $port,
             data => $state,
         );
+        $state->{on_complete} = sub ($transaction) {
+            _bench_complete($conn, $transaction);
+        };
+        $state->{on_error} = sub ($transaction, $error) {
+            _bench_error($conn, $transaction, $error);
+        };
+        $state->{on_body} = sub ($transaction, $response, $bytes) {
+            _bench_body($conn, $transaction, $response, $bytes);
+        };
         push @{$bench->{connections}}, $conn;
     }
 
@@ -421,12 +430,12 @@ sub issue_next ($conn) {
     );
 
     my %option = (
-        on_complete => \&_bench_complete,
-        on_error    => \&_bench_error,
+        on_complete => $state->{on_complete},
+        on_error    => $state->{on_error},
     );
 
     if ($bench->{handling} eq 'on_body') {
-        $option{on_body} = \&_bench_body;
+        $option{on_body} = $state->{on_body};
     } elsif ($bench->{handling} eq 'buffer') {
         $option{buffer_body} = $bench->{response_bytes};
     }
@@ -435,9 +444,7 @@ sub issue_next ($conn) {
     return;
 }
 
-sub _bench_complete ($transaction) {
-    my $conn = $transaction->{controller};
-    return if !$conn;
+sub _bench_complete ($conn, $transaction) {
     my $state = $conn->data;
     my $bench = $state->{bench};
 
@@ -462,9 +469,7 @@ sub _bench_complete ($transaction) {
     return;
 }
 
-sub _bench_body ($transaction, $response, $bytes) {
-    my $conn = $transaction->{controller};
-    return if !$conn;
+sub _bench_body ($conn, $transaction, $response, $bytes) {
     my $bench = $conn->data->{bench};
     if ($bench->{measuring}) {
         ++$bench->{on_body_calls};
@@ -473,9 +478,7 @@ sub _bench_body ($transaction, $response, $bytes) {
     return;
 }
 
-sub _bench_error ($transaction, $error) {
-    my $conn = $transaction->{controller};
-    return if !$conn;
+sub _bench_error ($conn, $transaction, $error) {
     my $bench = $conn->data->{bench};
     $bench->{error} //= $error;
     $bench->{loop}->stop;
