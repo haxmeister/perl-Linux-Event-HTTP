@@ -503,6 +503,41 @@ The next design/implementation boundary is HTTP/2 message mapping, specifically
 how `:scheme` and `:authority` are preserved in the protocol-neutral Request
 API without exposing pseudo-headers as ordinary headers.
 
+### HTTP/2 message mapping decision
+
+The Request pseudo-header mapping decision is now implemented on
+`experiment/http2-nghttp2-spike`.
+
+Key commits:
+
+- `ac2278c2517121cf4e9e0516f01d53beeb2aac5a`
+  "http2: add Request scheme and authority metadata";
+- `b28becb9acbfb88d5fa3dfdb4ad6c4ec5ca2318d`
+  "http2: add private message mapping adapter";
+- `53a9d056b40f1b7212a92f49049346cb4ea30082`
+  "http2: test message and Transaction mapping".
+
+Decisions:
+
+- `Request->scheme` and `Request->authority` are protocol-neutral message
+  metadata.
+- HTTP/2 maps `:scheme` and `:authority` directly into those accessors.
+- HTTP/2 pseudo-headers never appear in the ordinary lossless header list.
+- HTTP/1 origin-form derives authority from one Host field but does not invent a
+  scheme.
+- HTTP/1 absolute-form derives both scheme and authority from the target.
+- HTTP/1 and HTTP/2 ordinary CONNECT expose authority-form through
+  `Request->target` and `Request->authority`.
+- Extended CONNECT `:protocol` remains explicitly unsupported for now.
+- the private `Linux::Event::HTTP::_HTTP2` mapper validates HTTP/2 header
+  ordering and connection-specific field rules at the protocol boundary.
+- one HTTP/2 request stream maps to one ordinary Transaction whose Response uses
+  version `2`.
+
+The next implementation step is a private HTTP/2 executor around one nghttp2
+Session and a stream-id-to-Transaction map. It should consume the mapper rather
+than duplicating message semantics in callbacks.
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
