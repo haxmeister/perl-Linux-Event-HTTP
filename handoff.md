@@ -132,6 +132,86 @@ Conclusion: the measurement threshold is met. A native Client::Connection
 receive-path prototype is justified. The experiment must still prove correctness
 and repeatable end-to-end improvement before anything is promoted to production.
 
+### Native client response-head prototype result
+
+The first native client prototype keeps the scope deliberately narrow:
+
+- response heads are parsed directly from Linux::Event's borrowed native input
+  buffer by a dedicated HTTP/1 client raw-consumer provider;
+- the parsed head is materialized as the existing public
+  `Linux::Event::HTTP::Response` object;
+- Content-Length, chunked, close-delimited, buffering, and `on_body` behavior
+  still use the existing client body state machine through native fallback;
+- Upgrade and successful CONNECT pause HTTP input while the zero-delay handoff
+  is pending, preserving same-read post-head bytes for `transition_to()`.
+
+The client uses a separate native-consumer operations table from the server.
+HTTP request and response wire roles are therefore explicit rather than selected
+by a server/client branch inside one provider.
+
+Important prototype commits include:
+
+- `61caa490694c2deb8f7f13b4bd7bbb60057b3e44`
+  "experiment: add native HTTP client response consumer";
+- `cabfc41bc7cc6e215e45151aa497a14912f12590`
+  "experiment: expose native client consumer definition";
+- `8d36e852c4baac0d6bd77dbcca98e92f28aa285e`
+  "experiment: route client response heads through native input";
+- `f7a8d035a1cef05aad45dd2b93353c04b7943e27` and
+  `4a6541e889b75d9c4cb7a52f616882de1e4ee6ca`
+  add pause/resume discipline to client Upgrade/CONNECT handoff;
+- `afad8a3f5173aeb64062491309f634fc9c717897`
+  updates the benchmark to instrument native fallback input.
+
+The initial native prototype exposed one real handoff bug: after a successful
+CONNECT or 101 head, the raw consumer could immediately see same-read target
+protocol bytes and try to parse them as another HTTP response before the
+scheduled handoff ran. Pausing HTTP input while the handoff is pending and
+restoring the previous read state after `transition_to()` fixes this and matches
+the server-side transition discipline.
+
+After that fix the full suite passes, including Upgrade and CONNECT:
+41 test files / 1,029 tests.
+
+#### Same-run baseline versus native-head A/B
+
+Decision-quality comparison run:
+
+`36189414550`
+
+Environment for both trees in the same GitHub Actions job:
+
+- Perl 5.44.0;
+- Linux::Event 0.116;
+- same hosted runner;
+- exact pre-native baseline commit
+  `a09b16d328e648c3babf3e56f1bdd892ed6e5704`;
+- native-head experiment from the current branch;
+- 10,000 measured responses per repeat;
+- 1,000 warmup responses;
+- 100 persistent connections;
+- 3 repeats per case.
+
+Same-run medians:
+
+| Workload | Baseline resp/s | Native resp/s | Throughput | Baseline CPU us/resp | Native CPU us/resp | CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 B Content-Length drain | 6,187.6 | 7,593.1 | +22.7% | 161.567 | 131.651 | -18.5% |
+| 16 KiB Content-Length drain | 6,188.9 | 7,003.6 | +13.2% | 161.543 | 142.727 | -11.6% |
+| 16 KiB Content-Length on_body | 6,054.9 | 6,959.9 | +14.9% | 165.140 | 143.657 | -13.0% |
+| 16 KiB Content-Length buffer_body | 5,975.5 | 6,579.5 | +10.1% | 167.308 | 151.938 | -9.2% |
+| 16 KiB chunked drain | 6,285.6 | 7,318.0 | +16.4% | 159.027 | 136.615 | -14.1% |
+
+The same run passed the current full test suite and `make disttest`. Both
+baseline and native benchmark JSON reports were uploaded from the same job.
+
+Conclusion: native response-head input is worth keeping. The gain is broad,
+repeatable on a same-run A/B, and achieved without rewriting body framing.
+Before promotion, remove or clearly isolate stale ordinary response-head parsing,
+add focused native-client regression coverage, update architecture/user
+documentation, and decide whether native body handling should be a separate
+follow-on experiment rather than part of this change.
+
 ### Next agenda
 
 The agreed post-0.002 sequence is:
