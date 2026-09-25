@@ -25,6 +25,10 @@ sub new ($class, %option) {
     die 'new(): stream must be an object with write()'
         if !blessed($stream) || !$stream->can('write');
 
+    my $connection = delete $option{connection};
+    die 'new(): connection must be an object'
+        if defined($connection) && !blessed($connection);
+
     my %callback;
     for my $name (qw(on_request on_body on_request_end on_error)) {
         next if !exists $option{$name};
@@ -51,6 +55,7 @@ sub new ($class, %option) {
 
     my $self = bless {
         stream          => $stream,
+        connection      => $connection,
         callback        => \%callback,
         session         => undef,
         streams         => {},
@@ -297,12 +302,13 @@ sub _request_end ($self, $stream_id, $tx) {
 
 sub _invoke ($self, $name, $stream_id, $tx, @extra) {
     my $cb = $self->{callback}{$name} or return 1;
+    my $connection = $self->{connection} // $self;
     my $ok = eval {
         local $self->{current_tx} = $tx;
         if ($name eq 'on_body') {
-            $cb->($self, $tx->request, $tx->response, $extra[0]);
+            $cb->($connection, $tx->request, $tx->response, $extra[0]);
         } else {
-            $cb->($self, $tx->request, $tx->response);
+            $cb->($connection, $tx->request, $tx->response);
         }
         1;
     };
