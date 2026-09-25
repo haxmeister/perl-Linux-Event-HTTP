@@ -23,6 +23,7 @@ bench/servers/twiggy-http.pl
 docs/ARCHITECTURE.md
 docs/BENCHMARKING.md
 docs/CLIENT-POLICY.md
+docs/HTTP2-ARCHITECTURE.md
 docs/CONNECT.md
 docs/PICOHTTPPARSER-EXPERIMENT.md
 lib/Linux/Event/HTTP.pm
