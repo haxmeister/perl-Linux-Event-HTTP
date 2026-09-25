@@ -93,6 +93,30 @@ jobs:
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: perl -Mblib bench/run-http-transaction-ladder.pl --smoke
 
+      - name: Client receive-path benchmark smoke
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: perl -Mblib bench/run-http-client-receive.pl --smoke
+
+      - name: Client receive-path directional benchmark
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          mkdir -p bench/results
+          perl -Mblib bench/run-http-client-receive.pl \
+            --requests=10000 \
+            --warmup=1000 \
+            --connections=100 \
+            --repeats=3 \
+            --head-iterations=50000 \
+            --instrument-requests=1000 \
+            --json=bench/results/client-receive-path.json
+
+      - name: Upload client receive-path benchmark
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-receive-path
+          path: bench/results/client-receive-path.json
+
       - name: Distribution integrity
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: make disttest
