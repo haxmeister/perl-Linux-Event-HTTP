@@ -61,6 +61,7 @@ WriteMakefile(
                 Linux::Event::HTTP::_ClientUpgrade
                 Linux::Event::HTTP::_HTTP1
                 Linux::Event::HTTP::_HTTP1::Chunked
+                Linux::Event::HTTP::_HTTP2
                 Linux::Event::HTTP::_ServerConnect
                 Linux::Event::HTTP::_Upgrade
             )],
