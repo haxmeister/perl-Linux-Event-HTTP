@@ -122,8 +122,11 @@ sub input ($self, $bytes) {
     die 'input(): bytes must be a scalar' if ref $bytes;
     return 0 if !defined($bytes) || $bytes eq '';
 
-    local $self->{in_session_call} = 1;
-    my $consumed = $self->{session}->mem_recv($bytes);
+    my $consumed;
+    {
+        local $self->{in_session_call} = 1;
+        $consumed = $self->{session}->mem_recv($bytes);
+    }
     die 'input(): nghttp2 did not consume complete input'
         if !defined($consumed) || $consumed != length($bytes);
 
@@ -187,6 +190,7 @@ sub _state ($self, $stream_id) {
         collecting   => 'initial',
         transaction  => undef,
         response_provider => undef,
+        request_end_called => 0,
     };
 }
 
@@ -281,8 +285,10 @@ sub _on_data_chunk_recv ($self, $stream_id, $data, $flags) {
 }
 
 sub _request_end ($self, $stream_id, $tx) {
-    return if $tx->request->is_complete;
-    $tx->request->_mark_complete;
+    my $state = $self->{streams}{$stream_id} or return;
+    return if $state->{request_end_called}++;
+
+    $tx->request->_mark_complete if !$tx->request->is_complete;
     $self->_invoke('on_request_end', $stream_id, $tx)
         if $self->{callback}{on_request_end};
     $self->_maybe_auto_send($tx);
