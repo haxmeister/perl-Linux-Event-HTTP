@@ -212,6 +212,74 @@ add focused native-client regression coverage, update architecture/user
 documentation, and decide whether native body handling should be a separate
 follow-on experiment rather than part of this change.
 
+### Cleaned native-client production candidate
+
+The native client response-head change has now passed its cleanup and final
+candidate gate.
+
+Current candidate head:
+
+`c20af7f6fad53598dbd30eade62db19a7bc4163f`
+"experiment: allow reentrant next client transaction"
+
+Follow-on documentation/test commits through:
+
+`1bedc32dd5d01db9757dbc820bfa293b4e98cce1`
+"docs: document client receive benchmark"
+
+plus the reentrant-next-Transaction correction above remain on
+`experiment/client-receive-path` / draft PR #38.
+
+Cleanup completed:
+
+- removed the obsolete Perl response-head parser from Client::Connection;
+- kept the existing Perl body framing/delivery state machine as the fallback
+  after a native final response head;
+- retained immediate next-Transaction behavior when an `on_complete` callback
+  starts another request before the prior body driver unwinds;
+- added `t/16-native-raw-client.t` covering fragmented native heads,
+  informational + final heads in one read, native input ownership, and
+  reentrant close from `on_response`;
+- updated README, architecture, client policy, benchmark documentation, and
+  MANIFEST.
+
+Final candidate CI run:
+
+`36190306057`
+
+Results:
+
+- Perl 5.36: PASS;
+- latest Perl: PASS;
+- latest threaded Perl: PASS;
+- full suite: 42 files / 1,033 tests;
+- focused client receive benchmark smoke: PASS;
+- exact pre-native baseline build: PASS;
+- same-run baseline matrix: PASS;
+- same-run cleaned native matrix: PASS;
+- paired benchmark artifact upload: PASS;
+- `make disttest`: PASS, again 42 files / 1,033 tests.
+
+Final cleaned same-run A/B medians:
+
+| Workload | Baseline resp/s | Native resp/s | Throughput | Baseline CPU us/resp | Native CPU us/resp | CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 B Content-Length drain | 9,911.4 | 12,197.4 | +23.1% | 100.871 | 81.961 | -18.7% |
+| 16 KiB Content-Length drain | 9,141.9 | 10,772.7 | +17.8% | 109.330 | 92.778 | -15.1% |
+| 16 KiB Content-Length on_body | 8,638.0 | 9,992.7 | +15.7% | 115.690 | 99.947 | -13.6% |
+| 16 KiB Content-Length buffer_body | 8,007.8 | 9,668.6 | +20.7% | 124.660 | 103.403 | -17.1% |
+| 16 KiB chunked drain | 9,067.7 | 11,094.1 | +22.3% | 110.263 | 90.131 | -18.3% |
+
+Decision: keep native response-head input. Do **not** expand this change into a
+native response-body rewrite. The current boundary already produces a large,
+repeatable gain while preserving the mature Content-Length, chunked,
+close-delimited, bounded buffering, callback, redirect/auth retry, and connection
+reuse body lifecycle. Native body handling, if investigated later, must be a
+separate measured experiment with its own correctness and maintenance case.
+
+This branch is now a production candidate rather than an exploratory
+performance branch. It has not been merged to main yet.
+
 ### Next agenda
 
 The agreed post-0.002 sequence is:
