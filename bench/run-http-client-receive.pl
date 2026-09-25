@@ -25,17 +25,17 @@ $SIG{PIPE} = 'IGNORE';
     package Linux::Event::HTTP::Bench::InstrumentedClientConnection;
     use parent 'Linux::Event::HTTP::Client::Connection';
 
-    sub on_data ($self, $bytes) {
+    sub _http_client_native_fallback_input ($self, $bytes) {
         my $state = $self->data;
         my $bench = $state->{bench};
         if ($bench->{measuring}) {
-            ++$bench->{on_data_calls};
-            $bench->{on_data_bytes} += length($bytes);
+            ++$bench->{input_calls};
+            $bench->{input_bytes} += length($bytes);
             my $length = length($bytes);
-            $bench->{on_data_max_bytes} = $length
-                if $length > $bench->{on_data_max_bytes};
+            $bench->{input_max_bytes} = $length
+                if $length > $bench->{input_max_bytes};
         }
-        return $self->SUPER::on_data($bytes);
+        return $self->SUPER::_http_client_native_fallback_input($bytes);
     }
 }
 
@@ -180,17 +180,17 @@ for my $name (@selected) {
             map { $_->{client_cpu_us_per_response} } @record,
         ),
         wall_seconds => median(map { $_->{wall_seconds} } @record),
-        on_data_calls_per_response => $instrument->{on_data_calls_per_response},
-        on_data_bytes_per_call => $instrument->{on_data_bytes_per_call},
-        on_data_max_bytes => $instrument->{on_data_max_bytes},
+        input_calls_per_response => $instrument->{input_calls_per_response},
+        input_bytes_per_call => $instrument->{input_bytes_per_call},
+        input_max_bytes => $instrument->{input_max_bytes},
     };
 
-    printf "median %.1f responses/s client_cpu=%.3f us/response on_data=%.3f calls/response %.1f bytes/call max=%d\n",
+    printf "median %.1f responses/s client_cpu=%.3f us/response native_fallback=%.3f calls/response %.1f bytes/call max=%d\n",
         $summary->{responses_per_second},
         $summary->{client_cpu_us_per_response},
-        $summary->{on_data_calls_per_response},
-        $summary->{on_data_bytes_per_call},
-        $summary->{on_data_max_bytes};
+        $summary->{input_calls_per_response},
+        $summary->{input_bytes_per_call},
+        $summary->{input_max_bytes};
 
     push @case_report, {
         name    => $name,
@@ -200,11 +200,11 @@ for my $name (@selected) {
         instrumentation => {
             requests => $instrument_count,
             warmup => $instrument_warmup,
-            on_data_calls => $instrument->{on_data_calls},
-            on_data_bytes => $instrument->{on_data_bytes},
-            on_data_max_bytes => $instrument->{on_data_max_bytes},
-            on_data_calls_per_response => $instrument->{on_data_calls_per_response},
-            on_data_bytes_per_call => $instrument->{on_data_bytes_per_call},
+            input_calls => $instrument->{input_calls},
+            input_bytes => $instrument->{input_bytes},
+            input_max_bytes => $instrument->{input_max_bytes},
+            input_calls_per_response => $instrument->{input_calls_per_response},
+            input_bytes_per_call => $instrument->{input_bytes_per_call},
         },
     };
 }
@@ -278,9 +278,9 @@ sub run_client_case (%opt) {
         error             => undef,
         on_body_calls     => 0,
         on_body_bytes     => 0,
-        on_data_calls     => 0,
-        on_data_bytes     => 0,
-        on_data_max_bytes => 0,
+        input_calls     => 0,
+        input_bytes     => 0,
+        input_max_bytes => 0,
         cpu_start         => undef,
         wall_start        => undef,
         cpu_seconds       => undef,
@@ -366,15 +366,15 @@ sub run_client_case (%opt) {
         cpu_seconds => $bench->{cpu_seconds},
         on_body_calls => $bench->{on_body_calls},
         on_body_bytes => $bench->{on_body_bytes},
-        on_data_calls => $bench->{on_data_calls},
-        on_data_bytes => $bench->{on_data_bytes},
-        on_data_max_bytes => $bench->{on_data_max_bytes},
+        input_calls => $bench->{input_calls},
+        input_bytes => $bench->{input_bytes},
+        input_max_bytes => $bench->{input_max_bytes},
     };
 
-    $row->{on_data_calls_per_response} = $bench->{on_data_calls}
+    $row->{input_calls_per_response} = $bench->{input_calls}
         / $opt{requests};
-    $row->{on_data_bytes_per_call} = $bench->{on_data_calls}
-        ? $bench->{on_data_bytes} / $bench->{on_data_calls}
+    $row->{input_bytes_per_call} = $bench->{input_calls}
+        ? $bench->{input_bytes} / $bench->{input_calls}
         : 0;
 
     if ($spec->{handling} eq 'on_body') {
@@ -395,9 +395,9 @@ sub begin_phase ($bench, $phase, $count) {
         $bench->{measuring} = 1;
         $bench->{on_body_calls} = 0;
         $bench->{on_body_bytes} = 0;
-        $bench->{on_data_calls} = 0;
-        $bench->{on_data_bytes} = 0;
-        $bench->{on_data_max_bytes} = 0;
+        $bench->{input_calls} = 0;
+        $bench->{input_bytes} = 0;
+        $bench->{input_max_bytes} = 0;
         $bench->{wall_start} = time;
         $bench->{cpu_start} = clock_gettime(CLOCK_PROCESS_CPUTIME_ID);
     } else {
