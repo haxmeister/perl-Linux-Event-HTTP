@@ -85,7 +85,9 @@ sub transaction ($self) {
 }
 
 sub _http_client_transport_drain ($self) {
-    if (my $transaction = $self->{_http_client_active_transaction}) {
+    if (my $executor = $self->{_http2_executor}) {
+        $executor->transport_drain;
+    } elsif (my $transaction = $self->{_http_client_active_transaction}) {
         if (my $body = $transaction->_request_body_object) {
             $body->_drain;
         }
