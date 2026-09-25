@@ -210,9 +210,14 @@ for my $name (@selected) {
 }
 
 say '';
-my $head = run_head_path_microbenchmark($head_iterations);
-printf "Perl response-head parse + framing: %.3f us/response (%d iterations)\n",
-    $head->{cpu_us_per_response}, $head_iterations;
+my $head;
+if (Linux::Event::HTTP::Client::Connection->can('_parse_response_head')) {
+    $head = run_head_path_microbenchmark($head_iterations);
+    printf "Perl response-head parse + framing: %.3f us/response (%d iterations)\n",
+        $head->{cpu_us_per_response}, $head_iterations;
+} else {
+    say 'Perl response-head microbenchmark: not applicable to native client input';
+}
 
 if (defined $json_path) {
     my ($sysname, $nodename, $release, $version, $machine) = uname();
