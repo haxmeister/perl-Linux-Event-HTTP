@@ -81,7 +81,10 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
 
         if (($conn->selected_alpn // '') eq 'h2') {
             $conn->pause_read;
-            $conn->loop->defer(sub {
+            Linux::Event::Kernel::Timer->new(
+                loop => $conn->loop,
+                after => 0,
+                on_timer => sub ($timer) {
                 my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
                     stream         => $conn,
                     connection     => $conn,
@@ -98,7 +101,8 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
                 $entry->{after_transport} = $conn->transport_name;
                 push @{$state->{server_ready}}, $entry;
                 $conn->resume_read if $conn->is_read_paused;
-            });
+                },
+            );
             return;
         }
 
@@ -226,7 +230,10 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
         $state->{h2_client_alpn} = $conn->selected_alpn;
 
         $conn->pause_read;
-        $conn->loop->defer(sub {
+        Linux::Event::Kernel::Timer->new(
+            loop => $conn->loop,
+            after => 0,
+            on_timer => sub ($timer) {
             $h2_executor = Linux::Event::HTTP::_HTTP2::Client->new(
                 stream => $conn,
             );
@@ -269,7 +276,8 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
                 },
             );
             $conn->resume_read if $conn->is_read_paused;
-        });
+            },
+        );
     },
 );
 
