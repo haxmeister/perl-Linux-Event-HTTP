@@ -926,3 +926,9 @@ heads are now justified by same-run A/B evidence; moving response bodies further
 into the native provider is a separate decision and should be measured
 independently. HTTP/2 is future protocol work in this distribution. WebSocket
 remains a separate protocol distribution.
+
+## HTTP/2 design
+
+HTTP/2 architecture, executor boundaries, flow-control mapping, ALPN strategy,
+and the staged implementation plan are maintained in
+`docs/HTTP2-ARCHITECTURE.md`.
