@@ -385,6 +385,51 @@ matrix shows the largest HTTP/1 server gap in request-body processing. Do not
 mix that optimization work into HTTP/2 architecture unless the user explicitly
 chooses to return to HTTP/1 performance first.
 
+### HTTP/2 architecture investigation result
+
+The first architecture investigation is complete and recorded in:
+
+`docs/HTTP2-ARCHITECTURE.md`
+
+Design commit:
+
+`ccecc580c4b2a407b5965f3cb3f551f9158b0e93`
+"docs: define HTTP/2 architecture investigation"
+
+Current decisions:
+
+- HTTP/2 remains in Linux::Event::HTTP rather than a separate distribution.
+- Request, Response, Transaction, Client::Operation, Client, Server, and
+  Body::Stream remain the shared application model.
+- HTTP/1 and HTTP/2 need separate internal protocol executors.
+- One HTTP/2 stream maps to one Transaction.
+- Client pooling must become capacity-aware rather than treating a connection
+  as simply idle/busy.
+- Server conn->transaction can only mean the Transaction associated with the
+  callback currently executing; asynchronous work must retain the Transaction.
+- HTTP/2 pseudo-headers must not be exposed as ordinary message headers.
+- Request scheme/authority needs a small protocol-neutral API design review.
+- Body::Stream remains the outgoing producer; the HTTP/2 executor maps its
+  accepted/drain contract onto stream + connection flow control and Linux::Event
+  transport backpressure.
+- HTTP/1 Upgrade and whole-socket CONNECT handoff do not generalize to HTTP/2;
+  extended CONNECT needs a future stream-level transport abstraction.
+- initial production HTTP/2 should target TLS ALPN h2; deprecated h2c Upgrade is
+  explicitly out of scope.
+- server push, connection coalescing, priority API, cleartext prior knowledge,
+  and WebSocket-over-H2 are deferred until base HTTP/2 is correct.
+
+Protocol-engine research currently favors nghttp2 through the low-level
+Net::HTTP2::nghttp2 binding. Do not use the higher-level Net::HTTP2 client API,
+and do not implement HPACK/frame/state machinery from scratch before testing the
+nghttp2 integration.
+
+The next action is a private Net::HTTP2::nghttp2 integration spike. It must not
+change the public Client/Server API or refactor the production HTTP/1 executor.
+The spike should prove Linux::Event transport integration, concurrent streams,
+streaming DATA defer/resume, h2spec viability, and basic overhead before the
+backend choice is frozen.
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
