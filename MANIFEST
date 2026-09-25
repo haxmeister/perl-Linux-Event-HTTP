@@ -40,6 +40,7 @@ lib/Linux/Event/HTTP/_ClientAuth.pm
 lib/Linux/Event/HTTP/_ClientConnect.pm
 lib/Linux/Event/HTTP/_ClientUpgrade.pm
 lib/Linux/Event/HTTP/_HTTP1.pm
+lib/Linux/Event/HTTP/_HTTP2.pm
 lib/Linux/Event/HTTP/_ServerConnect.pm
 lib/Linux/Event/HTTP/_Upgrade.pm
 t/00-load.t
@@ -50,6 +51,7 @@ t/13-chunked-decoder.t
 t/14-native-response-fastpath.t
 t/15-native-raw-server.t
 t/16-native-raw-client.t
+t/17-http2-message-mapping.t
 t/19-request-message.t
 t/20-response.t
 t/21-response-body-stream-unit.t
