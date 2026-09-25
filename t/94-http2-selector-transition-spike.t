@@ -80,20 +80,26 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
         };
 
         if (($conn->selected_alpn // '') eq 'h2') {
-            my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
-                stream         => $conn,
-                connection     => $conn,
-                on_request     => $conn->{_http_on_request},
-                on_body        => $conn->{_http_on_body},
-                on_request_end => $conn->{_http_on_request_end},
-            );
-            $conn->{_http2_executor} = $executor;
-            $conn->transition_to(
-                'Linux::Event::HTTP::_HTTP2::ServerConnection',
-            );
-            $entry->{after_class} = ref($conn);
-            $entry->{after_id} = Scalar::Util::refaddr($conn);
-            $entry->{after_transport} = $conn->transport_name;
+            $conn->pause_read;
+            $conn->loop->defer(sub {
+                my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
+                    stream         => $conn,
+                    connection     => $conn,
+                    on_request     => $conn->{_http_on_request},
+                    on_body        => $conn->{_http_on_body},
+                    on_request_end => $conn->{_http_on_request_end},
+                );
+                $conn->{_http2_executor} = $executor;
+                $conn->transition_to(
+                    'Linux::Event::HTTP::_HTTP2::ServerConnection',
+                );
+                $entry->{after_class} = ref($conn);
+                $entry->{after_id} = Scalar::Util::refaddr($conn);
+                $entry->{after_transport} = $conn->transport_name;
+                push @{$state->{server_ready}}, $entry;
+                $conn->resume_read if $conn->is_read_paused;
+            });
+            return;
         }
 
         push @{$state->{server_ready}}, $entry;
@@ -219,47 +225,51 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
         $state->{h2_client_fd} = $conn->fd;
         $state->{h2_client_alpn} = $conn->selected_alpn;
 
-        $h2_executor = Linux::Event::HTTP::_HTTP2::Client->new(
-            stream => $conn,
-        );
-        $conn->{_http2_executor} = $h2_executor;
-        $conn->transition_to(
-            'Linux::Event::HTTP::_HTTP2::ClientConnection',
-        );
+        $conn->pause_read;
+        $conn->loop->defer(sub {
+            $h2_executor = Linux::Event::HTTP::_HTTP2::Client->new(
+                stream => $conn,
+            );
+            $conn->{_http2_executor} = $h2_executor;
+            $conn->transition_to(
+                'Linux::Event::HTTP::_HTTP2::ClientConnection',
+            );
 
-        $state->{h2_client_after_class} = ref($conn);
-        $state->{h2_client_after_id} = refaddr($conn);
-        $state->{h2_client_transport} = $conn->transport_name;
+            $state->{h2_client_after_class} = ref($conn);
+            $state->{h2_client_after_id} = refaddr($conn);
+            $state->{h2_client_transport} = $conn->transport_name;
 
-        my $request = Linux::Event::HTTP::Request->new(
-            method    => 'GET',
-            target    => '/selected',
-            version   => '2',
-            scheme    => 'https',
-            authority => 'localhost',
-        );
+            my $request = Linux::Event::HTTP::Request->new(
+                method    => 'GET',
+                target    => '/selected',
+                version   => '2',
+                scheme    => 'https',
+                authority => 'localhost',
+            );
 
-        $conn->request(
-            $request,
-            on_response => sub ($tx, $res) {
-                $state->{h2_status} = $res->status;
-                $state->{h2_protocol_header} = $res->header('x-protocol');
-            },
-            on_body => sub ($tx, $res, $bytes) {
-                $state->{h2_client_response} .= $bytes;
-            },
-            on_complete => sub ($tx) {
-                $state->{h2_client_complete} = 1;
-                $state->{h2_tx_complete_in_callback} =
-                    $tx->is_complete ? 1 : 0;
-                $conn->close if !$conn->is_closed;
-                $start_h1->();
-            },
-            on_error => sub ($tx, $error) {
-                push @{$state->{errors}}, "h2 client: $error";
-                $loop->stop;
-            },
-        );
+            $conn->request(
+                $request,
+                on_response => sub ($tx, $res) {
+                    $state->{h2_status} = $res->status;
+                    $state->{h2_protocol_header} = $res->header('x-protocol');
+                },
+                on_body => sub ($tx, $res, $bytes) {
+                    $state->{h2_client_response} .= $bytes;
+                },
+                on_complete => sub ($tx) {
+                    $state->{h2_client_complete} = 1;
+                    $state->{h2_tx_complete_in_callback} =
+                        $tx->is_complete ? 1 : 0;
+                    $conn->close if !$conn->is_closed;
+                    $start_h1->();
+                },
+                on_error => sub ($tx, $error) {
+                    push @{$state->{errors}}, "h2 client: $error";
+                    $loop->stop;
+                },
+            );
+            $conn->resume_read if $conn->is_read_paused;
+        });
     },
 );
 
