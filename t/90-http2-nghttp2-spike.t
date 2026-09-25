@@ -39,14 +39,14 @@ sub make_server_session ($stream, $state) {
     my $session;
     $session = Net::HTTP2::nghttp2::Session->new_server(
         callbacks => {
-            on_begin_headers => sub ($stream_id, $frame_type, $flags) {
+            on_begin_headers => sub ($callback_session, $stream_id, $frame_type, $flags) {
                 $state->{request}{$stream_id} //= {
                     headers => [],
                     body    => '',
                 };
                 return 0;
             },
-            on_header => sub ($stream_id, $name, $value, $flags) {
+            on_header => sub ($callback_session, $stream_id, $name, $value, $flags) {
                 my $request = $state->{request}{$stream_id} //= {
                     headers => [],
                     body    => '',
@@ -55,11 +55,11 @@ sub make_server_session ($stream, $state) {
                 $request->{$name} = $value if $name =~ /A:/;
                 return 0;
             },
-            on_data_chunk_recv => sub ($stream_id, $data, $flags) {
+            on_data_chunk_recv => sub ($callback_session, $stream_id, $data, $flags) {
                 $state->{request}{$stream_id}{body} .= $data;
                 return 0;
             },
-            on_frame_recv => sub ($frame) {
+            on_frame_recv => sub ($callback_session, $frame) {
                 my $type = $frame->{type};
                 my $flags = $frame->{flags};
                 my $stream_id = $frame->{stream_id};
@@ -115,7 +115,7 @@ sub make_server_session ($stream, $state) {
                 );
                 return 0;
             },
-            on_stream_close => sub ($stream_id, $error_code) {
+            on_stream_close => sub ($callback_session, $stream_id, $error_code) {
                 ++$state->{server_closed};
                 delete $state->{timer}{$stream_id};
                 return 0;
@@ -133,14 +133,14 @@ sub make_client_session ($stream, $state, $loop, $listener) {
     my $session;
     $session = Net::HTTP2::nghttp2::Session->new_client(
         callbacks => {
-            on_begin_headers => sub ($stream_id, $frame_type, $flags) {
+            on_begin_headers => sub ($callback_session, $stream_id, $frame_type, $flags) {
                 $state->{response}{$stream_id} //= {
                     headers => [],
                     body    => '',
                 };
                 return 0;
             },
-            on_header => sub ($stream_id, $name, $value, $flags) {
+            on_header => sub ($callback_session, $stream_id, $name, $value, $flags) {
                 my $response = $state->{response}{$stream_id} //= {
                     headers => [],
                     body    => '',
@@ -150,14 +150,14 @@ sub make_client_session ($stream, $state, $loop, $listener) {
                 $response->{header}{lc $name} = $value if $name !~ /A:/;
                 return 0;
             },
-            on_data_chunk_recv => sub ($stream_id, $data, $flags) {
+            on_data_chunk_recv => sub ($callback_session, $stream_id, $data, $flags) {
                 $state->{response}{$stream_id}{body} .= $data;
                 return 0;
             },
-            on_frame_recv => sub ($frame) {
+            on_frame_recv => sub ($callback_session, $frame) {
                 return 0;
             },
-            on_stream_close => sub ($stream_id, $error_code) {
+            on_stream_close => sub ($callback_session, $stream_id, $error_code) {
                 $state->{closed}{$stream_id} = $error_code;
                 ++$state->{client_closed};
 
