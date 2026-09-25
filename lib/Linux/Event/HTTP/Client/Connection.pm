@@ -859,12 +859,7 @@ sub _drive_http1 ($self) {
     while (!$self->is_closed) {
         my $transaction = $self->{_http_client_active_transaction} or last;
 
-        if (!$transaction->response) {
-            $self->_fail_active_transaction(
-                'internal HTTP client body fallback without Response', 1,
-            );
-            last;
-        }
+        last if !$transaction->response;
 
         my $progress = $self->_consume_response_body;
         last if !$progress;
