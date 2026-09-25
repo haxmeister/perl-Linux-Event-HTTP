@@ -566,18 +566,39 @@ Add h2load comparison benchmarks.
 Only then investigate native-buffer integration, connection coalescing,
 cleartext prior knowledge, trailers, extended CONNECT, and WebSocket-over-H2.
 
+## Validated nghttp2 spike
+
+The initial transport spike is complete.
+
+Net::HTTP2::nghttp2 0.008 installed successfully in the project CI environment
+and interoperated directly with Linux::Event Streams.
+
+The cleartext spike carried nine simultaneous streams on one connection,
+including request DATA and a deferred/resumed response body.
+
+The TLS spike negotiated `h2` through Linux::Event ALPN before application
+protocol input and then completed an nghttp2 request/response over the encrypted
+Stream.
+
+Therefore nghttp2 is now the selected first HTTP/2 protocol-engine direction,
+not merely a candidate.
+
+This does not yet make Net::HTTP2::nghttp2 a production dependency. The next
+implementation phase must first map HTTP/2 message semantics into the existing
+Request/Response/Transaction model.
+
 ## Immediate next action
 
-Create a focused integration spike for Net::HTTP2::nghttp2.
+Begin the shared message-mapping phase without refactoring the production
+HTTP/1 executor.
 
-The spike should not alter the public Client/Server API and should not refactor
-the HTTP/1 executor yet.
+The first public design decision is how HTTP/2 `:scheme` and `:authority`
+map into Request without exposing pseudo-headers as ordinary headers.
 
-Its purpose is to answer three questions:
+The preferred direction remains protocol-neutral Request metadata such as:
 
-1. Does the nghttp2 Session API give Linux::Event::HTTP enough control over
-   stream lifecycle and flow control?
-2. Can it integrate cleanly with Linux::Event backpressure without per-stream
-   closure churn or duplicate output queues?
-3. Is its correctness/performance baseline good enough to make it the single
-   HTTP/2 protocol engine for this distribution?
+    Request->scheme
+    Request->authority
+
+Do not implement that API until its semantics for HTTP/1 and compatibility with
+the Uniform::HTTP request contract have been reviewed explicitly.
