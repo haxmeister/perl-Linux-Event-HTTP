@@ -11,6 +11,90 @@ Canonical branch: `main`
 Project boundary: modify only Linux::Event::HTTP unless the user explicitly
 authorizes another repository in the current chat.
 
+### Post-0.002 main state
+
+The native client response-head work from PR #38 is now merged to `main`.
+
+Merge commit:
+
+`ddbc9f177b25b36bcc3d4d17d9229e2b4978a25e`
+"Merge native client response-head input"
+
+Production client input now parses HTTP/1 response heads directly from
+Linux::Event's native ordered-input buffer. The existing Perl body
+framing/delivery state machine remains in place after the head boundary for
+Content-Length, chunked, close-delimited, `buffer_body`, and `on_body`.
+
+The obsolete Perl response-head parser was removed. Focused native-client
+coverage is in `t/16-native-raw-client.t`.
+
+Final candidate validation before merge:
+
+- Perl 5.36 PASS;
+- latest Perl PASS;
+- latest threaded Perl PASS;
+- 42 files / 1,033 tests;
+- `make disttest` PASS;
+- same-run client receive A/B retained roughly 14-23% throughput improvement
+  with roughly 14-19% lower client CPU per response.
+
+PR #38 is closed/merged. Its remote branch
+`experiment/client-receive-path` contains no unmerged work.
+
+### Current cross-server performance snapshot
+
+Benchmark trigger/support commit:
+
+`f37db2b8a27600edd7e13deab43e075feecc0fce`
+"[benchmark] ci: run explicit cross-server comparison on push"
+
+GitHub Actions run:
+
+`36191905900`
+
+The comparison job passed completely. It used one process / one execution slot
+per server, loopback TCP, one shared raw Perl benchmark client, 100 persistent
+connections, pipeline depth 1, 1,000 warmup requests, 10,000 measured requests
+per repeat, and 3 rotated repeats.
+
+Median throughput:
+
+| Server | GET 32 B req/s | GET 16 KiB req/s | POST 4 KiB -> 32 B req/s |
+| --- | ---: | ---: | ---: |
+| Linux::Event::HTTP | 35,679.8 | 26,843.4 | 21,653.9 |
+| Feersum | 74,244.0 | 64,169.7 | 66,398.9 |
+| Mojolicious | 1,866.4 | 1,749.2 | 1,824.4 |
+| Node.js http | 22,830.4 | 21,369.6 | 20,525.2 |
+| Go net/http | 61,524.1 | 38,758.0 | 49,945.8 |
+| Python aiohttp | 20,336.2 | 18,377.2 | 15,719.9 |
+| libh2o evloop | 73,570.5 | 64,231.4 | 64,984.0 |
+
+Interpretation:
+
+- Linux::Event::HTTP is clearly ahead of Node.js and aiohttp for both GET
+  workloads and slightly ahead of Node.js on the 4 KiB POST workload.
+- Linux::Event::HTTP remains materially behind Feersum and libh2o on all three
+  workloads.
+- Compared with Go net/http, Linux::Event::HTTP is about 58% of Go throughput on
+  GET/32 B, about 69% on GET/16 KiB, and about 43% on POST/4 KiB.
+- Request-body processing remains the largest relative server-side performance
+  gap in this matrix.
+
+The benchmark JSON reports are retained in the
+`cross-server-comparison` artifact from run `36191905900`.
+
+Last week's native server-input work was still worthwhile. The exact pre-raw
+same-run comparisons recorded during 0.002 preparation were:
+
+- GET / 32-byte response: 31,133.8 -> 33,842.8 req/s (+8.7%);
+- GET / 16 KiB response: 23,032.8 -> 26,717.6 req/s (+16.0%);
+- POST / 4 KiB request, 32-byte response:
+  19,051.8 -> 20,186.5 req/s (+6.0%).
+
+The new competitor snapshot is broadly consistent with those post-native server
+numbers and shows no evidence of a server-side regression after the later client
+work.
+
 ### Released baseline
 
 Linux::Event::HTTP **0.002 has been uploaded to CPAN and is the current released
@@ -67,20 +151,19 @@ server ordered persistent request processing.
 
 ### Remaining HTTP/1 performance asymmetry
 
-Server input is native, but `Linux::Event::HTTP::Client::Connection` still owns
-an ordinary Perl `on_data` path:
+Server request input and client response-head input are now native.
+
+The remaining client receive-path boundary is response-body handling:
 
 ```text
 Linux::Event native input
-    -> Perl on_data bytes
-    -> _http_client_input concatenation
-    -> Perl response-head parsing
-    -> response body framing/dispatch
+    -> native HTTP response-head parse
+    -> existing Perl response body framing/dispatch
 ```
 
-The client response-head parser is deliberately still Perl code. Project policy
-is not to add parser XS merely because it is possible; native work must be
-justified by measurement.
+That boundary is deliberate. Native response-body handling is not part of the
+merged client-head change and should only be investigated as a separate measured
+experiment.
 
 ### Client receive-path measurement result
 
@@ -277,26 +360,30 @@ close-delimited, bounded buffering, callback, redirect/auth retry, and connectio
 reuse body lifecycle. Native body handling, if investigated later, must be a
 separate measured experiment with its own correctness and maintenance case.
 
-This branch is now a production candidate rather than an exploratory
-performance branch. It has not been merged to main yet.
+This production candidate was merged to `main` as PR #38 at
+`ddbc9f177b25b36bcc3d4d17d9229e2b4978a25e`.
 
 ### Next agenda
 
-The agreed post-0.002 sequence is:
+The HTTP/1 native-client receive-path decision is complete and merged.
 
-1. measure the current client receive path with a focused persistent-connection
-   benchmark;
-2. cover at least tiny Content-Length, 16 KiB Content-Length, chunked,
-   `buffer_body`, and streaming `on_body` response workloads;
-3. identify the cost of Perl `on_data`, `_http_client_input` concatenation,
-   response-head parsing, and buffer consumption;
-4. only if measurement shows a meaningful opportunity, prototype
-   Client::Connection as a Linux::Event raw native consumer and compare it
-   against the exact released-style baseline;
-5. keep or reject the native-client experiment based on correctness,
-   maintainability, and repeatable measurements;
-6. after the HTTP/1 receive-path decision, begin an HTTP/2 architecture
-   investigation.
+The next substantive development item is the HTTP/2 architecture investigation.
+Before implementation, define:
+
+1. how HTTP/2 connection and stream state map onto the existing
+   Request/Response/Transaction model;
+2. which semantics are genuinely shared with HTTP/1 and which need
+   version-specific executors;
+3. HPACK ownership and dependency strategy;
+4. flow-control/backpressure integration with Linux::Event;
+5. TLS ALPN selection between `h2` and `http/1.1`;
+6. clear boundaries that avoid contaminating the public API with HTTP/2 wire
+   details.
+
+Separate performance follow-up remains available: the current cross-server
+matrix shows the largest HTTP/1 server gap in request-body processing. Do not
+mix that optimization work into HTTP/2 architecture unless the user explicitly
+chooses to return to HTTP/1 performance first.
 
 ### HTTP/2 distribution decision
 
