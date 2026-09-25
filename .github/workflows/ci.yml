@@ -44,7 +44,7 @@ jobs:
 
       - name: Install pinned current Linux::Event core
         run: |
-          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/007db40e22374c6d7bf8e056b2d354681d20c852.tar.gz
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v0.117.tar.gz
 
       - name: Install Uniform::HTTP release dependency
         run: |
@@ -181,7 +181,7 @@ jobs:
 
       - name: Install HTTP benchmark competitors
         run: |
-          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/007db40e22374c6d7bf8e056b2d354681d20c852.tar.gz
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v0.117.tar.gz
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
           cpanm --notest --installdeps .
