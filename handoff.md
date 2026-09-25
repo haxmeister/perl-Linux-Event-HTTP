@@ -538,6 +538,79 @@ The next implementation step is a private HTTP/2 executor around one nghttp2
 Session and a stream-id-to-Transaction map. It should consume the mapper rather
 than duplicating message semantics in callbacks.
 
+### Linux::Event 0.117 transition finding and feature review
+
+The HTTP/2 experiment is now tested against the released Linux::Event 0.117
+tag, not the earlier pinned 0.116 commit.
+
+CI run `36201072448` confirms:
+
+- Linux::Event 0.117 installs successfully;
+- HTTP/1 tests remain green through the ordinary production suite;
+- HTTP/2 message mapping, ALPN, private server executor, and private client
+  executor tests `t/90` through `t/93` pass;
+- `t/94-http2-selector-transition-spike.t` still exits with SIGSEGV before
+  producing TAP.
+
+The remaining HTTP/2 selector blocker is therefore a current-core transition
+bug, not an obsolete 0.116 limitation.
+
+The missing Linux::Event transition cross-product is precise:
+
+- plain native-consumer -> ordinary raw transition is covered in Linux::Event;
+- TLS ordinary-stream -> ordinary-stream transition with preserved decrypted
+  tail is covered in Linux::Event;
+- TLS native-consumer -> ordinary raw transition is not covered;
+- the HTTP/2 selector exercises exactly TLS native-consumer -> ordinary raw and
+  segfaults on Linux::Event 0.117 even after reads are paused and the transition
+  is deferred with Loop->defer() outside TLS on_ready dispatch.
+
+Do not work around this by changing Linux::Event from the HTTP repository. The
+next core action should be a reduced Linux::Event regression reproducing TLS
+native-consumer -> ordinary raw transition.
+
+Linux::Event 0.117 feature review for HTTP:
+
+1. Loop->defer(): KEEP / ADOPT.
+   HTTP currently uses zero-delay Kernel::Timer objects solely to escape the
+   current callback stack in four production handoff paths:
+   server Upgrade, server CONNECT, client Upgrade, and client CONNECT.
+   Loop->defer() is the exact semantic primitive for that work and should
+   replace those timer allocations once Linux::Event >= 0.117 becomes the HTTP
+   prerequisite. The HTTP/2 ALPN selector should use the same mechanism after
+   the transition bug is fixed.
+
+2. Loop->fork(): USEFUL TO USERS, NOT YET AN INTERNAL SERVER FEATURE.
+   HTTP::Server already exposes ->listener, and Linux::Event Listener supports
+   managed-fork share/move. A plain HTTP pre-fork example can therefore likely
+   use:
+       $loop->fork(share => [ $server->listener ])
+   without a new HTTP API. Validate this in HTTP, and validate HTTPS/TLS
+   Listener sharing separately, before documenting a supported HTTP pre-fork
+   recipe. Do not make Server automatically fork workers.
+
+3. Kernel::Inotify: NO DIRECT HTTP-LAYER INTEGRATION.
+   It could help an application watch certificates, static files, or config,
+   but those are deployment/application policies. HTTP should not acquire
+   filesystem-watch responsibilities merely because core now provides them.
+
+4. TTY borrowed-handle ownership: NO HTTP IMPACT.
+
+5. inherited-Loop misuse detection after ordinary CORE::fork(): INDIRECT SAFETY
+   BENEFIT ONLY. HTTP needs no wrapper around it.
+
+6. public POD rewrite: use 0.117 documentation as the current core contract,
+   especially Loop->defer(), managed fork, Listener recipes, and transition
+   semantics.
+
+Recommended HTTP action after the core transition fix:
+
+- raise the HTTP prerequisite from Linux::Event 0.116 to 0.117;
+- replace the four zero-delay handoff Timers with Loop->defer();
+- keep real-duration timers unchanged;
+- add a managed-fork HTTP server validation/example as a separate small task;
+- continue the HTTP/2 high-level ALPN selector using Loop->defer().
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
