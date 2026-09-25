@@ -241,16 +241,15 @@ The intended mapping is:
 
 Normal HTTP field lines remain in the normal lossless header list.
 
-The clean representation for :scheme and :authority is still an open public API
-decision.
-
-Preferred direction:
+The representation for :scheme and :authority is now decided:
 
     Request->scheme
     Request->authority
 
-These would be protocol-neutral message metadata rather than HTTP/2
-pseudo-header accessors.
+These are protocol-neutral message metadata rather than HTTP/2 pseudo-header
+accessors. HTTP/2 maps the pseudo-header values directly into these accessors.
+HTTP/1 derives them only when the request message itself carries enough
+information.
 
 For HTTP/1, authority can be derived where the request target or Host field
 provides it. Scheme is not always present on an HTTP/1 wire request and can be
@@ -259,7 +258,8 @@ undefined when the message itself does not carry it.
 Do not synthesize a Host header merely because an HTTP/2 request carried
 :authority. That would make the ordinary header list no longer lossless.
 
-This API extension needs a focused design review before implementation.
+Pseudo-headers never appear in the ordinary lossless header list. The private
+_HTTP2 mapper consumes them at the protocol boundary.
 
 ## Response mapping
 
@@ -592,13 +592,13 @@ Request/Response/Transaction model.
 Begin the shared message-mapping phase without refactoring the production
 HTTP/1 executor.
 
-The first public design decision is how HTTP/2 `:scheme` and `:authority`
-map into Request without exposing pseudo-headers as ordinary headers.
+The Request message-mapping decision is implemented on the HTTP/2 experiment
+branch.
 
-The preferred direction remains protocol-neutral Request metadata such as:
+Request now exposes protocol-neutral scheme and authority metadata. The private
+_HTTP2 mapper translates pseudo-headers into Request/Response objects and creates
+one Transaction per HTTP/2 request stream.
 
-    Request->scheme
-    Request->authority
-
-Do not implement that API until its semantics for HTTP/1 and compatibility with
-the Uniform::HTTP request contract have been reviewed explicitly.
+The next implementation boundary is a private nghttp2 executor object that owns
+one Session plus the stream_id -> Transaction map while leaving public
+Client/Server APIs unchanged.
