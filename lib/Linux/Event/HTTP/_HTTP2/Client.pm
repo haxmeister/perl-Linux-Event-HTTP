@@ -427,16 +427,19 @@ sub _finish_response ($self, $stream_id) {
         $response->_set_received_body($state->{buffered_body});
     }
     $response->_mark_complete;
+    $tx->_mark_complete if !$tx->is_terminal;
 
     if (my $cb = $state->{callback}{on_complete}) {
         my $ok = eval { $cb->($tx); 1 };
         if (!$ok) {
-            $self->_stream_failure($stream_id, "$@");
-            return;
+            # Completion callbacks observe terminal Transactions, matching the
+            # HTTP/1 client contract. An application exception after successful
+            # protocol completion cannot retroactively turn the exchange into
+            # a stream failure.
+            $self->_invoke_error($state, "$@");
         }
     }
 
-    $tx->_mark_complete if !$tx->is_terminal;
     return;
 }
 
