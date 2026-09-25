@@ -10,6 +10,7 @@ use IO::Select;
 use IO::Socket::INET;
 use JSON::PP ();
 use POSIX qw(WNOHANG strftime uname);
+use Scalar::Util qw(weaken);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_PROCESS_CPUTIME_ID);
 
 use Linux::Event::Loop;
