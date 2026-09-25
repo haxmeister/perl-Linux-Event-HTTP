@@ -82,6 +82,56 @@ The client response-head parser is deliberately still Perl code. Project policy
 is not to add parser XS merely because it is possible; native work must be
 justified by measurement.
 
+### Client receive-path measurement result
+
+Experiment branch:
+
+`experiment/client-receive-path`
+
+Validated benchmark commit:
+
+`a09b16d328e648c3babf3e56f1bdd892ed6e5704`
+"bench: retain client connection across terminal callbacks"
+
+Draft experiment PR: #38.
+
+GitHub Actions run `36188055780` on Perl 5.44.0 / Linux::Event 0.116
+passed the normal 41-file / 1,029-test suite, the client benchmark smoke, the
+five-case directional matrix, artifact upload, and `make disttest`.
+
+Directional matrix configuration:
+
+- 10,000 measured responses per repeat;
+- 1,000 warmup responses;
+- 100 persistent connections;
+- 3 repeats;
+- separate raw responder process;
+- client-process CPU measured with CLOCK_PROCESS_CPUTIME_ID.
+
+Median current-client results:
+
+- 32 B Content-Length, drained: 6,507.3 responses/s; 153.612 us client CPU/response;
+- 16 KiB Content-Length, drained: 6,222.9 responses/s; 160.665 us CPU/response;
+- 16 KiB Content-Length, on_body: 6,077.0 responses/s; 164.471 us CPU/response;
+- 16 KiB Content-Length, buffer_body: 5,880.3 responses/s; 169.954 us CPU/response;
+- 16 KiB chunked, drained: 6,322.1 responses/s; 158.111 us CPU/response.
+
+The isolated current Perl response-head parse plus transfer/framing decision
+cost 33.849 us/response over 50,000 iterations. On the 32-byte workload this is
+about 22% of total measured client CPU/response.
+
+The instrumentation run observed exactly 1.000 Perl `on_data` call per response
+for all five workloads. The 32-byte response delivered 95 bytes/call; the
+16-KiB Content-Length response delivered 16,450 bytes/call; the chunked response
+delivered 16,492 bytes/call. Therefore this experiment is not primarily about
+reducing callback fragmentation. It is about avoiding the ordinary
+native-buffer -> Perl scalar -> _http_client_input -> Perl response-head parser
+path and unnecessary Perl buffer manipulation.
+
+Conclusion: the measurement threshold is met. A native Client::Connection
+receive-path prototype is justified. The experiment must still prove correctness
+and repeatable end-to-end improvement before anything is promoted to production.
+
 ### Next agenda
 
 The agreed post-0.002 sequence is:
