@@ -26,6 +26,14 @@ sub _raw_consumer_definition ($class) {
     };
 }
 
+sub _raw_client_consumer_definition ($class) {
+    return {
+        provider           => \&_raw_client_consumer_operations_address,
+        abi_version        => 1,
+        operations_address => _raw_client_consumer_operations_address(),
+    };
+}
+
 sub CLONE_SKIP { 1 }
 
 1;

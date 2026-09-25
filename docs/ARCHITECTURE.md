@@ -728,13 +728,19 @@ Linux::Event::HTTP::_HTTP1
 It currently owns:
 
 - picohttpparser server request-head parsing and lazy Request accessors;
+- picohttpparser client response-head parsing from native ordered input;
 - chunked transfer decoding used by server and client;
 - server response-head serialization;
 - the narrow default server scalar-response builder.
 
-The client response-head parser is intentionally strict Perl code. Do not add
-parser XS merely for symmetry. Benchmark representative client workloads before
-adding another native fast path.
+The client response-head native boundary was added only after representative
+persistent-connection workloads showed a repeatable same-run benefit. It does
+not move the whole client state machine into XS. After a final response head is
+validated and materialized as the ordinary Response object, Content-Length,
+chunked, close-delimited, bounded buffering, and on_body delivery still use the
+existing Client::Connection body state machine. This preserves one protocol
+implementation for body semantics while avoiding the former native-buffer to
+Perl on_data copy and Perl head parser.
 
 Forward-proxy selection, cookie policy, authentication orchestration, and
 absolute-target construction are high-level Perl policy. They do not justify
@@ -915,5 +921,8 @@ Environment proxy discovery, NO_PROXY, PAC, SOCKS, preemptive auth caches,
 Authentication-Info handling, and richer pool policy remain deferred until a
 real workload requires them.
 
-Client parser optimization remains measurement-driven. HTTP/2 is future protocol
-work. WebSocket remains a separate protocol distribution.
+Further client input optimization remains measurement-driven. Native response
+heads are now justified by same-run A/B evidence; moving response bodies further
+into the native provider is a separate decision and should be measured
+independently. HTTP/2 is future protocol work in this distribution. WebSocket
+remains a separate protocol distribution.

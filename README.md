@@ -447,9 +447,13 @@ Linux::Event::HTTP::Body::Stream
 ```
 
 HTTP/1-specific native work remains consolidated in the private
-`Linux::Event::HTTP::_HTTP1` extension. Client response-head parsing remains
-strict Perl code unless measurement demonstrates that another native boundary is
-worth maintaining.
+`Linux::Event::HTTP::_HTTP1` extension. Server request heads and client
+response heads are parsed directly from Linux::Event's native ordered-input
+buffer. Client response bodies currently return to the existing Perl framing and
+delivery state machine after the native head boundary; this keeps Content-Length,
+chunked, close-delimited, buffering, and callback semantics on the already
+validated path while avoiding the former Perl response-head parser and input
+copy.
 
 ## Build and test
 

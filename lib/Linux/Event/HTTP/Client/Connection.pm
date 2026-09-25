@@ -10,6 +10,7 @@ use Config ();
 use Scalar::Util qw(blessed refaddr);
 use utf8 ();
 
+use Linux::Event::Framer ();
 use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::HTTP::Request;
 use Linux::Event::HTTP::Response;
@@ -17,9 +18,12 @@ use Linux::Event::HTTP::Transaction;
 
 our $VERSION = '0.002';
 
+Linux::Event::Framer->declare_native_consumer(
+    __PACKAGE__,
+    Linux::Event::HTTP::_HTTP1->_raw_client_consumer_definition,
+);
+
 my $CHUNKED = 'Linux::Event::HTTP::_HTTP1::Chunked';
-my $MAX_RESPONSE_HEAD = 65_536;
-my $MAX_HEADERS = 100;
 my $MAX_CONTENT_LENGTH = $Config::Config{ivsize} >= 8
     ? '9223372036854775807'
     : '2147483647';
@@ -360,47 +364,166 @@ sub request ($self, $request, %option) {
     return $transaction;
 }
 
-sub _parse_response_head ($buffer) {
-    my $end = index($buffer, "\r\n\r\n");
-    return if $end < 0;
+sub _http_client_native_protocol_error ($self, $error) {
+    return 0 if $self->is_closed;
 
-    my $consumed = $end + 4;
-    croak 'HTTP/1 response head exceeds configured limit'
-        if $consumed > $MAX_RESPONSE_HEAD;
+    my $transaction = $self->{_http_client_active_transaction};
+    if ($transaction && !$transaction->is_terminal) {
+        $self->_fail_active_transaction($error, 1);
+    } else {
+        $self->{_http_client_reusable} = 0;
+        $self->close;
+    }
+    return 0;
+}
 
-    my $head = substr($buffer, 0, $end);
-    my @line = split /\r\n/, $head, -1;
-    my $status_line = shift @line;
+sub _http_client_native_response ($self, $response) {
+    return 0 if $self->is_closed;
 
-    croak 'malformed HTTP/1 response status line'
-        if !defined($status_line)
-        || $status_line !~ /\AHTTP\/(1\.[01]) ([0-9]{3}) (.*)\z/s;
-
-    my ($version, $status, $reason) = ($1, 0 + $2, $3);
-    my @headers;
-    my $count = 0;
-
-    for my $field (@line) {
-        croak 'malformed HTTP/1 response header'
-            if $field eq '' || $field =~ /\A[ \t]/;
-        my ($name, $value) = $field =~ /\A([^:]+):(.*)\z/s;
-        croak 'malformed HTTP/1 response header' if !defined $name;
-        $value =~ s/\A[ \t]+//;
-        $value =~ s/[ \t]+\z//;
-        push @headers, [ $name, $value ];
-        ++$count;
-        croak "HTTP/1 response has more than $MAX_HEADERS header fields"
-            if $count > $MAX_HEADERS;
+    my $transaction = $self->{_http_client_active_transaction};
+    if (!$transaction || $transaction->is_terminal) {
+        $self->{_http_client_reusable} = 0;
+        $self->close;
+        return 0;
     }
 
-    my $response = Linux::Event::HTTP::Response->new(
-        status  => $status,
-        reason  => $reason,
-        version => $version,
-        headers => \@headers,
-    );
-    $response->_commit;
-    return ($response, $consumed);
+    if ($response->status >= 100 && $response->status < 200) {
+        if ($response->status == 101) {
+            my $target = $self->{_http_client_callbacks}{upgrade_to};
+            if (!defined $target) {
+                $self->_fail_active_transaction(
+                    'HTTP/1 101 Upgrade requires upgrade_to', 1,
+                );
+                return 0;
+            }
+
+            my $scheduled = eval {
+                require Linux::Event::HTTP::_ClientUpgrade;
+                Linux::Event::HTTP::_ClientUpgrade->schedule(
+                    $self, $transaction, $response, $target,
+                );
+                1;
+            };
+            if (!$scheduled) {
+                my $error = "$@";
+                $self->_fail_active_transaction($error, 1);
+            }
+            return 0;
+        }
+
+        my $valid = eval {
+            _response_transfer_mode($transaction->request, $response);
+            1;
+        };
+        if (!$valid) {
+            my $error = "$@";
+            $self->_fail_active_transaction($error, 1);
+            return 0;
+        }
+
+        $response->_mark_complete;
+        $self->_callback(
+            'on_informational', $transaction, $response,
+        ) if $self->{_http_client_callbacks}{on_informational};
+        return 0;
+    }
+
+    if (uc($transaction->request->method) eq 'CONNECT'
+        && $response->status >= 200
+        && $response->status < 300) {
+        my $target = $self->{_http_client_callbacks}{tunnel_to};
+        if (!defined $target) {
+            $self->_fail_active_transaction(
+                'HTTP/1 successful CONNECT requires tunnel_to', 1,
+            );
+            return 0;
+        }
+
+        my $scheduled = eval {
+            require Linux::Event::HTTP::_ClientConnect;
+            Linux::Event::HTTP::_ClientConnect->schedule(
+                $self, $transaction, $response, $target,
+            );
+            1;
+        };
+        if (!$scheduled) {
+            my $error = "$@";
+            $self->_fail_active_transaction($error, 1);
+        }
+        return 0;
+    }
+
+    my $state;
+    my $valid = eval {
+        $state = _response_transfer_mode(
+            $transaction->request, $response,
+        );
+        1;
+    };
+    if (!$valid) {
+        my $error = "$@";
+        $self->_fail_active_transaction($error, 1);
+        return 0;
+    }
+
+    my $buffer_limit = $self->{_http_client_callbacks}{buffer_body};
+    if (defined $buffer_limit) {
+        $state->{buffer_limit} = $buffer_limit;
+        $state->{buffer} = '';
+    }
+
+    my $request_state = $self->{_http_client_request_state};
+    if ($request_state && $request_state->{streaming}
+        && !$request_state->{complete}) {
+        if (my $body = $transaction->_request_body_object) {
+            $body->_cancel;
+        }
+        $state->{keep_alive} = 0;
+        $self->{_http_client_reusable} = 0;
+    }
+
+    $transaction->_set_response($response);
+    $self->{_http_client_response_state} = $state;
+
+    $self->_callback('on_response', $transaction, $response)
+        if $self->{_http_client_callbacks}{on_response};
+    return 0 if !$self->_same_active_transaction($transaction);
+
+    if (exists($state->{buffer_limit})
+        && $state->{mode} eq 'content-length'
+        && $state->{remaining} > $state->{buffer_limit}) {
+        my $limit = $state->{buffer_limit};
+        $self->_fail_active_transaction(
+            "response body exceeds buffer_body limit of $limit bytes", 1,
+        );
+        return 0;
+    }
+
+    if ($state->{mode} eq 'none'
+        || ($state->{mode} eq 'content-length'
+            && $state->{remaining} == 0)) {
+        $self->_finish_active_response;
+        return 0;
+    }
+
+    return 1;
+}
+
+sub _http_client_native_fallback_input ($self, $bytes) {
+    return 0 if $self->is_closed;
+
+    $self->{_http_client_input} .= $bytes;
+    $self->_drive_http1;
+
+    return 0 if $self->is_closed;
+    return 0 if $self->{_http_client_pending_upgrade}
+        || $self->{_http_client_pending_connect};
+
+    my $transaction = $self->{_http_client_active_transaction}
+        or return 0;
+    return 0 if !$transaction->response;
+
+    return $self->{_http_client_response_state} ? 1 : 0;
 }
 
 sub _decimal_content_length ($value) {
@@ -736,168 +859,12 @@ sub _drive_http1 ($self) {
     while (!$self->is_closed) {
         my $transaction = $self->{_http_client_active_transaction} or last;
 
-        if (!$transaction->response) {
-            last if !length($self->{_http_client_input});
+        last if !$transaction->response;
 
-            my ($response, $consumed);
-            my $parsed = eval {
-                ($response, $consumed) = _parse_response_head(
-                    $self->{_http_client_input},
-                );
-                1;
-            };
-            if (!$parsed) {
-                my $error = "$@";
-                $self->_fail_active_transaction($error || 'malformed HTTP/1 response', 1);
-                last;
-            }
-
-            if (!defined $response) {
-                if (length($self->{_http_client_input}) > $MAX_RESPONSE_HEAD) {
-                    $self->_fail_active_transaction(
-                        'HTTP/1 response head exceeds configured limit', 1,
-                    );
-                }
-                last;
-            }
-
-            substr($self->{_http_client_input}, 0, $consumed, '');
-
-            if ($response->status >= 100 && $response->status < 200) {
-                if ($response->status == 101) {
-                    my $target = $self->{_http_client_callbacks}{upgrade_to};
-                    if (!defined $target) {
-                        $self->_fail_active_transaction(
-                            'HTTP/1 101 Upgrade requires upgrade_to', 1,
-                        );
-                        last;
-                    }
-
-                    my $scheduled = eval {
-                        require Linux::Event::HTTP::_ClientUpgrade;
-                        Linux::Event::HTTP::_ClientUpgrade->schedule(
-                            $self, $transaction, $response, $target,
-                        );
-                        1;
-                    };
-                    if (!$scheduled) {
-                        my $error = "$@";
-                        $self->_fail_active_transaction($error, 1);
-                    }
-                    last;
-                }
-
-                my $valid = eval {
-                    _response_transfer_mode($transaction->request, $response);
-                    1;
-                };
-                if (!$valid) {
-                    my $error = "$@";
-                    $self->_fail_active_transaction($error, 1);
-                    last;
-                }
-
-                $response->_mark_complete;
-                $self->_callback(
-                    'on_informational', $transaction, $response,
-                ) if $self->{_http_client_callbacks}{on_informational};
-                next if $self->_same_active_transaction($transaction);
-                last;
-            }
-
-            if (uc($transaction->request->method) eq 'CONNECT'
-                && $response->status >= 200
-                && $response->status < 300) {
-                my $target = $self->{_http_client_callbacks}{tunnel_to};
-                if (!defined $target) {
-                    $self->_fail_active_transaction(
-                        'HTTP/1 successful CONNECT requires tunnel_to', 1,
-                    );
-                    last;
-                }
-
-                my $scheduled = eval {
-                    require Linux::Event::HTTP::_ClientConnect;
-                    Linux::Event::HTTP::_ClientConnect->schedule(
-                        $self, $transaction, $response, $target,
-                    );
-                    1;
-                };
-                if (!$scheduled) {
-                    my $error = "$@";
-                    $self->_fail_active_transaction($error, 1);
-                }
-                last;
-            }
-
-            my $state;
-            my $valid = eval {
-                $state = _response_transfer_mode(
-                    $transaction->request, $response,
-                );
-                1;
-            };
-            if (!$valid) {
-                my $error = "$@";
-                $self->_fail_active_transaction($error, 1);
-                last;
-            }
-
-            my $buffer_limit = $self->{_http_client_callbacks}{buffer_body};
-            if (defined $buffer_limit) {
-                $state->{buffer_limit} = $buffer_limit;
-                $state->{buffer} = '';
-            }
-
-            my $request_state = $self->{_http_client_request_state};
-            if ($request_state && $request_state->{streaming}
-                && !$request_state->{complete}) {
-                if (my $body = $transaction->_request_body_object) {
-                    $body->_cancel;
-                }
-                $state->{keep_alive} = 0;
-                $self->{_http_client_reusable} = 0;
-            }
-
-            $transaction->_set_response($response);
-            $self->{_http_client_response_state} = $state;
-
-            $self->_callback('on_response', $transaction, $response)
-                if $self->{_http_client_callbacks}{on_response};
-            next if !$self->_same_active_transaction($transaction);
-
-            if (exists($state->{buffer_limit})
-                && $state->{mode} eq 'content-length'
-                && $state->{remaining} > $state->{buffer_limit}) {
-                my $limit = $state->{buffer_limit};
-                $self->_fail_active_transaction(
-                    "response body exceeds buffer_body limit of $limit bytes", 1,
-                );
-                last;
-            }
-
-            if ($state->{mode} eq 'none'
-                || ($state->{mode} eq 'content-length'
-                    && $state->{remaining} == 0)) {
-                $self->_finish_active_response;
-                next;
-            }
-        }
-
-        last if !$self->{_http_client_active_transaction};
         my $progress = $self->_consume_response_body;
         last if !$progress;
     }
 
-    return;
-}
-
-sub on_data ($self, $bytes) {
-    return if $self->is_closed;
-    $self->{_http_client_input} .= $bytes;
-    return if $self->{_http_client_pending_upgrade}
-        || $self->{_http_client_pending_connect};
-    $self->_drive_http1;
     return;
 }
 
@@ -1018,7 +985,9 @@ Uses the normal L<Linux::Event::IO::Sock::Stream> asynchronous C<connect>
 contract. Requests may be submitted before transport readiness because
 Linux::Event already queues pre-connect output in order.
 
-The HTTP implementation owns C<on_data>, C<on_eof>, C<on_error>, and C<on_close>.
+The HTTP implementation owns protocol input plus C<on_eof>, C<on_error>, and C<on_close>.
+C<on_data> is not available on an HTTP Client::Connection because HTTP consumes
+response bytes through the native ordered-input consumer.
 Transport C<on_drain> is composed with streaming Request producer drain
 bookkeeping. Per-Transaction response callbacks belong to C<request>.
 

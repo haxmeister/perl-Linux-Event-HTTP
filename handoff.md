@@ -82,6 +82,204 @@ The client response-head parser is deliberately still Perl code. Project policy
 is not to add parser XS merely because it is possible; native work must be
 justified by measurement.
 
+### Client receive-path measurement result
+
+Experiment branch:
+
+`experiment/client-receive-path`
+
+Validated benchmark commit:
+
+`a09b16d328e648c3babf3e56f1bdd892ed6e5704`
+"bench: retain client connection across terminal callbacks"
+
+Draft experiment PR: #38.
+
+GitHub Actions run `36188055780` on Perl 5.44.0 / Linux::Event 0.116
+passed the normal 41-file / 1,029-test suite, the client benchmark smoke, the
+five-case directional matrix, artifact upload, and `make disttest`.
+
+Directional matrix configuration:
+
+- 10,000 measured responses per repeat;
+- 1,000 warmup responses;
+- 100 persistent connections;
+- 3 repeats;
+- separate raw responder process;
+- client-process CPU measured with CLOCK_PROCESS_CPUTIME_ID.
+
+Median current-client results:
+
+- 32 B Content-Length, drained: 6,507.3 responses/s; 153.612 us client CPU/response;
+- 16 KiB Content-Length, drained: 6,222.9 responses/s; 160.665 us CPU/response;
+- 16 KiB Content-Length, on_body: 6,077.0 responses/s; 164.471 us CPU/response;
+- 16 KiB Content-Length, buffer_body: 5,880.3 responses/s; 169.954 us CPU/response;
+- 16 KiB chunked, drained: 6,322.1 responses/s; 158.111 us CPU/response.
+
+The isolated current Perl response-head parse plus transfer/framing decision
+cost 33.849 us/response over 50,000 iterations. On the 32-byte workload this is
+about 22% of total measured client CPU/response.
+
+The instrumentation run observed exactly 1.000 Perl `on_data` call per response
+for all five workloads. The 32-byte response delivered 95 bytes/call; the
+16-KiB Content-Length response delivered 16,450 bytes/call; the chunked response
+delivered 16,492 bytes/call. Therefore this experiment is not primarily about
+reducing callback fragmentation. It is about avoiding the ordinary
+native-buffer -> Perl scalar -> _http_client_input -> Perl response-head parser
+path and unnecessary Perl buffer manipulation.
+
+Conclusion: the measurement threshold is met. A native Client::Connection
+receive-path prototype is justified. The experiment must still prove correctness
+and repeatable end-to-end improvement before anything is promoted to production.
+
+### Native client response-head prototype result
+
+The first native client prototype keeps the scope deliberately narrow:
+
+- response heads are parsed directly from Linux::Event's borrowed native input
+  buffer by a dedicated HTTP/1 client raw-consumer provider;
+- the parsed head is materialized as the existing public
+  `Linux::Event::HTTP::Response` object;
+- Content-Length, chunked, close-delimited, buffering, and `on_body` behavior
+  still use the existing client body state machine through native fallback;
+- Upgrade and successful CONNECT pause HTTP input while the zero-delay handoff
+  is pending, preserving same-read post-head bytes for `transition_to()`.
+
+The client uses a separate native-consumer operations table from the server.
+HTTP request and response wire roles are therefore explicit rather than selected
+by a server/client branch inside one provider.
+
+Important prototype commits include:
+
+- `61caa490694c2deb8f7f13b4bd7bbb60057b3e44`
+  "experiment: add native HTTP client response consumer";
+- `cabfc41bc7cc6e215e45151aa497a14912f12590`
+  "experiment: expose native client consumer definition";
+- `8d36e852c4baac0d6bd77dbcca98e92f28aa285e`
+  "experiment: route client response heads through native input";
+- `f7a8d035a1cef05aad45dd2b93353c04b7943e27` and
+  `4a6541e889b75d9c4cb7a52f616882de1e4ee6ca`
+  add pause/resume discipline to client Upgrade/CONNECT handoff;
+- `afad8a3f5173aeb64062491309f634fc9c717897`
+  updates the benchmark to instrument native fallback input.
+
+The initial native prototype exposed one real handoff bug: after a successful
+CONNECT or 101 head, the raw consumer could immediately see same-read target
+protocol bytes and try to parse them as another HTTP response before the
+scheduled handoff ran. Pausing HTTP input while the handoff is pending and
+restoring the previous read state after `transition_to()` fixes this and matches
+the server-side transition discipline.
+
+After that fix the full suite passes, including Upgrade and CONNECT:
+41 test files / 1,029 tests.
+
+#### Same-run baseline versus native-head A/B
+
+Decision-quality comparison run:
+
+`36189414550`
+
+Environment for both trees in the same GitHub Actions job:
+
+- Perl 5.44.0;
+- Linux::Event 0.116;
+- same hosted runner;
+- exact pre-native baseline commit
+  `a09b16d328e648c3babf3e56f1bdd892ed6e5704`;
+- native-head experiment from the current branch;
+- 10,000 measured responses per repeat;
+- 1,000 warmup responses;
+- 100 persistent connections;
+- 3 repeats per case.
+
+Same-run medians:
+
+| Workload | Baseline resp/s | Native resp/s | Throughput | Baseline CPU us/resp | Native CPU us/resp | CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 B Content-Length drain | 6,187.6 | 7,593.1 | +22.7% | 161.567 | 131.651 | -18.5% |
+| 16 KiB Content-Length drain | 6,188.9 | 7,003.6 | +13.2% | 161.543 | 142.727 | -11.6% |
+| 16 KiB Content-Length on_body | 6,054.9 | 6,959.9 | +14.9% | 165.140 | 143.657 | -13.0% |
+| 16 KiB Content-Length buffer_body | 5,975.5 | 6,579.5 | +10.1% | 167.308 | 151.938 | -9.2% |
+| 16 KiB chunked drain | 6,285.6 | 7,318.0 | +16.4% | 159.027 | 136.615 | -14.1% |
+
+The same run passed the current full test suite and `make disttest`. Both
+baseline and native benchmark JSON reports were uploaded from the same job.
+
+Conclusion: native response-head input is worth keeping. The gain is broad,
+repeatable on a same-run A/B, and achieved without rewriting body framing.
+Before promotion, remove or clearly isolate stale ordinary response-head parsing,
+add focused native-client regression coverage, update architecture/user
+documentation, and decide whether native body handling should be a separate
+follow-on experiment rather than part of this change.
+
+### Cleaned native-client production candidate
+
+The native client response-head change has now passed its cleanup and final
+candidate gate.
+
+Current candidate head:
+
+`c20af7f6fad53598dbd30eade62db19a7bc4163f`
+"experiment: allow reentrant next client transaction"
+
+Follow-on documentation/test commits through:
+
+`1bedc32dd5d01db9757dbc820bfa293b4e98cce1`
+"docs: document client receive benchmark"
+
+plus the reentrant-next-Transaction correction above remain on
+`experiment/client-receive-path` / draft PR #38.
+
+Cleanup completed:
+
+- removed the obsolete Perl response-head parser from Client::Connection;
+- kept the existing Perl body framing/delivery state machine as the fallback
+  after a native final response head;
+- retained immediate next-Transaction behavior when an `on_complete` callback
+  starts another request before the prior body driver unwinds;
+- added `t/16-native-raw-client.t` covering fragmented native heads,
+  informational + final heads in one read, native input ownership, and
+  reentrant close from `on_response`;
+- updated README, architecture, client policy, benchmark documentation, and
+  MANIFEST.
+
+Final candidate CI run:
+
+`36190306057`
+
+Results:
+
+- Perl 5.36: PASS;
+- latest Perl: PASS;
+- latest threaded Perl: PASS;
+- full suite: 42 files / 1,033 tests;
+- focused client receive benchmark smoke: PASS;
+- exact pre-native baseline build: PASS;
+- same-run baseline matrix: PASS;
+- same-run cleaned native matrix: PASS;
+- paired benchmark artifact upload: PASS;
+- `make disttest`: PASS, again 42 files / 1,033 tests.
+
+Final cleaned same-run A/B medians:
+
+| Workload | Baseline resp/s | Native resp/s | Throughput | Baseline CPU us/resp | Native CPU us/resp | CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 B Content-Length drain | 9,911.4 | 12,197.4 | +23.1% | 100.871 | 81.961 | -18.7% |
+| 16 KiB Content-Length drain | 9,141.9 | 10,772.7 | +17.8% | 109.330 | 92.778 | -15.1% |
+| 16 KiB Content-Length on_body | 8,638.0 | 9,992.7 | +15.7% | 115.690 | 99.947 | -13.6% |
+| 16 KiB Content-Length buffer_body | 8,007.8 | 9,668.6 | +20.7% | 124.660 | 103.403 | -17.1% |
+| 16 KiB chunked drain | 9,067.7 | 11,094.1 | +22.3% | 110.263 | 90.131 | -18.3% |
+
+Decision: keep native response-head input. Do **not** expand this change into a
+native response-body rewrite. The current boundary already produces a large,
+repeatable gain while preserving the mature Content-Length, chunked,
+close-delimited, bounded buffering, callback, redirect/auth retry, and connection
+reuse body lifecycle. Native body handling, if investigated later, must be a
+separate measured experiment with its own correctness and maintenance case.
+
+This branch is now a production candidate rather than an exploratory
+performance branch. It has not been merged to main yet.
+
 ### Next agenda
 
 The agreed post-0.002 sequence is:

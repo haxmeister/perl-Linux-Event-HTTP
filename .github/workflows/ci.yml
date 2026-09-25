@@ -61,7 +61,7 @@ jobs:
           make test
 
       - name: Build exact pre-raw baseline
-        if: matrix.perl == '5' && matrix.multi_thread == false
+        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
         run: |
           git fetch --depth=1 origin c391b2d8fe6b56b6088569cdadeb86160630be26
           git worktree add --detach "$RUNNER_TEMP/http-baseline" FETCH_HEAD
@@ -71,7 +71,7 @@ jobs:
           make test
 
       - name: Same-run production native HTTP comparisons
-        if: matrix.perl == '5' && matrix.multi_thread == false
+        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
         run: |
           export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
           perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --response-bytes=32 --json=bench/results/ci-native-default-get32.json
@@ -79,11 +79,20 @@ jobs:
           perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=30000 --warmup=3000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-native-default-post4k.json
 
       - name: Upload production native HTTP benchmark results
-        if: matrix.perl == '5' && matrix.multi_thread == false
+        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
         uses: actions/upload-artifact@v4
         with:
           name: native-http-production-default
           path: bench/results/ci-native-default-*.json
+
+      - name: Build pre-native client receive baseline
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          git fetch --depth=1 origin a09b16d328e648c3babf3e56f1bdd892ed6e5704
+          git worktree add --detach "$RUNNER_TEMP/http-client-baseline" FETCH_HEAD
+          cd "$RUNNER_TEMP/http-client-baseline"
+          perl Makefile.PL
+          make
 
       - name: End-to-end benchmark smoke
         if: matrix.perl == '5' && matrix.multi_thread == false
@@ -92,6 +101,46 @@ jobs:
       - name: Transaction lifecycle diagnostic smoke
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: perl -Mblib bench/run-http-transaction-ladder.pl --smoke
+
+      - name: Client receive-path benchmark smoke
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: perl -Mblib bench/run-http-client-receive.pl --smoke
+
+      - name: Client receive-path baseline benchmark
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          mkdir -p bench/results
+          cd "$RUNNER_TEMP/http-client-baseline"
+          perl -Mblib bench/run-http-client-receive.pl \
+            --requests=10000 \
+            --warmup=1000 \
+            --connections=100 \
+            --repeats=3 \
+            --head-iterations=50000 \
+            --instrument-requests=1000 \
+            --json="$GITHUB_WORKSPACE/bench/results/client-receive-baseline.json"
+
+      - name: Client receive-path directional benchmark
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          mkdir -p bench/results
+          perl -Mblib bench/run-http-client-receive.pl \
+            --requests=10000 \
+            --warmup=1000 \
+            --connections=100 \
+            --repeats=3 \
+            --head-iterations=50000 \
+            --instrument-requests=1000 \
+            --json=bench/results/client-receive-path.json
+
+      - name: Upload client receive-path benchmark
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-receive-path
+          path: |
+            bench/results/client-receive-baseline.json
+            bench/results/client-receive-path.json
 
       - name: Distribution integrity
         if: matrix.perl == '5' && matrix.multi_thread == false
