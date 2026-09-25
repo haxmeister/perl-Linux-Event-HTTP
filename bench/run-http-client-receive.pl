@@ -312,7 +312,19 @@ sub run_client_case (%opt) {
         on_timer => sub ($timer) {
             my $state = $timer->data;
             return if defined $state->{wall_seconds};
-            $state->{error} = "client benchmark timed out after $opt{timeout} seconds";
+            my @conn = map {
+                my $d = $_->data;
+                join(':',
+                    $d->{index},
+                    $d->{remaining},
+                    defined($_->transaction) ? 'active' : 'idle',
+                    $_->is_closed ? 'closed' : 'open',
+                )
+            } @{$state->{connections}};
+            $state->{error} = "client benchmark timed out after $opt{timeout} seconds"
+                . " phase=$state->{phase}"
+                . " completed=$state->{phase_completed}/$state->{phase_expected}"
+                . " connections=" . join(',', @conn);
             $state->{loop}->stop;
         },
     );
@@ -541,7 +553,8 @@ sub raw_server (%opt) {
                 next if $! == EINTR;
                 die "raw server read failed: $!\n";
             }
-            die "client closed raw server connection early\n" if $n == 0;
+            die "client closed raw server connection early"
+                . " after $seen/$opt{expected} requests\n" if $n == 0;
 
             my $fd = fileno($fh);
             $buffer{$fd} .= $chunk;
