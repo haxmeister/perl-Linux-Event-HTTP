@@ -326,7 +326,9 @@ sub run_client_case (%opt) {
     $loop->run;
 
     my $error = $bench->{error};
-    $_->close if !$_->is_closed for @{$bench->{connections}};
+    for my $conn (@{$bench->{connections}}) {
+        $conn->close if !$conn->is_closed;
+    }
 
     my $child_ok = wait_child($pid, $opt{timeout});
     die "$error\n" if defined $error;
