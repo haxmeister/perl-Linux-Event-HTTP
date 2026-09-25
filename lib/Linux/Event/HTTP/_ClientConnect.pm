@@ -116,10 +116,13 @@ sub schedule ($class, $conn, $transaction, $response, $target) {
     # Content-Length / Transfer-Encoding, if sent by a peer, are ignored.
     $response->_mark_complete;
     $conn->{_http_client_reusable} = 0;
+    my $resume_read = $conn->is_read_paused ? 0 : 1;
+    $conn->pause_read if $resume_read;
     $conn->{_http_client_pending_connect} = {
         transaction => $transaction,
         response    => $response,
         target      => $target,
+        resume_read => $resume_read,
     };
 
     Linux::Event::Kernel::Timer->new(
@@ -155,6 +158,7 @@ sub _handoff ($timer) {
     my $callbacks = $conn->{_http_client_callbacks} || {};
     my $response = $pending->{response};
     my $input = $conn->{_http_client_input};
+    my $resume_read = $pending->{resume_read};
 
     $transaction->_mark_complete;
     $conn->{_http_client_input} = '';
@@ -166,6 +170,7 @@ sub _handoff ($timer) {
         } else {
             $conn->transition_to($target);
         }
+        $conn->resume_read if $resume_read && $conn->is_read_paused;
         1;
     };
 
