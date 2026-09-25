@@ -1,6 +1,6 @@
 # Linux::Event::HTTP handoff
 
-Updated: 2026-09-20 (America/Chicago)
+Updated: 2026-09-25 (America/Chicago)
 
 ## CURRENT STATE - READ THIS FIRST
 
@@ -8,46 +8,41 @@ Repository: `haxmeister/perl-Linux-Event-HTTP`
 
 Canonical branch: `main`
 
-Release-prep branch: merged; no active release branch is required.
-
 Project boundary: modify only Linux::Event::HTTP unless the user explicitly
 authorizes another repository in the current chat.
 
-### Release target
+### Released baseline
 
-The next release is **0.002**.
+Linux::Event::HTTP **0.002 has been uploaded to CPAN and is the current released
+baseline**.
 
-Linux::Event::HTTP 0.001 is already published on CPAN/MetaCPAN. It was uploaded
-on 2026-09-13 America/Chicago (2026-09-14 UTC). Do not overwrite or reissue
-0.001.
+Release 0.002 is stamped `2026-09-20` in Changes at commit:
 
-The release-prep branch:
+`3f18be8c1677f9e2704dcf718d3071a9e19359ad`
+"release: stamp 0.002"
 
-- synchronizes every distribution module from version 0.001 to 0.002;
-- keeps `Changes` at `0.002 UNRELEASED` until the user explicitly authorizes
-  the actual release;
-- restores 0.001 as historical release `2026-09-13`;
-- gives 0.002 only the changes made after the 0.001 release.
+The release-state documentation commit is:
 
-Do not upload to CPAN, create a release tag, or create a GitHub release until the
-user explicitly authorizes the release.
+`d6f0f849e0da4260927e681a1337126b700d6c6c`
+"docs: record stamped 0.002 release state"
+
+Do not treat 0.002 as pending release work. New development is post-0.002 and is
+expected to become the 0.003 development cycle unless the user decides otherwise.
+
+Linux::Event::HTTP 0.002 requires:
+
+`Linux::Event >= 0.116`
+
+Do not lower that dependency without a specific compatibility investigation.
 
 ### Current production architecture
 
-Current release-prepared `main` integration commit:
-
-`9d179aa78c0fe6cd10da0b6a7b5952c73aa525ba`
-"Prepare Linux::Event::HTTP 0.002 release"
-
-The pre-release-prep native-default main commit was
-`e1deabae5de9758b5aa2f594e166e4b056728393`.
-
-Production native-input implementation:
+Production native server-input implementation:
 
 `71ec89135be61094a1599e3cee74dadd46addf02`
 "Make native HTTP input the production server path"
 
-`Linux::Event::HTTP::Server::Connection` now owns HTTP byte input through the
+`Linux::Event::HTTP::Server::Connection` owns HTTP byte input through the
 Linux::Event native-consumer ABI:
 
 - the class declares the HTTP raw native consumer directly;
@@ -63,39 +58,72 @@ Linux::Event native-consumer ABI:
 - Upgrade and CONNECT preserve same-read post-HTTP bytes across
   `transition_to()`.
 
-No Linux::Event core modification is needed for the current HTTP release.
+The public HTTP/1 feature set includes server/client execution, persistent
+connections, streaming request and response bodies with backpressure, bounded
+client buffering, redirects, cookies through HTTP::CookieJar, authentication
+through Uniform::HTTP::Auth, explicit/default forward proxies, proxy
+authentication, client/server CONNECT, Upgrade, HTTPS/TLS, protocol handoff, and
+server ordered persistent request processing.
 
-### Linux::Event dependency
+### Remaining HTTP/1 performance asymmetry
 
-Linux::Event::HTTP 0.002 requires:
+Server input is native, but `Linux::Event::HTTP::Client::Connection` still owns
+an ordinary Perl `on_data` path:
 
-`Linux::Event >= 0.116`
+```text
+Linux::Event native input
+    -> Perl on_data bytes
+    -> _http_client_input concatenation
+    -> Perl response-head parsing
+    -> response body framing/dispatch
+```
 
-The validated core commit is:
+The client response-head parser is deliberately still Perl code. Project policy
+is not to add parser XS merely because it is possible; native work must be
+justified by measurement.
 
-`007db40e22374c6d7bf8e056b2d354681d20c852`
-"Finalize 0.116 release handoff [skip ci]"
+### Next agenda
 
-Do not lower this dependency.
+The agreed post-0.002 sequence is:
 
-As of 2026-09-20, normal public CPAN/MetaCPAN lookup still exposes Linux::Event
-0.114 as the newest indexed release and does not expose 0.116. Therefore
-Linux::Event 0.116 availability is a **release blocker** for HTTP 0.002: the HTTP
-distribution can be fully prepared and validated, but should not be uploaded
-until a normal CPAN client can resolve Linux::Event 0.116.
+1. measure the current client receive path with a focused persistent-connection
+   benchmark;
+2. cover at least tiny Content-Length, 16 KiB Content-Length, chunked,
+   `buffer_body`, and streaming `on_body` response workloads;
+3. identify the cost of Perl `on_data`, `_http_client_input` concatenation,
+   response-head parsing, and buffer consumption;
+4. only if measurement shows a meaningful opportunity, prototype
+   Client::Connection as a Linux::Event raw native consumer and compare it
+   against the exact released-style baseline;
+5. keep or reject the native-client experiment based on correctness,
+   maintainability, and repeatable measurements;
+6. after the HTTP/1 receive-path decision, begin an HTTP/2 architecture
+   investigation.
 
-`Uniform::HTTP::Auth 0.02` from the `Uniform-HTTP` distribution is now
-normally indexed and is no longer a release blocker.
+### HTTP/2 distribution decision
 
-### Validation baseline
+HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
+distribution.
 
-Current main CI run:
+The intended architectural rule is one HTTP distribution and one public
+message/application model, with version-specific protocol executors underneath
+it. Request, Response, Transaction, Client::Operation, Client, and Server should
+remain conceptually shared where their semantics genuinely survive the protocol
+version change.
 
-`35547723361`
+HTTP/2 is expected to need separate connection/stream/framing/HPACK/flow-control
+machinery internally. Exact package names and implementation boundaries are not
+yet decided.
 
-Result: PASS.
+TLS ALPN should eventually select between HTTP executors, for example `h2` and
+`http/1.1`, without forcing applications to choose a separate HTTP library.
 
-The native-default implementation had already passed:
+Do not begin HTTP/3/QUIC work before the HTTP/2 architecture has been explored
+and the shared abstractions have been validated.
+
+### Validation baseline for 0.002
+
+The native-default implementation passed:
 
 - Perl 5.36;
 - latest Perl;
@@ -106,70 +134,29 @@ The native-default implementation had already passed:
 - end-to-end benchmark smoke;
 - same-run production-native comparisons.
 
-Same-run latest-Perl medians against the exact pre-native server baseline:
-
-- GET / 32-byte response: 31,472.7 -> 33,506.0 req/s (+6.5%);
-- GET / 16 KiB response: 23,029.0 -> 25,705.8 req/s (+11.6%);
-- POST / 4 KiB request, 32-byte response:
-  19,000.9 -> 20,582.9 req/s (+8.3%).
-
-### 0.002 release-prep checklist
-
-Completed on `release/0.002-prep`:
-
-- identify 0.002 as the next release because 0.001 is already on CPAN;
-- synchronize module versions to 0.002;
-- split `Changes` into post-release 0.002 notes and preserved 0.001 history;
-- audit public documentation for stale pre-native server-input wording;
-- verify `Makefile.PL` requires Linux::Event 0.116,
-  HTTP::CookieJar 0.014, Uniform::HTTP::Auth 0.02, and URI;
-- verify public modules are present in META `provides` and private helper
-  packages remain `no_index`;
-- verify MANIFEST contains the public modules, tests, native source, vendored
-  picohttpparser license/source, documentation, and advertised benchmark
-  backends.
-
-Final release-prep branch gate: GitHub Actions run `35551331335`.
-
-- Perl 5.36: PASS;
-- latest Perl: PASS;
-- latest threaded Perl: PASS;
-- full current suite: 41 files / 1,029 tests;
-- exact pre-native baseline: PASS (40 files / 1,015 tests);
-- end-to-end benchmark smoke: PASS;
-- transaction-lifecycle diagnostic smoke: PASS;
-- distribution integrity / `make disttest`: PASS;
-- disttest explicitly built and tested `Linux-Event-HTTP-0.002`.
-
-Latest-Perl same-run production-native medians from the release-prep gate:
+Release-prep latest-Perl same-run medians against the exact pre-native server
+baseline were:
 
 - GET / 32-byte response: 31,133.8 -> 33,842.8 req/s (+8.7%);
 - GET / 16 KiB response: 23,032.8 -> 26,717.6 req/s (+16.0%);
 - POST / 4 KiB request, 32-byte response:
   19,051.8 -> 20,186.5 req/s (+6.0%).
 
-The 0.002 repository state is therefore release-ready from the HTTP code,
-metadata, test, disttest, and native-input regression perspectives.
+These are server-path measurements and do not answer whether the client receive
+path warrants native conversion.
 
-The release-prep branch has been squash-merged to main.
+### Deferred client policy
 
-Release 0.002 is now stamped `2026-09-20` in Changes at commit
-`3f18be8c1677f9e2704dcf718d3071a9e19359ad`.
+Keep these separate until a real workload requires them:
 
-Remaining steps:
+- HTTP_PROXY / HTTPS_PROXY / ALL_PROXY environment discovery;
+- NO_PROXY matching;
+- PAC;
+- SOCKS;
+- preemptive authentication caches;
+- Authentication-Info / Proxy-Authentication-Info handling;
+- richer connection-pool policy;
+- parser XS that is not justified by measurement.
 
-1. confirm Linux::Event 0.116 is publicly resolvable from CPAN before uploading HTTP 0.002;
-2. run the final stamped-tree CI gate;
-3. the user can then run `make dist` and upload `Linux-Event-HTTP-0.002.tar.gz`;
-4. after upload, tag `v0.002` and create the GitHub release if desired.
-
-## Release summary draft
-
-Linux::Event::HTTP 0.002 moves the production HTTP/1 server input path onto
-Linux::Event's native ordered-byte consumer ABI. Request heads, Content-Length
-bodies, and chunked bodies now remain native through their normal parsing and
-framing paths, avoiding the old Perl `on_data` handoff. Upgrade and CONNECT
-retain same-read bytes across live protocol transitions. The release also
-includes HTTP server lifecycle optimizations and a threaded-Perl native Response
-context fix while preserving the public Request/Response/Transaction and server
-callback APIs.
+The next work item is measurement of the client receive path, not expansion of
+these policy features.
