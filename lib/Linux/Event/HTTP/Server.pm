@@ -35,6 +35,7 @@ sub _take_callback ($name, $option) {
 sub _http2_available () {
     return 0 if !eval {
         require Net::HTTP2::nghttp2;
+        Net::HTTP2::nghttp2->VERSION('0.011');
         require Linux::Event::HTTP::_HTTP2::Server;
         require Linux::Event::HTTP::_HTTP2::ServerConnection;
         1;
@@ -143,7 +144,7 @@ sub new ($class, %option) {
             if defined($connection_class_option);
         croak 'new(): http2 owns TLS ALPN selection; do not supply tls => { alpn => ... }'
             if exists $tls->{alpn};
-        croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
+        croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2 0.011 or newer'
             if !_http2_available();
         $tls->{alpn} = [ 'h2', 'http/1.1' ];
 
@@ -472,8 +473,9 @@ TLS ALPN list. A custom C<connection_class> remains HTTP/1-only for now rather
 than having its application-defined class identity silently replaced during an
 HTTP/2 transition.
 
-HTTP/2 currently requires the optional L<Net::HTTP2::nghttp2> binding and the
-underlying nghttp2 library. They are not yet normal distribution prerequisites.
+HTTP/2 currently requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer
+binding and the underlying nghttp2 library. They are not yet normal distribution
+prerequisites.
 Constructing a Server with C<http2 =E<gt> 1> fails explicitly when that
 capability is unavailable.
 
