@@ -890,6 +890,48 @@ value to distinguish streams the peer promises it did not process. Therefore
 HTTP currently marks the connection draining and does not automatically replay
 streams. Do not guess from stream-close timing or replay all active requests.
 
+### HTTP/2 aggregate buffered-response hardening
+
+High-level H2 Client buffering now has a per-connection aggregate memory budget.
+
+Public option:
+
+    http2_max_buffered_response_bytes => 67_108_864
+
+The option requires `http2 => 1`; default is 64 MiB.
+
+This limit is separate from per-operation `buffer_body => $max`.
+
+The H2 Client executor tracks body bytes currently retained for active buffered
+responses across all multiplexed streams. Before appending each DATA chunk it
+checks both:
+
+- the operation's own buffer_body limit;
+- the connection-wide aggregate H2 buffer limit.
+
+If the aggregate limit would be exceeded:
+
+- only the offending stream fails with CANCEL;
+- unrelated H2 streams remain healthy;
+- the connection remains usable;
+- the rejected chunk is not added to the aggregate accounting.
+
+Accounting is released when a buffered response completes, fails, is cancelled,
+or the connection closes.
+
+Focused test:
+
+`t/99-http2-aggregate-buffer-limit.t`
+
+creates two concurrently buffered H2 streams with a 10-byte connection budget.
+The first holds 6 bytes; a 6-byte chunk on the second stream is rejected without
+affecting the first; the first then grows to 10 bytes, completes successfully,
+and releases aggregate accounting to zero.
+
+CI run `36212430127` passed Build-and-test with t/99 on Perl 5.36, 5.38,
+5.40, 5.42, 5.44, latest, and latest-threaded. The Perl 5.44 lane reported
+54 files / 1,383 tests, Result PASS.
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
