@@ -178,7 +178,7 @@ $client_stream->close
     if $client_stream && !$client_stream->is_closed;
 $server_stream->close
     if $server_stream && !$server_stream->is_closed;
-$listener->close if !$listener->is_closed;
+$listener->close;
 
 is_deeply(\@errors, [],
     'native raw-input HTTP/2 exchange has no transport errors');
