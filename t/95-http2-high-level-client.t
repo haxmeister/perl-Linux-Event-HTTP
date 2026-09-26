@@ -227,6 +227,8 @@ my $first = $client->post(
             },
         );
         $state->{second_immediate_version} = $second->request->version;
+        $state->{second_immediate_authority} =
+            $second->request->authority;
         $state->{second_immediate_host} = $second->request->header('Host');
     },
     on_error => sub ($tx, $error) {
@@ -263,10 +265,12 @@ ok(!defined($state->{first_final_host}),
     'Client-synthesized Host is not exposed as an H2 normal field');
 
 ok($state->{second_complete}, 'second H2 operation completes');
-is($state->{second_immediate_version}, '1.1',
-    'reused operation is still built through shared Client policy first');
-is($state->{second_immediate_host}, 'virtual.test',
-    'caller-supplied Host is visible before H2 commit');
+is($state->{second_immediate_version}, '2',
+    'reused selected H2 connection commits the next Request immediately as H2');
+is($state->{second_immediate_authority}, 'virtual.test',
+    'reused H2 connection maps caller Host semantics to authority immediately');
+ok(!defined($state->{second_immediate_host}),
+    'reused H2 Request does not retain Host as a normal field');
 is($state->{second_status}, 200, 'second H2 operation receives status 200');
 is($state->{second_protocol}, 'h2',
     'second response also uses HTTP/2');
