@@ -124,6 +124,7 @@ my $h1_server = Linux::Event::HTTP::Server->new(
         $state->{h1_connections}{refaddr($conn)} = 1;
         push @{$state->{h1_targets}}, $req->target;
 
+        my $tx = $conn->transaction;
         my $target = $req->target;
         my $timer;
         $timer = Linux::Event::Kernel::Timer->new(
@@ -131,6 +132,7 @@ my $h1_server = Linux::Event::HTTP::Server->new(
             after => 0.03,
             on_timer => sub ($self) {
                 $res->body("h1:$target\n");
+                $tx->send_response;
                 $timer = undef;
             },
         );
