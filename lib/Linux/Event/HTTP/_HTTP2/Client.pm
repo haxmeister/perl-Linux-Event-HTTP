@@ -68,6 +68,7 @@ sub new ($class, %option) {
         tx_stream         => {},
         in_session_call   => 0,
         transport_blocked => 0,
+        transport_ending  => 0,
         closed            => 0,
         started           => 0,
         draining          => 0,
@@ -178,6 +179,26 @@ sub flush ($self) {
             last;
         }
     }
+    $self->_maybe_end_transport;
+    return;
+}
+
+sub _maybe_end_transport ($self) {
+    return if $self->{closed} || $self->{transport_ending};
+    return if $self->{transport_blocked};
+
+    my $session = $self->{session} or return;
+    if ($self->{draining}) {
+        return if $self->stream_count;
+    } else {
+        return if $session->want_read || $session->want_write;
+    }
+
+    my $stream = $self->{stream} or return;
+    return if $stream->is_closed;
+
+    $self->{transport_ending} = 1;
+    $stream->end;
     return;
 }
 
@@ -574,6 +595,7 @@ sub _on_stream_close ($self, $stream_id, $error_code) {
 
     if ($tx->is_terminal) {
         $self->_release_buffered_response($state);
+        $self->_maybe_end_transport;
         return 0;
     }
 
@@ -591,6 +613,7 @@ sub _on_stream_close ($self, $stream_id, $error_code) {
         $self->_invoke_error($state, $error);
     }
 
+    $self->_maybe_end_transport;
     return 0;
 }
 
