@@ -30,6 +30,9 @@ struct leh2_state_s {
     unsigned int close_pending;
     unsigned int closed;
     leh2_provider_t *providers;
+    char *send_buf;
+    size_t send_buf_len;
+    size_t send_buf_cap;
 };
 
 
@@ -182,6 +185,46 @@ leh2_call(pTHX_ leh2_state_t *state, const char *name, I32 argc, SV **argv)
     FREETMPS;
     LEAVE;
     return 0;
+}
+
+#define LEH2_SEND_BATCH_LIMIT (256 * 1024)
+
+static ssize_t
+leh2_send_callback(nghttp2_session *session, const uint8_t *data,
+    size_t length, int flags, void *user_data)
+{
+    leh2_state_t *state = (leh2_state_t *)user_data;
+    size_t needed;
+    size_t cap;
+
+    (void)session;
+    (void)flags;
+
+    if (!state || state->closed || state->close_pending)
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+
+    if (state->send_buf_len
+        && state->send_buf_len + length > LEH2_SEND_BATCH_LIMIT)
+        return NGHTTP2_ERR_WOULDBLOCK;
+
+    needed = state->send_buf_len + length;
+    if (needed > state->send_buf_cap) {
+        cap = state->send_buf_cap ? state->send_buf_cap : 16384;
+        while (cap < needed && cap < LEH2_SEND_BATCH_LIMIT)
+            cap *= 2;
+        if (cap < needed)
+            cap = needed;
+
+        if (state->send_buf)
+            Renew(state->send_buf, cap, char);
+        else
+            Newx(state->send_buf, cap, char);
+        state->send_buf_cap = cap;
+    }
+
+    Copy(data, state->send_buf + state->send_buf_len, length, char);
+    state->send_buf_len += length;
+    return (ssize_t)length;
 }
 
 static int
@@ -783,6 +826,8 @@ CODE:
         croak("nghttp2_session_callbacks_new: %s", nghttp2_strerror(rv));
     }
 
+    nghttp2_session_callbacks_set_send_callback(
+        cbs, leh2_send_callback);
     nghttp2_session_callbacks_set_on_begin_headers_callback(
         cbs, leh2_on_begin_headers);
     nghttp2_session_callbacks_set_on_header_callback(cbs, leh2_on_header);
@@ -1124,8 +1169,7 @@ mem_send(self)
     SV *self
 PREINIT:
     leh2_state_t *state;
-    const uint8_t *data = NULL;
-    ssize_t rv;
+    int rv;
 CODE:
     state = leh2_state_from_sv(self);
     if (state->closed)
@@ -1133,19 +1177,19 @@ CODE:
     if (state->in_nghttp2)
         croak("mem_send(): reentrant nghttp2 session call is not allowed");
 
+    state->send_buf_len = 0;
     ++state->in_nghttp2;
-    rv = nghttp2_session_mem_send(state->session, &data);
-    if (rv >= 0 && rv > 0)
-        RETVAL = newSVpvn((const char *)data, (STRLEN)rv);
-    else
-        RETVAL = newSVpvn("", 0);
+    rv = nghttp2_session_send(state->session);
     leh2_leave_nghttp2(state);
     leh2_throw_if_callback_failed(aTHX_ state);
 
-    if (rv < 0) {
-        SvREFCNT_dec(RETVAL);
-        croak("nghttp2_session_mem_send: %s", nghttp2_strerror((int)rv));
-    }
+    if (rv != 0)
+        croak("nghttp2_session_send: %s", nghttp2_strerror(rv));
+
+    if (state->send_buf_len)
+        RETVAL = newSVpvn(state->send_buf, (STRLEN)state->send_buf_len);
+    else
+        RETVAL = newSVpvn("", 0);
 OUTPUT:
     RETVAL
 
@@ -1231,6 +1275,8 @@ CODE:
         SvREFCNT_dec(state->callback_error);
     if (state->callbacks)
         SvREFCNT_dec((SV *)state->callbacks);
+    if (state->send_buf)
+        Safefree(state->send_buf);
 
     Safefree(state);
     sv_setiv(inner, 0);
