@@ -78,6 +78,23 @@ jobs:
           make
           make test
 
+      - name: Native HTTP/2 policy parity
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/native-nghttp2-binding' && matrix.perl == '5' && matrix.multi_thread == false
+        env:
+          LEHTTP_H2_NATIVE_TEST: 1
+        run: |
+          prove -b -v \
+            t/92-http2-server-executor-spike.t \
+            t/93-http2-client-executor-spike.t \
+            t/95-http2-high-level-client.t \
+            t/96-http2-high-level-multiplex.t \
+            t/97-http2-high-level-streaming-upload.t \
+            t/98-http2-header-list-limit.t \
+            t/99-http2-aggregate-buffer-limit.t \
+            t/100-http2-prealpn-fanout.t \
+            t/101-http2-high-level-policy.t \
+            t/102-http2-cancellation-isolation.t
+
       - name: HTTP/2 h2spec conformance gate
         if: github.event_name == 'pull_request' && (github.head_ref == 'experiment/http2-nghttp2-spike' || github.head_ref == 'experiment/native-nghttp2-binding') && matrix.perl == '5' && matrix.multi_thread == false
         env:
