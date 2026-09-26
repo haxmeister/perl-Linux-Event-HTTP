@@ -146,8 +146,10 @@ sub new ($class, %option) {
             // 'Linux::Event::HTTP::Client::Connection',
     );
     my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $has_http2_max_header_list_size =
+        exists $option{http2_max_header_list_size};
     my $http2_max_header_list_size =
-        exists($option{http2_max_header_list_size})
+        $has_http2_max_header_list_size
             ? delete($option{http2_max_header_list_size})
             : 65_536;
     croak 'new(): http2 must be zero or one'
@@ -159,7 +161,7 @@ sub new ($class, %option) {
         || "$http2_max_header_list_size" !~ /\A[0-9]+\z/
         || $http2_max_header_list_size < 1;
     croak 'new(): http2_max_header_list_size requires http2 => 1'
-        if !$http2 && $http2_max_header_list_size != 65_536;
+        if !$http2 && $has_http2_max_header_list_size;
     croak 'new(): http2 currently requires the default connection_class'
         if $http2 && defined($connection_class_option);
     croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
