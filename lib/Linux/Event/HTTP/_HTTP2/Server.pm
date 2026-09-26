@@ -26,6 +26,12 @@ sub new ($class, %option) {
         if !blessed($stream) || !$stream->can('write');
 
     my $connection = delete $option{connection};
+    my $autostart = exists($option{autostart})
+        ? delete($option{autostart}) : 1;
+    die 'new(): autostart must be zero or one'
+        if !defined($autostart) || ref($autostart)
+        || "$autostart" !~ /\A[01]\z/;
+
     die 'new(): connection must be an object'
         if defined($connection) && !blessed($connection);
 
@@ -64,6 +70,7 @@ sub new ($class, %option) {
         in_session_call => 0,
         transport_blocked => 0,
         closed          => 0,
+        started         => 0,
     }, $class;
 
     my $weak = $self;
@@ -99,12 +106,23 @@ sub new ($class, %option) {
     );
 
     $self->{session} = $session;
-    $session->send_connection_preface(
-        max_concurrent_streams => 0 + $max_concurrent_streams,
+    $self->{max_concurrent_streams} = 0 + $max_concurrent_streams;
+    $self->start if $autostart;
+    return $self;
+}
+
+sub start ($self) {
+    die 'start(): executor is closed' if $self->{closed};
+    return $self if $self->{started};
+    $self->{started} = 1;
+    $self->{session}->send_connection_preface(
+        max_concurrent_streams => $self->{max_concurrent_streams},
     );
     $self->flush;
     return $self;
 }
+
+sub started ($self) { !!$self->{started} }
 
 sub session ($self) { $self->{session} }
 sub stream  ($self) { $self->{stream} }
@@ -124,6 +142,7 @@ sub stream_count ($self) {
 
 sub input ($self, $bytes) {
     die 'input(): executor is closed' if $self->{closed};
+    die 'input(): executor is not started' if !$self->{started};
     die 'input(): bytes must be a scalar' if ref $bytes;
     return 0 if !defined($bytes) || $bytes eq '';
 
@@ -141,6 +160,7 @@ sub input ($self, $bytes) {
 
 sub flush ($self) {
     return if $self->{closed};
+    return if !$self->{started};
     return if $self->{in_session_call};
     return if $self->{transport_blocked};
 
