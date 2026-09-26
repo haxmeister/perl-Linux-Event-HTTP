@@ -33,6 +33,10 @@ sub new ($class, %option) {
         ? delete($option{max_active_streams}) : 100;
     my $max_header_list_size = exists($option{max_header_list_size})
         ? delete($option{max_header_list_size}) : 65_536;
+    my $max_buffered_response_bytes =
+        exists($option{max_buffered_response_bytes})
+            ? delete($option{max_buffered_response_bytes})
+            : 67_108_864;
     die 'new(): autostart must be zero or one'
         if !defined($autostart) || ref($autostart)
         || "$autostart" !~ /\A[01]\z/;
@@ -44,6 +48,11 @@ sub new ($class, %option) {
         if !defined($max_header_list_size) || ref($max_header_list_size)
         || "$max_header_list_size" !~ /\A[0-9]+\z/
         || $max_header_list_size < 1;
+    die 'new(): max_buffered_response_bytes must be a positive integer'
+        if !defined($max_buffered_response_bytes)
+        || ref($max_buffered_response_bytes)
+        || "$max_buffered_response_bytes" !~ /\A[0-9]+\z/
+        || $max_buffered_response_bytes < 1;
     die 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -64,6 +73,8 @@ sub new ($class, %option) {
         draining          => 0,
         max_active_streams => 0 + $max_active_streams,
         max_header_list_size => 0 + $max_header_list_size,
+        max_buffered_response_bytes => 0 + $max_buffered_response_bytes,
+        buffered_response_bytes => 0,
     }, $class;
 
     my $weak = $self;
@@ -198,7 +209,19 @@ sub close ($self, $error = 'HTTP/2 connection closed') {
 
     $self->{streams} = {};
     $self->{tx_stream} = {};
+    $self->{buffered_response_bytes} = 0;
     $self->{session} = undef;
+    return;
+}
+
+sub _release_buffered_response ($self, $state) {
+    my $bytes = length($state->{buffered_body} // '');
+    return if !$bytes;
+
+    $self->{buffered_response_bytes} -= $bytes;
+    $self->{buffered_response_bytes} = 0
+        if $self->{buffered_response_bytes} < 0;
+    $state->{buffered_body} = '';
     return;
 }
 
@@ -484,7 +507,19 @@ sub _on_data_chunk_recv ($self, $stream_id, $data, $flags) {
             );
             return 0;
         }
+
+        if ($self->{buffered_response_bytes} + length($data)
+            > $self->{max_buffered_response_bytes}) {
+            $self->_stream_failure(
+                $stream_id,
+                'HTTP/2 aggregate buffered response body limit exceeded',
+                H2_CANCEL,
+            );
+            return 0;
+        }
+
         $state->{buffered_body} .= $data;
+        $self->{buffered_response_bytes} += length($data);
     } elsif (my $cb = $state->{callback}{on_body}) {
         my $ok = eval { $cb->($tx, $response, $data); 1 };
         if (!$ok) {
@@ -511,6 +546,7 @@ sub _finish_response ($self, $stream_id) {
 
     if (defined $state->{buffer_limit}) {
         $response->_set_received_body($state->{buffered_body});
+        $self->_release_buffered_response($state);
     }
     $response->_mark_complete;
     $tx->_mark_complete if !$tx->is_terminal;
@@ -536,18 +572,23 @@ sub _on_stream_close ($self, $stream_id, $error_code) {
     my $tx = $state->{transaction};
     delete $self->{tx_stream}{refaddr($tx)};
 
-    if (!$tx->is_terminal) {
-        if ($error_code) {
-            my $error = "HTTP/2 stream closed with error $error_code";
-            $tx->_fail($error);
-            $self->_invoke_error($state, $error);
-        } elsif ($state->{response}) {
-            $self->_finish_detached_response($state);
-        } else {
-            my $error = 'HTTP/2 stream closed before final Response';
-            $tx->_fail($error);
-            $self->_invoke_error($state, $error);
-        }
+    if ($tx->is_terminal) {
+        $self->_release_buffered_response($state);
+        return 0;
+    }
+
+    if ($error_code) {
+        my $error = "HTTP/2 stream closed with error $error_code";
+        $self->_release_buffered_response($state);
+        $tx->_fail($error);
+        $self->_invoke_error($state, $error);
+    } elsif ($state->{response}) {
+        $self->_finish_detached_response($state);
+    } else {
+        my $error = 'HTTP/2 stream closed before final Response';
+        $self->_release_buffered_response($state);
+        $tx->_fail($error);
+        $self->_invoke_error($state, $error);
     }
 
     return 0;
@@ -560,6 +601,7 @@ sub _finish_detached_response ($self, $state) {
     if (defined $state->{buffer_limit}
         && !$response->has_buffered_body) {
         $response->_set_received_body($state->{buffered_body});
+        $self->_release_buffered_response($state);
     }
     $response->_mark_complete;
     $tx->_mark_complete if !$tx->is_terminal;
@@ -577,6 +619,7 @@ sub _stream_failure ($self, $stream_id, $error, $code = H2_INTERNAL_ERROR) {
     my $state = $self->{streams}{$stream_id} or return;
 
     my $tx = $state->{transaction};
+    $self->_release_buffered_response($state);
     if (!$tx->is_terminal) {
         $tx->_fail($error);
         $self->_invoke_error($state, $error);
