@@ -1,6 +1,6 @@
 # Linux::Event::HTTP handoff
 
-Updated: 2026-09-25 (America/Chicago)
+Updated: 2026-09-26 (America/Chicago)
 
 ## CURRENT STATE - READ THIS FIRST
 
@@ -8,7 +8,14 @@ Updated: 2026-09-25 (America/Chicago)
 
 Active branch: `experiment/native-nghttp2-binding`, draft PR #40, based on
 `experiment/http2-nghttp2-spike`. Starting head: `954c7cc98aee84e80d47edaebdb7b3e723d552ce`.
+Validated implementation head: `53570eb431b74c02b865de2725713ee3d1ef29c4`.
 This section supersedes the older stabilization state below. Do not merge yet.
+
+The private native bridge supports client/server sessions, multiplexing,
+libnghttp2 framing/HPACK, decoded header/DATA callbacks, static bodies, streaming
+providers, deferred DATA/resume_stream, and GOAWAY last_stream_id. Existing
+Client/Server executors still own Request/Response/Transaction semantics. It
+now also supports real TLS/ALPN native input and executor-managed output.
 
 The original t/107 failure reproduces locally on Perl 5.38.2 threaded/core 0.117.
 Lifecycle trace: request 1 arrived at 0.543739 s and its timer sent its response
@@ -47,10 +54,46 @@ the loop. Peer input failures now use connection close, preserving the existing
 executor input policy. Skipped/suppressed XS callbacks also release their
 argument SVs rather than leaking them after teardown.
 Native h2spec passes the exact accepted gate: 146 tests, 144 passed, 1 skipped,
-1 failed (only the established stream-identifier case). The full local suite
-before t/109 passed 63 files/1,625 tests; final count and seven-lane CI pending.
+1 failed (only the established stream-identifier case).
+
+Validation run: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/36242828225
+
+All seven Build-and-test lanes passed, including HTTP/1 and native t/103-109.
+Each lane runs 64 test files and 1,633 assertions. Resolved Perl versions:
+
+| CI lane | Actual Perl | Build and test |
+| --- | --- | --- |
+| 5.36 | 5.36.3 | PASS |
+| 5.38 | 5.38.5 | PASS |
+| 5.40 | 5.40.5 | PASS |
+| 5.42 | 5.42.3 | PASS |
+| 5.44 | 5.44.0 | PASS |
+| latest | 5.44.0 | PASS |
+| latest threaded | 5.44.0 threaded | PASS |
+
+CI run 36242828225 completed successfully. The latest lane's native h2spec
+gate, distribution integrity (including the packaged test suite), production
+HTTP/1 comparisons and benchmark smoke steps all passed. Local Perl 5.38.2 threaded also
+passed all 64 files/1,633 tests; local native subset: 7 files/145 tests.
 The h2spec harness now accepts --native; PR #40's gate uses it. The accepted
 146/144/1/1 baseline has not been changed.
+
+Remaining before choosing native as the default/replacing Net::HTTP2::nghttp2:
+
+- No known blocker remains in the three requested integration tasks.
+- Run the wider H2 policy, limits, GOAWAY/cancellation and fallback coverage
+  explicitly with native selected. Existing default-backend tests remain green,
+  but that is not equivalent to native coverage of every policy combination.
+- Decide native dependency/build packaging (currently optional via pkg-config,
+  libnghttp2 >= 1.57) and removal or retention of the external backend.
+- Measure native input against the external-backend path after correctness
+  parity is settled. No native H2 speedup is claimed from this work.
+- Keep `_http2_session_class` private and retain one pair of H2 executors.
+  Switching defaults and merging PR #40 require the user's next decision.
+
+Only this HTTP repository was changed. Core 0.117 was consumed as an installed
+release dependency; no core change or renewed ALPN segfault investigation was
+needed.
 
 
 Repository: `haxmeister/perl-Linux-Event-HTTP`
