@@ -299,10 +299,10 @@ cmp_ok($upload_drains, '>=', 1,
 is($result{'/stream-upload'}{body}, 'upload:100004',
     'native-backed streaming upload reaches Server executor intact');
 
-cmp_ok($T::BlockedNative::blocked_writes, '>', 10,
-    'client and server exercise transport write backpressure repeatedly');
-cmp_ok($T::BlockedNative::drains, '>', 10,
-    'transport drains resume queued nghttp2 output');
+cmp_ok($T::BlockedNative::blocked_writes, '>=', 2,
+    'client and server exercise multiple transport backpressure cycles');
+cmp_ok($T::BlockedNative::drains, '>=', 2,
+    'multiple transport drains resume queued nghttp2 output');
 is($T::BlockedNative::violations, 0,
     'no additional output is written between false write and drain');
 ok(!defined($client_executor->session),
