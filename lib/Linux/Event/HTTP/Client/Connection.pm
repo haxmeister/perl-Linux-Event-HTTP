@@ -205,7 +205,8 @@ sub _prepare_request ($request, $streaming = 0) {
             $chunked = 1;
         }
 
-        $request->_begin_stream_body;
+        $request->_begin_stream_body
+            if !$request->_has_incremental_body;
         my $head = _serialize_request_head($request);
         return (
             $head,
@@ -352,9 +353,11 @@ sub request ($self, $request, %option) {
         );
         $transaction->_activate;
     }
-    my $request_body = defined($stream_body)
-        ? $transaction->request_body(%$stream_body)
-        : undef;
+    my $request_body;
+    if (defined $stream_body) {
+        $request_body = $transaction->_request_body_object;
+        $request_body //= $transaction->request_body(%$stream_body);
+    }
 
     $self->{_http_client_active_transaction} = $transaction;
     $self->{_http_client_callbacks} = \%callback;
