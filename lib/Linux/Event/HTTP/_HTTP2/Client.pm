@@ -595,7 +595,6 @@ sub _on_stream_close ($self, $stream_id, $error_code) {
 
     if ($tx->is_terminal) {
         $self->_release_buffered_response($state);
-        $self->_maybe_end_transport;
         return 0;
     }
 
@@ -613,7 +612,6 @@ sub _on_stream_close ($self, $stream_id, $error_code) {
         $self->_invoke_error($state, $error);
     }
 
-    $self->_maybe_end_transport;
     return 0;
 }
 
