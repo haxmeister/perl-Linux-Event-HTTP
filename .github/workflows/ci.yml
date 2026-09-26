@@ -78,9 +78,8 @@ jobs:
           make
           make test
 
-      - name: HTTP/2 h2spec conformance diagnostic
+      - name: HTTP/2 h2spec conformance gate
         if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
-        continue-on-error: true
         run: |
           set -euo pipefail
           H2SPEC_VERSION=2.6.0
@@ -140,6 +139,22 @@ jobs:
           echo "H2SPEC_EXIT_STATUS=$STATUS" | tee -a "$H2SPEC_LOG"
           echo "===== h2spec target server log ====="
           cat "$SERVER_LOG"
+
+          if [ "$STATUS" -eq 0 ]; then
+            exit 0
+          fi
+
+          FAILURES="$RUNNER_TEMP/h2spec-failures.log"
+          awk '/^Failures:/{capture=1} capture{print}' "$H2SPEC_LOG" >"$FAILURES"
+
+          if [ "$STATUS" -eq 1 ] \
+             && grep -Fq '146 tests, 144 passed, 1 skipped, 1 failed' "$H2SPEC_LOG" \
+             && grep -Fq 'Sends stream identifier that is numerically smaller than previous' "$FAILURES"; then
+            echo "h2spec matches the known nghttp2 baseline exception" \
+              | tee -a "$H2SPEC_LOG"
+            exit 0
+          fi
+
           exit "$STATUS"
 
       - name: Upload HTTP/2 h2spec diagnostic
