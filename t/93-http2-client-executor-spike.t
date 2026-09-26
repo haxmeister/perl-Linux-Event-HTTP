@@ -4,16 +4,26 @@ use warnings;
 
 use Test::More;
 
+our $H2_SESSION_CLASS;
 BEGIN {
-    eval {
-        require Net::HTTP2::nghttp2;
-        Net::HTTP2::nghttp2->VERSION('0.011');
-        require Net::HTTP2::nghttp2::Session;
-        1;
-    } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
+    if ($ENV{LEHTTP_H2_NATIVE_TEST}) {
+        eval {
+            require Linux::Event::HTTP::_HTTP2::Native;
+            Linux::Event::HTTP::_HTTP2::Native->available;
+            1;
+        } or plan skip_all => 'native libnghttp2 bridge is not built';
+        $H2_SESSION_CLASS = 'Linux::Event::HTTP::_HTTP2::Native';
+    } else {
+        eval {
+            require Net::HTTP2::nghttp2;
+            Net::HTTP2::nghttp2->VERSION('0.011');
+            require Net::HTTP2::nghttp2::Session;
+            1;
+        } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
 
-    Net::HTTP2::nghttp2->available
-        or plan skip_all => 'nghttp2 library is not available';
+        Net::HTTP2::nghttp2->available
+            or plan skip_all => 'nghttp2 library is not available';
+    }
 }
 
 use Linux::Event::HTTP::Request;
@@ -160,6 +170,8 @@ my $client_stream = Linux::Event::IO::Sock::Stream->connect(
     on_ready => sub ($stream) {
         $executor = Linux::Event::HTTP::_HTTP2::Client->new(
             stream => $stream,
+            (defined($H2_SESSION_CLASS)
+                ? (_session_class => $H2_SESSION_CLASS) : ()),
         );
 
         my $start_request = sub ($path, %option) {
