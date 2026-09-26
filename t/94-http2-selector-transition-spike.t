@@ -374,4 +374,23 @@ ok($h1_request->{tx_match},
         'custom ALPN conflict is explicit');
 }
 
+
+{
+    my $user_close_count = 0;
+    my $transitioned = bless {
+        _http_user_on_close => sub { ++$user_close_count },
+    }, 'Linux::Event::HTTP::_HTTP2::ServerConnection';
+
+    my $ok = eval {
+        Linux::Event::HTTP::Server::Connection::_http_transport_close(
+            $transitioned,
+        );
+        1;
+    };
+    ok($ok,
+        'retained server close callback survives H2 class transition');
+    is($user_close_count, 1,
+        'retained server close callback still dispatches user on_close');
+}
+
 done_testing;
