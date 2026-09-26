@@ -1476,6 +1476,11 @@ Returns the configured Client::Connection class.
 
 Returns true when the Client was constructed with C<http2 =E<gt> 1>.
 
+=head2 http2_max_header_list_size
+
+Returns the decoded HTTP/2 response header-list limit. The default is 65,536
+bytes.
+
 =head2 max_redirects
 
 Returns the Client default redirect limit.
@@ -1573,6 +1578,12 @@ SETTINGS_MAX_CONCURRENT_STREAMS behavior.
 A connection that has received GOAWAY is marked draining and receives no new
 Operations. Existing streams are allowed to finish. Transparent retry of
 streams affected by GOAWAY is not yet part of the high-level policy.
+
+Decoded HTTP/2 response header lists default to a 65,536-byte limit, using the
+HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per field.
+Override it with C<http2_max_header_list_size>. The value is advertised through
+SETTINGS_MAX_HEADER_LIST_SIZE and independently enforced after HPACK decoding.
+An oversized header block fails only its stream.
 
 Operations submitted before any connection to the origin has completed ALPN
 selection may still create more than one initial TLS connection. Once an H2
