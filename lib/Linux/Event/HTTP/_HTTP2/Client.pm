@@ -270,8 +270,10 @@ sub request ($self, $request, %option) {
 
     my ($request_body, $provider, $provider_cb);
     if ($stream_body) {
-        $request->_begin_stream_body;
-        $request_body = $tx->request_body(%$stream_body);
+        $request->_begin_stream_body
+            if !$request->_has_incremental_body;
+        $request_body = $tx->_request_body_object;
+        $request_body //= $tx->request_body(%$stream_body);
         $provider = {
             queue       => '',
             eof         => 0,
