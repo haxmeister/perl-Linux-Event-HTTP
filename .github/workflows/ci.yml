@@ -78,40 +78,6 @@ jobs:
           make
           make test
 
-      - name: Build exact pre-raw baseline
-        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
-        run: |
-          git fetch --depth=1 origin c391b2d8fe6b56b6088569cdadeb86160630be26
-          git worktree add --detach "$RUNNER_TEMP/http-baseline" FETCH_HEAD
-          cd "$RUNNER_TEMP/http-baseline"
-          perl Makefile.PL
-          make
-          make test
-
-      - name: Same-run production native HTTP comparisons
-        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
-        run: |
-          export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --response-bytes=32 --json=bench/results/ci-native-default-get32.json
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=30000 --warmup=3000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-native-default-get16k.json
-          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=30000 --warmup=3000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-native-default-post4k.json
-
-      - name: Upload production native HTTP benchmark results
-        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-http-production-default
-          path: bench/results/ci-native-default-*.json
-
-      - name: Build pre-native client receive baseline
-        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
-        run: |
-          git fetch --depth=1 origin a09b16d328e648c3babf3e56f1bdd892ed6e5704
-          git worktree add --detach "$RUNNER_TEMP/http-client-baseline" FETCH_HEAD
-          cd "$RUNNER_TEMP/http-client-baseline"
-          perl Makefile.PL
-          make
-
       - name: HTTP/2 h2spec conformance diagnostic
         if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
         continue-on-error: true
@@ -167,6 +133,41 @@ jobs:
           path: |
             ${{ runner.temp }}/h2spec-output.log
             ${{ runner.temp }}/h2spec-server.log
+
+
+      - name: Build exact pre-raw baseline
+        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
+        run: |
+          git fetch --depth=1 origin c391b2d8fe6b56b6088569cdadeb86160630be26
+          git worktree add --detach "$RUNNER_TEMP/http-baseline" FETCH_HEAD
+          cd "$RUNNER_TEMP/http-baseline"
+          perl Makefile.PL
+          make
+          make test
+
+      - name: Same-run production native HTTP comparisons
+        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
+        run: |
+          export BENCH_BASE_TREE="$RUNNER_TEMP/http-baseline"
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=50000 --warmup=5000 --repeats=7 --response-bytes=32 --json=bench/results/ci-native-default-get32.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=30000 --warmup=3000 --repeats=7 --response-bytes=16384 --json=bench/results/ci-native-default-get16k.json
+          perl -Mblib bench/run-http-comparison.pl --servers=linuxevent_baseline_content_type,linuxevent_content_type --requests=30000 --warmup=3000 --repeats=7 --request-body-bytes=4096 --response-bytes=32 --json=bench/results/ci-native-default-post4k.json
+
+      - name: Upload production native HTTP benchmark results
+        if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-http-production-default
+          path: bench/results/ci-native-default-*.json
+
+      - name: Build pre-native client receive baseline
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/client-receive-path' && matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          git fetch --depth=1 origin a09b16d328e648c3babf3e56f1bdd892ed6e5704
+          git worktree add --detach "$RUNNER_TEMP/http-client-baseline" FETCH_HEAD
+          cd "$RUNNER_TEMP/http-client-baseline"
+          perl Makefile.PL
+          make
 
       - name: End-to-end benchmark smoke
         if: matrix.perl == '5' && matrix.multi_thread == false
