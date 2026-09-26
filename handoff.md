@@ -115,7 +115,7 @@ expected to become the 0.003 development cycle unless the user decides otherwise
 
 Linux::Event::HTTP 0.002 requires:
 
-`Linux::Event >= 0.116`
+`Linux::Event >= 0.117`
 
 Do not lower that dependency without a specific compatibility investigation.
 
