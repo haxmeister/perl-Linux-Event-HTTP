@@ -905,6 +905,192 @@ CODE:
     if (rv != 0)
         croak("nghttp2_submit_response: %s", nghttp2_strerror(rv));
 
+void
+_submit_settings(self, max_concurrent_streams, max_header_list_size)
+    SV *self
+    UV max_concurrent_streams
+    UV max_header_list_size
+PREINIT:
+    leh2_state_t *state;
+    nghttp2_settings_entry iv[2];
+    int rv;
+CODE:
+    state = leh2_state_from_sv(self);
+    if (state->closed)
+        croak("send_connection_preface(): session is closed");
+    if (max_concurrent_streams > UINT32_MAX
+        || max_header_list_size > UINT32_MAX)
+        croak("HTTP/2 setting is too large");
+
+    iv[0].settings_id = NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS;
+    iv[0].value = (uint32_t)max_concurrent_streams;
+    iv[1].settings_id = NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE;
+    iv[1].value = (uint32_t)max_header_list_size;
+
+    rv = nghttp2_submit_settings(
+        state->session, NGHTTP2_FLAG_NONE, iv, 2);
+    if (rv != 0)
+        croak("nghttp2_submit_settings: %s", nghttp2_strerror(rv));
+
+IV
+_submit_request_full(self, headers, body = &PL_sv_undef, data_callback = &PL_sv_undef, callback_data = &PL_sv_undef)
+    SV *self
+    SV *headers
+    SV *body
+    SV *data_callback
+    SV *callback_data
+PREINIT:
+    leh2_state_t *state;
+    nghttp2_nv *nva;
+    size_t nvlen;
+    leh2_provider_t *provider;
+    nghttp2_data_provider data_provider;
+    int32_t stream_id;
+CODE:
+    state = leh2_state_from_sv(self);
+    if (state->closed)
+        croak("submit_request(): session is closed");
+
+    provider = leh2_provider_new(
+        aTHX_ state, body, data_callback, callback_data);
+    if (provider) {
+        data_provider.source.ptr = provider;
+        data_provider.read_callback = leh2_data_read;
+    }
+
+    nva = leh2_make_nv(aTHX_ headers, &nvlen);
+    stream_id = nghttp2_submit_request(
+        state->session,
+        NULL,
+        nva,
+        nvlen,
+        provider ? &data_provider : NULL,
+        NULL
+    );
+    if (nva)
+        Safefree(nva);
+
+    if (stream_id < 0) {
+        leh2_provider_free(provider);
+        croak("nghttp2_submit_request: %s", nghttp2_strerror(stream_id));
+    }
+
+    if (provider) {
+        provider->stream_id = stream_id;
+        leh2_provider_add(state, provider);
+    }
+
+    RETVAL = stream_id;
+OUTPUT:
+    RETVAL
+
+void
+_submit_response_full(self, stream_id, headers, body = &PL_sv_undef, data_callback = &PL_sv_undef, callback_data = &PL_sv_undef)
+    SV *self
+    IV stream_id
+    SV *headers
+    SV *body
+    SV *data_callback
+    SV *callback_data
+PREINIT:
+    leh2_state_t *state;
+    nghttp2_nv *nva;
+    size_t nvlen;
+    leh2_provider_t *provider;
+    nghttp2_data_provider data_provider;
+    int rv;
+CODE:
+    state = leh2_state_from_sv(self);
+    if (state->closed)
+        croak("submit_response(): session is closed");
+
+    provider = leh2_provider_new(
+        aTHX_ state, body, data_callback, callback_data);
+    if (provider) {
+        provider->stream_id = (int32_t)stream_id;
+        data_provider.source.ptr = provider;
+        data_provider.read_callback = leh2_data_read;
+    }
+
+    nva = leh2_make_nv(aTHX_ headers, &nvlen);
+    rv = nghttp2_submit_response(
+        state->session,
+        (int32_t)stream_id,
+        nva,
+        nvlen,
+        provider ? &data_provider : NULL
+    );
+    if (nva)
+        Safefree(nva);
+
+    if (rv != 0) {
+        leh2_provider_free(provider);
+        croak("nghttp2_submit_response: %s", nghttp2_strerror(rv));
+    }
+
+    if (provider)
+        leh2_provider_add(state, provider);
+
+void
+submit_rst_stream(self, stream_id, error_code)
+    SV *self
+    IV stream_id
+    UV error_code
+PREINIT:
+    leh2_state_t *state;
+    int rv;
+CODE:
+    state = leh2_state_from_sv(self);
+    if (state->closed)
+        croak("submit_rst_stream(): session is closed");
+    if (error_code > UINT32_MAX)
+        croak("submit_rst_stream(): error code is too large");
+
+    rv = nghttp2_submit_rst_stream(
+        state->session,
+        NGHTTP2_FLAG_NONE,
+        (int32_t)stream_id,
+        (uint32_t)error_code
+    );
+    if (rv != 0)
+        croak("nghttp2_submit_rst_stream: %s", nghttp2_strerror(rv));
+
+int
+is_stream_deferred(self, stream_id)
+    SV *self
+    IV stream_id
+PREINIT:
+    leh2_state_t *state;
+    leh2_provider_t *provider;
+CODE:
+    state = leh2_state_from_sv(self);
+    provider = leh2_provider_find(state, (int32_t)stream_id);
+    RETVAL = provider && provider->deferred ? 1 : 0;
+OUTPUT:
+    RETVAL
+
+void
+resume_stream(self, stream_id)
+    SV *self
+    IV stream_id
+PREINIT:
+    leh2_state_t *state;
+    leh2_provider_t *provider;
+    int rv;
+CODE:
+    state = leh2_state_from_sv(self);
+    if (state->closed)
+        croak("resume_stream(): session is closed");
+
+    provider = leh2_provider_find(state, (int32_t)stream_id);
+    if (!provider)
+        croak("resume_stream(): stream has no data provider");
+
+    rv = nghttp2_session_resume_data(state->session, (int32_t)stream_id);
+    if (rv != 0)
+        croak("nghttp2_session_resume_data: %s", nghttp2_strerror(rv));
+    provider->deferred = 0;
+
 UV
 mem_recv(self, bytes)
     SV *self
