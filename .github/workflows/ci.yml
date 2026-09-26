@@ -99,7 +99,7 @@ jobs:
           curl --fail --location --silent --show-error             "https://github.com/summerwind/h2spec/releases/download/v$H2SPEC_VERSION/h2spec_linux_amd64.tar.gz"             --output "$RUNNER_TEMP/h2spec.tar.gz"
           tar -xzf "$RUNNER_TEMP/h2spec.tar.gz" -C "$H2SPEC_DIR"
           test -x "$H2SPEC_DIR/h2spec"
-          "$H2SPEC_DIR/h2spec" --version | tee -a "$H2SPEC_LOG"
+          "$H2SPEC_DIR/h2spec" --version 2>&1 | tee -a "$H2SPEC_LOG" || true
 
           unset OPENSSL_CONF || true
           openssl req -x509 -newkey rsa:2048 -nodes             -keyout "$KEY"             -out "$CERT"             -subj "/CN=localhost"             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"             -days 1 >/dev/null 2>&1
