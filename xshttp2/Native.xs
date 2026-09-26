@@ -3,6 +3,7 @@
 #include "XSUB.h"
 
 #include <nghttp2/nghttp2.h>
+#include "../xshttp1/stream_consumer_abi.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -265,8 +266,249 @@ leh2_throw_if_callback_failed(pTHX_ leh2_state_t *state)
     }
 }
 
+
+typedef struct leh2_raw_context_s {
+    const les_consumer_host_api_v1_t *host;
+    void *host_context;
+    SV *stream;
+    SV *session_obj;
+    leh2_state_t *state;
+    CV *write_cv;
+} leh2_raw_context_t;
+
+static CV *
+leh2_raw_find_method(pTHX_ SV *stream, const char *name)
+{
+    GV *gv;
+    CV *cv;
+
+    if (!SvROK(stream))
+        croak("native HTTP/2 raw consumer stream is not an object");
+
+    gv = gv_fetchmethod_autoload(SvSTASH(SvRV(stream)), name, 0);
+    if (!gv || !(cv = GvCV(gv)))
+        croak("native HTTP/2 raw consumer method %s is unavailable", name);
+
+    return (CV *)SvREFCNT_inc((SV *)cv);
+}
+
+static int
+leh2_raw_write(pTHX_ leh2_raw_context_t *context, SV *bytes)
+{
+    dSP;
+
+    if (!context->write_cv)
+        context->write_cv = leh2_raw_find_method(aTHX_ context->stream, "write");
+
+    ENTER;
+    SAVETMPS;
+    PUSHMARK(SP);
+    XPUSHs(context->stream);
+    XPUSHs(bytes);
+    PUTBACK;
+    call_sv((SV *)context->write_cv, G_DISCARD | G_EVAL);
+    SPAGAIN;
+
+    if (SvTRUE(ERRSV)) {
+        sv_setsv(ERRSV, &PL_sv_undef);
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+        return 0;
+    }
+
+    PUTBACK;
+    FREETMPS;
+    LEAVE;
+    return 1;
+}
+
+static int
+leh2_raw_flush(pTHX_ leh2_raw_context_t *context)
+{
+    leh2_state_t *state = context->state;
+
+    while (!state->closed && nghttp2_session_want_write(state->session)) {
+        const uint8_t *data = NULL;
+        ssize_t rv;
+        SV *bytes;
+
+        ++state->in_nghttp2;
+        rv = nghttp2_session_mem_send(state->session, &data);
+        if (rv > 0)
+            bytes = newSVpvn((const char *)data, (STRLEN)rv);
+        else
+            bytes = NULL;
+        leh2_leave_nghttp2(state);
+
+        if (state->callback_error)
+            return 0;
+        if (rv < 0)
+            return 0;
+        if (rv == 0)
+            break;
+        if (!bytes)
+            return 0;
+
+        sv_2mortal(bytes);
+        if (!leh2_raw_write(aTHX_ context, bytes))
+            return 0;
+        if (state->closed)
+            break;
+        if (context->host->is_closed(aTHX_ context->host_context))
+            break;
+    }
+
+    return 1;
+}
+
+static void *
+leh2_raw_consumer_create(pTHX_
+    const les_consumer_host_api_v1_t *host,
+    void *host_context,
+    SV *stream)
+{
+    leh2_raw_context_t *context;
+    HV *stream_hv;
+    SV **slot;
+
+    if (!host || host->abi_version != LES_CONSUMER_ABI_VERSION)
+        croak("native HTTP/2 raw consumer ABI mismatch");
+    if (host->struct_size < LES_CONSUMER_HOST_V1_RETAIN_REQUIRED_SIZE
+        || !host->retain || !host->release)
+        croak("native HTTP/2 raw consumer requires host lifetime retention");
+    if (!SvROK(stream) || SvTYPE(SvRV(stream)) != SVt_PVHV)
+        croak("native HTTP/2 raw consumer requires hash-based Stream object");
+
+    stream_hv = (HV *)SvRV(stream);
+    slot = hv_fetch(
+        stream_hv,
+        "_http2_native_session",
+        (I32)(sizeof("_http2_native_session") - 1),
+        0
+    );
+    if (!slot || !SvOK(*slot))
+        croak("native HTTP/2 Stream has no attached session");
+
+    Newxz(context, 1, leh2_raw_context_t);
+    context->host = host;
+    context->host_context = host_context;
+    context->stream = SvREFCNT_inc(stream);
+    context->session_obj = SvREFCNT_inc(*slot);
+    context->state = leh2_state_from_sv(context->session_obj);
+    return context;
+}
+
+static int
+leh2_raw_consumer_input(pTHX_
+    void *opaque,
+    const char *data,
+    size_t length,
+    size_t *consumed)
+{
+    leh2_raw_context_t *context = (leh2_raw_context_t *)opaque;
+    leh2_state_t *state;
+    ssize_t rv;
+    int result = LES_CONSUMER_CONTINUE;
+
+    if (!context || !consumed)
+        return LES_CONSUMER_ERROR;
+
+    state = context->state;
+    *consumed = 0;
+
+    if (!context->host->retain(aTHX_ context->host_context))
+        return LES_CONSUMER_CLOSE;
+
+    if (state->closed) {
+        result = LES_CONSUMER_CLOSE;
+        goto done;
+    }
+
+    ++state->in_nghttp2;
+    rv = nghttp2_session_mem_recv(
+        state->session,
+        (const uint8_t *)data,
+        length
+    );
+    leh2_leave_nghttp2(state);
+
+    if (rv < 0 || state->callback_error) {
+        result = LES_CONSUMER_ERROR;
+        goto done;
+    }
+
+    *consumed = (size_t)rv;
+
+    if (!state->closed && !leh2_raw_flush(aTHX_ context)) {
+        result = LES_CONSUMER_ERROR;
+        goto done;
+    }
+
+    if (context->host->is_closed(aTHX_ context->host_context))
+        result = LES_CONSUMER_CLOSE;
+
+done:
+    context->host->release(aTHX_ context->host_context);
+    return result;
+}
+
+static void
+leh2_raw_consumer_event(pTHX_
+    void *opaque,
+    uint32_t event,
+    int error,
+    const char *message)
+{
+    PERL_UNUSED_ARG(opaque);
+    PERL_UNUSED_ARG(event);
+    PERL_UNUSED_ARG(error);
+    PERL_UNUSED_ARG(message);
+    PERL_UNUSED_CONTEXT;
+}
+
+static void
+leh2_raw_consumer_destroy(pTHX_ void *opaque)
+{
+    leh2_raw_context_t *context = (leh2_raw_context_t *)opaque;
+
+    PERL_UNUSED_CONTEXT;
+
+    if (!context)
+        return;
+
+    if (context->write_cv)
+        SvREFCNT_dec((SV *)context->write_cv);
+    if (context->session_obj)
+        SvREFCNT_dec(context->session_obj);
+    if (context->stream)
+        SvREFCNT_dec(context->stream);
+
+    Safefree(context);
+}
+
+static const les_consumer_ops_v1_t leh2_raw_consumer_ops = {
+    LES_CONSUMER_ABI_VERSION,
+    sizeof(les_consumer_ops_v1_t),
+    "Linux::Event::HTTP::_HTTP2 native raw input",
+    LES_CONSUMER_F_RAW_INPUT,
+    leh2_raw_consumer_create,
+    NULL,
+    leh2_raw_consumer_event,
+    leh2_raw_consumer_destroy,
+    NULL,
+    leh2_raw_consumer_input
+};
+
 MODULE = Linux::Event::HTTP::_HTTP2::Native  PACKAGE = Linux::Event::HTTP::_HTTP2::Native
 PROTOTYPES: DISABLE
+
+UV
+_raw_consumer_operations_address()
+CODE:
+    RETVAL = PTR2UV(&leh2_raw_consumer_ops);
+OUTPUT:
+    RETVAL
 
 SV *
 _new(class, is_server, callbacks)
