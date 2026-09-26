@@ -149,9 +149,35 @@ executor.
 For servers, ALPN selection must also occur before protocol bytes are dispatched
 to the HTTP/1 parser or HTTP/2 engine.
 
-This implies a protocol-selection layer around the transport. The exact way this
-composes with the existing public connection_class subclass extension point
-needs a spike before implementation is committed.
+The protocol-selection spike has validated the connection transition boundary.
+
+A critical ordering invariant is:
+
+    TLS handshake completes
+    selected_alpn is inspected
+    pause_read
+    Loop->defer(...)
+    construct the selected HTTP/2 executor passively
+    attach the executor to the live connection
+    transition_to the HTTP/2 raw connection class
+    start the HTTP/2 executor
+    emit preface / SETTINGS
+    resume_read
+
+The HTTP/2 executor must not emit protocol bytes while the live Stream is still
+the HTTP/1 native-consumer connection class.
+
+The initial spike violated this rule because the executor constructor
+immediately called send_connection_preface(), mem_send(), and Stream->write()
+before transition_to(). That ordering produced the selector SIGSEGV.
+
+Passive construction followed by transition, explicit start/flush, and then
+resume_read completes successfully while preserving Stream identity, fd
+identity, TLS transport, the shared application callback shape, and HTTP/1.1
+ALPN fallback.
+
+HTTP/1.1 selection performs no transition and continues using the existing
+HTTP/1 connection implementation.
 
 ## HTTP/2 connection state
 
