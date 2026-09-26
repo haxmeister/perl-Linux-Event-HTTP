@@ -59,12 +59,17 @@ my @errors;
 my $server_closed = 0;
 my $server_stream;
 my $client_stream;
+my $perl_callback_data_calls = 0;
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
     loop => $loop,
     host => '127.0.0.1',
     port => 0,
     stream => {
+        on_data => sub ($stream, $bytes) {
+            ++$perl_callback_data_calls;
+            die "native HTTP/2 server input escaped into configured on_data\n";
+        },
         on_ready => sub ($stream) {
             $server_stream = $stream;
 
@@ -114,6 +119,10 @@ $client_stream = Linux::Event::IO::Sock::Stream->connect(
     loop => $loop,
     host => '127.0.0.1',
     port => $listener->port,
+    on_data => sub ($stream, $bytes) {
+        ++$perl_callback_data_calls;
+        die "native HTTP/2 client input escaped into configured on_data\n";
+    },
     on_ready => sub ($stream) {
         my $session;
         $session = Linux::Event::HTTP::_HTTP2::Native->new_client(
@@ -177,8 +186,10 @@ $listener->close if !$listener->is_closed;
 
 is_deeply(\@errors, [],
     'native raw-input HTTP/2 exchange has no transport errors');
+is($perl_callback_data_calls, 0,
+    'HTTP/2 wire input never reached configured Perl on_data callbacks');
 is($T::NativeH2RawStream::PERL_DATA_CALLS, 0,
-    'HTTP/2 wire input never surfaced through Perl on_data');
+    'HTTP/2 wire input never reached class Perl on_data');
 is(scalar(keys %closed), $expected,
     'all native raw-input client streams closed');
 is($server_closed, $expected,
