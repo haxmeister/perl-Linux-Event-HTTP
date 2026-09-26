@@ -79,7 +79,7 @@ jobs:
           make test
 
       - name: Native HTTP/2 policy parity
-        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/native-nghttp2-binding' && matrix.perl == '5' && matrix.multi_thread == false
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/native-nghttp2-binding'
         env:
           LEHTTP_H2_NATIVE_TEST: 1
         run: |
