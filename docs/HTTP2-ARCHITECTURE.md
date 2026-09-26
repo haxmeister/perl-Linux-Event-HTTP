@@ -235,24 +235,39 @@ There must not be one connection-global active Transaction for HTTP/2.
 
 ## Client multiplexing
 
-The current HTTP/1 Client pool treats a connection as capacity 0 or 1.
+The high-level Client now has a separate per-origin H2 connection pool.
 
-HTTP/2 requires capacity-aware pooling.
+Once ALPN selects H2, that selector remains available while streams are active.
+Later Operations can therefore submit new streams without waiting for earlier
+Transactions to complete.
 
-Conceptually an executor needs:
+The private H2 client executor exposes only a capacity predicate to the pool.
+The pool does not know stream IDs, HPACK state, or flow-control windows.
 
-    can_accept_transaction
-    available_stream_capacity
-    draining / GOAWAY state
+Current admission behavior:
 
-A single HTTP/2 connection may run many Client::Operations concurrently.
+    local active-stream cap: 100
+    peer SETTINGS enforcement: nghttp2
+    GOAWAY: mark connection draining, admit no new streams
+    draining connection with no active streams: retire it
+    no available H2 capacity: open another connection
 
-Initial pooling should remain origin-based even though HTTP/2 permits connection
-coalescing in some cases. Origin coalescing adds certificate, authority, DNS, and
-policy complexity and should be deferred.
+The local cap prevents unbounded application submission into one Session.
+nghttp2 remains responsible for honoring the peer's actual
+SETTINGS_MAX_CONCURRENT_STREAMS and may queue submitted streams internally
+until peer capacity is available.
 
-If the peer stream limit is exhausted, Client may queue work or open another
-connection according to later pool policy.
+The first connection to an origin cannot be multiplexed before TLS/ALPN has
+resolved. Therefore several Operations created synchronously before any H2
+connection is selected may still create several negotiating TLS connections.
+Avoiding that would require a separate pre-selection operation queue that can
+fan out differently depending on whether ALPN resolves to H2 or HTTP/1.1.
+
+Connection coalescing across origins remains deferred.
+
+GOAWAY retry policy also remains deferred. New work is kept off a draining
+connection, but automatic replay of streams based on GOAWAY last-stream-id is
+not yet implemented.
 
 ## Request pseudo-header mapping
 
