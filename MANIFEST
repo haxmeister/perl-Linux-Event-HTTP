@@ -41,6 +41,7 @@ lib/Linux/Event/HTTP/_ClientConnect.pm
 lib/Linux/Event/HTTP/_ClientUpgrade.pm
 lib/Linux/Event/HTTP/_HTTP1.pm
 lib/Linux/Event/HTTP/_HTTP2.pm
+lib/Linux/Event/HTTP/_HTTP2/Native.pm
 lib/Linux/Event/HTTP/_HTTP2/Client.pm
 lib/Linux/Event/HTTP/_HTTP2/ClientConnection.pm
 lib/Linux/Event/HTTP/_HTTP2/ClientSelector.pm
@@ -114,4 +115,7 @@ t/99-http2-aggregate-buffer-limit.t
 t/100-http2-prealpn-fanout.t
 t/101-http2-high-level-policy.t
 t/102-http2-cancellation-isolation.t
+t/103-http2-native-binding.t
 tools/http2-h2spec-server.pl
+xshttp2/Makefile.PL
+xshttp2/Native.xs
