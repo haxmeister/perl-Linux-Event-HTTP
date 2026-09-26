@@ -473,6 +473,8 @@ sub _new_connection ($self, $destination, $allow_http2 = 0) {
             max_header_list_size => $self->{http2_max_header_list_size},
             max_buffered_response_bytes =>
                 $self->{http2_max_buffered_response_bytes},
+            (defined($self->{http2_session_class})
+                ? (_session_class => $self->{http2_session_class}) : ()),
             http1_connection_factory => sub ($selected) {
                 my $client = $weak_self
                     or die 'HTTP Client disappeared during ALPN selection';
