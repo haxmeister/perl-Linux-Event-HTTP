@@ -335,7 +335,10 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
                     $state->{h2_client_complete} = 1;
                     $state->{h2_tx_complete_in_callback} =
                         $tx->is_complete ? 1 : 0;
-                    $conn->close if !$conn->is_closed;
+                    # Keep the negotiated H2 TLS connection alive while the
+                    # second client verifies HTTP/1.1 fallback. Closing it here
+                    # would intentionally omit a TLS close_notify and make the
+                    # server-side transport error stop this selector test.
                     $start_h1->();
                 },
                 on_error => sub ($tx, $error) {
@@ -351,6 +354,8 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
 );
 
 $loop->run;
+
+$h2_client->close if !$h2_client->is_closed;
 
 is_deeply($state->{errors}, [], 'selector spike has no transport/protocol errors');
 is($state->{h2_client_alpn}, 'h2', 'client TLS selects h2');
