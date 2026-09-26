@@ -130,9 +130,15 @@ of its implementation incomplete.
 The integration spike has proved that Net::HTTP2::nghttp2 exposes the control
 needed by Linux::Event::HTTP. HTTP/2 now requires version 0.011 or newer because
 0.011 fixes provider/session lifetime hazards during callback-driven stream
-teardown. The current HTTP/2 branch still loads it as an
-optional runtime capability rather than a required Makefile.PL prerequisite;
+teardown and explicitly rejects reentrant mem_send()/mem_recv(). Its build path
+requires nghttp2 >= 1.57. The current HTTP/2 branch still loads the binding as
+an optional runtime capability rather than a required Makefile.PL prerequisite;
 the packaging decision remains separate from the protocol-engine decision.
+
+nghttp2 >= 1.57 also provides the HTTP/2 Rapid Reset RST_STREAM rate limiter.
+The binding leaves nghttp2's default limiter active when no custom burst/rate is
+provided. Linux::Event::HTTP currently relies on that tested default rather than
+adding a second public rate-limit policy.
 
 ## TLS and ALPN
 
@@ -185,6 +191,25 @@ ALPN fallback.
 
 HTTP/1.1 selection performs no transition and continues using the existing
 HTTP/1 connection implementation.
+
+## nghttp2 callback lifecycle
+
+A Net::HTTP2::nghttp2 Session call is a non-reentrant boundary.
+
+Do not call mem_send() or mem_recv() from inside one of the Session's callbacks.
+Callbacks may submit protocol work, but serialization/receive driving resumes
+only after the active Session call returns.
+
+The same rule applies to teardown. Application callbacks can close a Client,
+Server-side connection, or Stream while nghttp2 is delivering a callback.
+Therefore the private executors track whether a Session call is active. A close
+requested during that interval is recorded as pending; subsequent callbacks are
+ignored, control returns from mem_recv()/mem_send(), and only then are Session,
+provider, and stream maps destroyed.
+
+This is not merely defensive style. Validation against Net::HTTP2::nghttp2
+0.011 exposed real crashes when the older executor destroyed Session state
+reentrantly from an application completion callback.
 
 ## HTTP/2 connection state
 

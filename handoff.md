@@ -21,15 +21,15 @@ Draft PR: #39.
 
 Current stabilization code head before this handoff update:
 
-`ed173a2be55e001f4ea891ee4746381ce4c7ab89`
-"Fix HTTP/2 policy auth test origin"
+`a37583a5f4176ef46b9913dc8aa1c1ee1660557c`
+"Defer HTTP/2 teardown across nghttp2 callbacks"
 
 The high-level HTTP/2 Server/Client work, multiplexing, streaming uploads,
 decoded header-list limits, aggregate buffered-response limits, and ALPN
 selector transition are already implemented on this branch. The current work
 was a correctness/conformance hardening pass.
 
-The hardening pass found and fixed six HTTP-side defects:
+The hardening pass found and fixed seven HTTP-side defects:
 
 1. `Linux::Event::HTTP::_HTTP2::Server` handled GOAWAY but omitted the
    `H2_GOAWAY => 7` constant. That compile error made every HTTP/2-enabled
@@ -91,6 +91,19 @@ The hardening pass found and fixed six HTTP-side defects:
    Commits `0ed883c2e57555fb4fe5018ef3ab1d199607094c` and
    `272115a44fe69b49b83596ba4f0962e1954d8c36` contain that fix.
 
+7. Moving the HTTP/2 binding floor from Net::HTTP2::nghttp2 0.008 to 0.011
+   exposed a real reentrant teardown bug. A high-level callback such as
+   on_complete can close the Client while nghttp2 mem_recv() is still executing
+   the callback that delivered that completion. The old executor close path
+   immediately destroyed the Session in that callback. Net::HTTP2::nghttp2
+   0.011 deliberately hardens this lifecycle and made the unsafe pattern
+   visible. Client and Server executors now mark close pending while a Session
+   call is active, stop accepting further callback work, return from mem_recv()
+   or mem_send(), and only then destroy Session/provider state. The same commit
+   also removes a raw spike-only mem_send() call from inside an nghttp2
+   callback. Commit
+   `a37583a5f4176ef46b9913dc8aa1c1ee1660557c` contains the fix.
+
 Focused integration coverage:
 
 `t/100-http2-prealpn-fanout.t`
@@ -107,6 +120,26 @@ either TLS handshake completes. It proves:
   version 1.1;
 - every target is delivered exactly once;
 - surplus fallback TLS connections retire without a missing-close_notify error.
+
+`t/101-http2-high-level-policy.t` proves protocol-neutral high-level policy by
+running one Operation through 302 redirect -> Set-Cookie -> 401 Basic challenge
+-> authenticated 200 over one selected H2 connection.
+
+`t/102-http2-cancellation-isolation.t` proves that client-side Operation
+cancellation and server-side Transaction cancellation reset only the intended
+HTTP/2 stream while sibling streams on the same TLS connection continue and
+complete normally.
+
+The HTTP/2 binding floor is now Net::HTTP2::nghttp2 0.011. HTTP/2 tests also
+require 0.011 before running, so systems with an older optional binding skip the
+optional H2 suite rather than exercising an unsupported lifecycle.
+
+Version 0.011 is important for this integration because it hardens provider and
+Session teardown around callbacks and refuses reentrant mem_send()/mem_recv().
+Its build path requires nghttp2 >= 1.57. That also means the server benefits
+from nghttp2's HTTP/2 Rapid Reset RST_STREAM limiter; Linux::Event::HTTP leaves
+the binding's default token-bucket policy in place rather than adding another
+public tuning option at this stage.
 
 h2spec v2.6.0 now reaches the full 146-test run with:
 
@@ -155,6 +188,12 @@ Validation:
   302 -> cookie storage -> 401 Basic challenge -> authenticated 200 on one H2
   TLS connection. All three Transactions retain HTTP/2 Request/Response
   identity and the expected Operation redirect/auth history.
+- CI run `36217849502` validates Net::HTTP2::nghttp2 0.011, the cancellation
+  isolation test, and deferred Session teardown. It fully passed Build-and-test
+  on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and latest-threaded. The latest
+  lane reported 57 files / 1,488 tests, Result PASS; t/102 passed; h2spec stayed
+  at exactly 144 passed / 1 skipped / 1 known baseline failure; production
+  comparison/smoke work and distribution integrity also passed.
 
 The earlier pre-ALPN connection fan-out issue is now resolved. Do not revert to
 one negotiating TLS connection per simultaneous operation.
