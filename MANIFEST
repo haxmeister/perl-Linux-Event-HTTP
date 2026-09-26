@@ -11,6 +11,7 @@ bench/run-http-comparison.pl
 bench/run-http-client-receive.pl
 bench/run-http-end-to-end.pl
 bench/run-http-final-response.pl
+bench/run-http2-backend-comparison.pl
 bench/run-http-transaction-ladder.pl
 bench/servers/aiohttp-http.py
 bench/servers/feersum-http.pl
