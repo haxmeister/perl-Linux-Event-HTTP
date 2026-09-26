@@ -23,6 +23,8 @@ sub new ($class, %option) {
     my $on_selected = delete $option{on_selected};
     my $max_header_list_size =
         delete($option{max_header_list_size}) // 65_536;
+    my $max_buffered_response_bytes =
+        delete($option{max_buffered_response_bytes}) // 67_108_864;
 
     croak 'new(): loop is required' if !blessed($loop);
     croak 'new(): host is required'
@@ -38,6 +40,10 @@ sub new ($class, %option) {
         if ref($max_header_list_size)
         || "$max_header_list_size" !~ /\A[0-9]+\z/
         || $max_header_list_size < 1;
+    croak 'new(): max_buffered_response_bytes must be a positive integer'
+        if ref($max_buffered_response_bytes)
+        || "$max_buffered_response_bytes" !~ /\A[0-9]+\z/
+        || $max_buffered_response_bytes < 1;
     croak 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -56,6 +62,7 @@ sub new ($class, %option) {
         closed      => 0,
         on_selected => $on_selected,
         max_header_list_size => 0 + $max_header_list_size,
+        max_buffered_response_bytes => 0 + $max_buffered_response_bytes,
     }, $class;
 
     my %connect = (
@@ -218,6 +225,8 @@ sub _transport_ready ($self, $stream) {
             stream    => $stream,
             autostart => 0,
             max_header_list_size => $self->{max_header_list_size},
+            max_buffered_response_bytes =>
+                $self->{max_buffered_response_bytes},
         );
         $self->{executor} = $executor;
         $stream->{_http2_executor} = $executor;
