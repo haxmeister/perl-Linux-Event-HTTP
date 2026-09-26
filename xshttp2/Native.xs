@@ -29,6 +29,9 @@ struct leh2_state_s {
     unsigned int in_nghttp2;
     unsigned int close_pending;
     unsigned int closed;
+    unsigned int is_server;
+    int32_t last_peer_stream_id;
+    int32_t rejected_stream_id;
     leh2_provider_t *providers;
     char *send_buf;
     size_t send_buf_len;
@@ -233,9 +236,25 @@ leh2_on_begin_headers(nghttp2_session *session, const nghttp2_frame *frame,
 {
     leh2_state_t *state = (leh2_state_t *)user_data;
     SV *args[3];
+    int rv;
     dTHX;
 
-    (void)session;
+    if (state->is_server
+        && frame->hd.type == NGHTTP2_HEADERS
+        && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
+        if (state->last_peer_stream_id
+            && frame->hd.stream_id <= state->last_peer_stream_id) {
+            state->rejected_stream_id = frame->hd.stream_id;
+            rv = nghttp2_session_terminate_session(
+                session, NGHTTP2_PROTOCOL_ERROR);
+            return rv == 0 ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+        state->last_peer_stream_id = frame->hd.stream_id;
+    }
+
+    if (frame->hd.stream_id == state->rejected_stream_id)
+        return 0;
+
     args[0] = newSViv(frame->hd.stream_id);
     args[1] = newSViv(frame->hd.type);
     args[2] = newSViv(frame->hd.flags);
@@ -252,6 +271,8 @@ leh2_on_header(nghttp2_session *session, const nghttp2_frame *frame,
     dTHX;
 
     (void)session;
+    if (frame->hd.stream_id == state->rejected_stream_id)
+        return 0;
     args[0] = newSViv(frame->hd.stream_id);
     args[1] = newSVpvn((const char *)name, namelen);
     args[2] = newSVpvn((const char *)value, valuelen);
@@ -268,6 +289,8 @@ leh2_on_data_chunk_recv(nghttp2_session *session, uint8_t flags,
     dTHX;
 
     (void)session;
+    if (stream_id == state->rejected_stream_id)
+        return 0;
     args[0] = newSViv(stream_id);
     args[1] = newSVpvn((const char *)data, len);
     args[2] = newSViv(flags);
@@ -284,6 +307,11 @@ leh2_on_frame_recv(nghttp2_session *session, const nghttp2_frame *frame,
     dTHX;
 
     (void)session;
+
+    if (frame->hd.stream_id == state->rejected_stream_id) {
+        SvREFCNT_dec((SV *)frame_hv);
+        return 0;
+    }
 
     hv_stores(frame_hv, "type", newSViv(frame->hd.type));
     hv_stores(frame_hv, "flags", newSViv(frame->hd.flags));
@@ -817,6 +845,7 @@ CODE:
         croak("_new(): callbacks must be a hash reference");
 
     Newxz(state, 1, leh2_state_t);
+    state->is_server = is_server ? 1 : 0;
     state->callbacks = (HV *)SvREFCNT_inc(SvRV(callbacks));
 
     rv = nghttp2_session_callbacks_new(&cbs);
