@@ -310,4 +310,68 @@ is($state->{result}{'/upload-stream'}{kind}, 'upload-stream',
 is($state->{result}{'/upload-stream'}{body}, 'upload:100004',
     'streaming Request body resumes and completes through nghttp2');
 
+
+{
+    package T::HTTP2ClientEndStream;
+    sub is_closed ($self) { 0 }
+    sub end ($self) {
+        ++$self->{end_count};
+        return $self;
+    }
+
+    package T::HTTP2ClientEndSession;
+    sub want_read ($self)  { !!$self->{want_read} }
+    sub want_write ($self) { !!$self->{want_write} }
+
+    package main;
+
+    my $goaway_stream = bless {
+        end_count => 0,
+    }, 'T::HTTP2ClientEndStream';
+    my $goaway_session = bless {
+        want_read  => 1,
+        want_write => 0,
+    }, 'T::HTTP2ClientEndSession';
+    my $goaway_executor = bless {
+        stream            => $goaway_stream,
+        session           => $goaway_session,
+        streams           => {},
+        draining          => 0,
+        closed            => 0,
+        transport_blocked => 0,
+        transport_ending  => 0,
+    }, 'Linux::Event::HTTP::_HTTP2::Client';
+
+    is($goaway_executor->_on_frame_recv({ type => 7 }), 0,
+        'client accepts peer GOAWAY frame');
+    ok($goaway_executor->draining,
+        'peer GOAWAY marks client executor draining');
+    $goaway_executor->_maybe_end_transport;
+    is($goaway_stream->{end_count}, 1,
+        'drained GOAWAY client connection ends transport gracefully');
+    ok($goaway_executor->{transport_ending},
+        'drained GOAWAY client marks graceful transport ending');
+
+    my $live_stream = bless {
+        end_count => 0,
+    }, 'T::HTTP2ClientEndStream';
+    my $live_session = bless {
+        want_read  => 1,
+        want_write => 0,
+    }, 'T::HTTP2ClientEndSession';
+    my $live_executor = bless {
+        stream            => $live_stream,
+        session           => $live_session,
+        streams           => {},
+        draining          => 0,
+        closed            => 0,
+        transport_blocked => 0,
+        transport_ending  => 0,
+    }, 'Linux::Event::HTTP::_HTTP2::Client';
+
+    $live_executor->_maybe_end_transport;
+    is($live_stream->{end_count}, 0,
+        'ordinary reusable H2 client connection remains open');
+}
+
 done_testing;
