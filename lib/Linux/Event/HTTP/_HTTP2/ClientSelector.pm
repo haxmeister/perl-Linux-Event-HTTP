@@ -10,6 +10,8 @@ use Linux::Event::HTTP::Transaction;
 
 our $VERSION = '0.002';
 
+my $BODY_HIGH_WATER = 65_536;
+
 sub new ($class, %option) {
     my $loop = delete $option{loop};
     my $host = delete $option{host};
@@ -123,12 +125,19 @@ sub request ($self, $request, %option) {
     croak 'request(): another Transaction is already pending protocol selection'
         if $self->transaction;
 
-    croak 'request(): streaming Request bodies are not yet available before HTTP/2 ALPN selection'
-        if exists $option{stream_body};
     croak 'request(): HTTP/1 Upgrade cannot be negotiated through an HTTP/2-capable selector'
         if exists $option{upgrade_to};
     croak 'request(): CONNECT tunnel handoff cannot be negotiated through an HTTP/2-capable selector'
         if exists $option{tunnel_to};
+
+    my $stream_body;
+    if (exists $option{stream_body}) {
+        $stream_body = $option{stream_body};
+        croak 'request(): stream_body must be a hash reference'
+            if ref($stream_body) ne 'HASH';
+        $stream_body = { %$stream_body };
+        $option{stream_body} = $stream_body;
+    }
 
     my $tx = Linux::Event::HTTP::Transaction->_new(
         request    => $request,
@@ -136,11 +145,24 @@ sub request ($self, $request, %option) {
     );
     $tx->_activate;
 
+    my $pending_body;
+    if ($stream_body) {
+        $request->_begin_stream_body;
+        $tx->request_body(%$stream_body);
+        $pending_body = {
+            queue    => '',
+            expected => $request->content_length,
+            sent     => 0,
+            eof      => 0,
+        };
+    }
+
     $self->{transaction} = $tx;
     $self->{pending} = {
         request     => $request,
         transaction => $tx,
         option      => { %option },
+        body        => $pending_body,
     };
     return $tx;
 }
@@ -213,6 +235,9 @@ sub _submit_pending_http1 ($self) {
             %{$pending->{option}},
             _transaction => $pending->{transaction},
         );
+        $self->_transfer_pending_body(
+            $self->{stream}, $pending,
+        );
         1;
     };
     if ($ok) {
@@ -231,6 +256,9 @@ sub _submit_pending_h2 ($self) {
             $pending->{request},
             %{$pending->{option}},
             _transaction => $pending->{transaction},
+        );
+        $self->_transfer_pending_body(
+            $self->{executor}, $pending,
         );
         1;
     };
@@ -300,7 +328,61 @@ sub _cancel_http_transaction ($self, $tx) {
 }
 
 sub _write_http_request_body ($self, $tx, $bytes, $final, $operation) {
-    croak "$operation(): Request body cannot be written before protocol selection";
+    my $pending = $self->{pending}
+        or croak "$operation(): Request is no longer pending protocol selection";
+    croak "$operation(): Transaction does not match pending Request"
+        if refaddr($pending->{transaction}) != refaddr($tx);
+
+    my $state = $pending->{body}
+        or croak "$operation(): Request does not have a streaming body";
+    croak "$operation(): body must be a scalar" if ref $bytes;
+    $bytes = '' if !defined $bytes;
+    croak "$operation(): streaming Request body is already complete"
+        if $state->{eof};
+
+    my $new_sent = $state->{sent} + length($bytes);
+    if (defined($state->{expected}) && $new_sent > $state->{expected}) {
+        croak "$operation(): Request body exceeds Content-Length";
+    }
+    if ($final && defined($state->{expected})
+        && $new_sent != $state->{expected}) {
+        croak "$operation(): Request body length does not match Content-Length";
+    }
+
+    $state->{queue} .= $bytes;
+    $state->{sent} = $new_sent;
+    $state->{eof} = 1 if $final;
+
+    return length($state->{queue}) >= $BODY_HIGH_WATER ? 0 : 1;
+}
+
+sub _transfer_pending_body ($self, $controller, $pending) {
+    my $state = $pending->{body} or return;
+    my $tx = $pending->{transaction};
+    my $body = $tx->_request_body_object
+        or croak 'streaming Request lost its Body::Stream producer';
+
+    my $bytes = $state->{queue};
+    my $final = $state->{eof} ? 1 : 0;
+    return if !length($bytes) && !$final;
+
+    my $accepted = $controller->_write_http_request_body(
+        $tx,
+        $bytes,
+        $final,
+        $final ? 'request_body->complete' : 'request_body->write',
+    );
+
+    if (!$body->is_complete) {
+        if ($accepted) {
+            $body->_drain;
+        } else {
+            $body->_block;
+        }
+    }
+
+    $state->{queue} = '';
+    return;
 }
 
 sub _write_http_response_body ($self, $tx, $bytes, $final, $operation) {
