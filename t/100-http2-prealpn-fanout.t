@@ -146,7 +146,18 @@ my $guard = Linux::Event::Kernel::Timer->new(
     loop  => $loop,
     after => 10,
     on_timer => sub ($timer) {
-        die "pre-ALPN HTTP/2 selector fanout test timed out\n";
+        die sprintf(
+            "pre-ALPN HTTP/2 selector fanout test timed out: "
+            . "h2_complete=%d h1_complete=%d h2_connections=%d "
+            . "h1_connections=%d h2_targets=%d h1_targets=%d errors=%s\n",
+            $state->{h2_complete},
+            $state->{h1_complete},
+            scalar(keys %{$state->{h2_connections}}),
+            scalar(keys %{$state->{h1_connections}}),
+            scalar(@{$state->{h2_targets}}),
+            scalar(@{$state->{h1_targets}}),
+            join(' | ', @{$state->{errors}}),
+        );
     },
 );
 
