@@ -146,10 +146,20 @@ sub new ($class, %option) {
             // 'Linux::Event::HTTP::Client::Connection',
     );
     my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $http2_max_header_list_size =
+        exists($option{http2_max_header_list_size})
+            ? delete($option{http2_max_header_list_size})
+            : 65_536;
     croak 'new(): http2 must be zero or one'
         if !defined($http2) || ref($http2)
         || ("$http2" ne '0' && "$http2" ne '1');
     $http2 = $http2 ? 1 : 0;
+    croak 'new(): http2_max_header_list_size must be a positive integer'
+        if ref($http2_max_header_list_size)
+        || "$http2_max_header_list_size" !~ /\A[0-9]+\z/
+        || $http2_max_header_list_size < 1;
+    croak 'new(): http2_max_header_list_size requires http2 => 1'
+        if !$http2 && $http2_max_header_list_size != 65_536;
     croak 'new(): http2 currently requires the default connection_class'
         if $http2 && defined($connection_class_option);
     croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
@@ -204,6 +214,7 @@ sub new ($class, %option) {
         auth             => $auth,
         proxy_auth       => $proxy_auth,
         http2            => $http2,
+        http2_max_header_list_size => 0 + $http2_max_header_list_size,
         idle             => {},
         h2_pool          => {},
         connections      => {},
@@ -220,6 +231,9 @@ sub cookie_jar       ($self) { $self->{cookie_jar} }
 sub auth             ($self) { $self->{auth} }
 sub proxy_auth       ($self) { $self->{proxy_auth} }
 sub http2            ($self) { !!$self->{http2} }
+sub http2_max_header_list_size ($self) {
+    return $self->{http2_max_header_list_size};
+}
 sub is_closed        ($self) { !!$self->{closed} }
 
 sub _copy_headers ($headers) {
@@ -361,6 +375,7 @@ sub _new_connection ($self, $destination, $allow_http2 = 0) {
             %connect,
             scheme    => $destination->{scheme},
             authority => $destination->{host_header},
+            max_header_list_size => $self->{http2_max_header_list_size},
             on_selected => sub ($selected, $protocol) {
                 my $client = $weak_self or return;
                 $client->_register_h2_connection($origin, $selected)
