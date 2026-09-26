@@ -80,7 +80,7 @@ sub _body_provider ($operation, $body, $data_callback, $callback_data) {
     return ("$body", undef, undef);
 }
 
-sub submit_request ($self, %option) {
+sub _compat_submit_request ($self, %option) {
     my $method    = delete($option{method}) // 'GET';
     my $path      = delete($option{path}) // '/';
     my $scheme    = delete($option{scheme}) // 'https';
@@ -114,7 +114,7 @@ sub submit_request ($self, %option) {
     );
 }
 
-sub submit_response ($self, $stream_id, %option) {
+sub _compat_submit_response ($self, $stream_id, %option) {
     my $status = delete($option{status}) // 200;
     my $headers = _copy_headers(
         'submit_response', delete $option{headers},
@@ -160,6 +160,12 @@ sub new_server ($class, %option) {
     die 'new_server(): unknown options: ' . join(', ', sort keys %option)
         if %option;
     return $class->_new(1, $callbacks);
+}
+
+{
+    no warnings 'redefine';
+    *submit_request  = \&_compat_submit_request;
+    *submit_response = \&_compat_submit_response;
 }
 
 1;
