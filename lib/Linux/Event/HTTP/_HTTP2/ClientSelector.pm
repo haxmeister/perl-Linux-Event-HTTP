@@ -21,6 +21,8 @@ sub new ($class, %option) {
     my $scheme = delete($option{scheme}) // 'https';
     my $authority = delete $option{authority};
     my $on_selected = delete $option{on_selected};
+    my $http1_connection_factory =
+        delete $option{http1_connection_factory};
     my $max_header_list_size =
         delete($option{max_header_list_size}) // 65_536;
     my $max_buffered_response_bytes =
@@ -36,6 +38,9 @@ sub new ($class, %option) {
         if !defined($authority) || ref($authority) || $authority eq '';
     croak 'new(): on_selected must be a coderef'
         if defined($on_selected) && ref($on_selected) ne 'CODE';
+    croak 'new(): http1_connection_factory must be a coderef'
+        if defined($http1_connection_factory)
+        && ref($http1_connection_factory) ne 'CODE';
     croak 'new(): max_header_list_size must be a positive integer'
         if ref($max_header_list_size)
         || "$max_header_list_size" !~ /\A[0-9]+\z/
@@ -58,9 +63,11 @@ sub new ($class, %option) {
         stream      => undef,
         executor    => undef,
         transaction => undef,
-        pending     => undef,
+        pending     => [],
+        pending_by_tx => {},
         closed      => 0,
         on_selected => $on_selected,
+        http1_connection_factory => $http1_connection_factory,
         max_header_list_size => 0 + $max_header_list_size,
         max_buffered_response_bytes => 0 + $max_buffered_response_bytes,
     }, $class;
@@ -105,6 +112,13 @@ sub active_streams ($self) {
     return $self->{executor}->stream_count;
 }
 
+sub can_queue_transaction ($self) {
+    return 0 if $self->is_closed;
+    return 0 if $self->{protocol} ne 'negotiating'
+        && $self->{protocol} ne 'selecting-h2';
+    return @{$self->{pending}} < 100 ? 1 : 0;
+}
+
 sub _notify_selected ($self) {
     my $callback = $self->{on_selected} or return;
     $callback->($self, $self->{protocol});
@@ -112,6 +126,15 @@ sub _notify_selected ($self) {
 }
 
 sub transaction ($self) {
+    if ($self->{protocol} eq 'negotiating'
+        || $self->{protocol} eq 'selecting-h2') {
+        for my $pending (@{$self->{pending}}) {
+            my $tx = $pending->{transaction};
+            return $tx if $tx && !$tx->is_terminal;
+        }
+        return undef;
+    }
+
     my $tx = $self->{transaction} or return undef;
     return undef if $tx->is_terminal;
     return $tx;
