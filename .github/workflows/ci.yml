@@ -67,7 +67,7 @@ jobs:
         if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike'
         run: |
           sudo apt-get install --yes libnghttp2-dev
-          cpanm --notest 'Net::HTTP2::nghttp2@0.008'
+          cpanm --notest 'Net::HTTP2::nghttp2@0.011'
 
       - name: Install Perl dependencies
         run: cpanm --notest --installdeps .
