@@ -42,7 +42,7 @@ sub _http2_available () {
     return Net::HTTP2::nghttp2->available ? 1 : 0;
 }
 
-sub _http2_ready ($conn, $user_ready) {
+sub _http2_ready ($conn, $user_ready, $max_header_list_size) {
     if (($conn->selected_alpn // '') ne 'h2') {
         $user_ready->($conn) if $user_ready;
         return;
@@ -59,6 +59,7 @@ sub _http2_ready ($conn, $user_ready) {
             on_request     => $conn->{_http_on_request},
             on_body        => $conn->{_http_on_body},
             on_request_end => $conn->{_http_on_request_end},
+            max_header_list_size => $max_header_list_size,
         );
         $conn->{_http2_executor} = $executor;
 
@@ -92,10 +93,20 @@ sub new ($class, %option) {
     );
 
     my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $http2_max_header_list_size =
+        exists($option{http2_max_header_list_size})
+            ? delete($option{http2_max_header_list_size})
+            : 65_536;
     croak 'new(): http2 must be zero or one'
         if !defined($http2) || ref($http2)
         || ("$http2" ne '0' && "$http2" ne '1');
     $http2 = $http2 ? 1 : 0;
+    croak 'new(): http2_max_header_list_size must be a positive integer'
+        if ref($http2_max_header_list_size)
+        || "$http2_max_header_list_size" !~ /\A[0-9]+\z/
+        || $http2_max_header_list_size < 1;
+    croak 'new(): http2_max_header_list_size requires http2 => 1'
+        if !$http2 && $http2_max_header_list_size != 65_536;
 
     my %callbacks;
     for my $name (qw(on_request on_body on_request_end)) {
@@ -136,7 +147,9 @@ sub new ($class, %option) {
 
         my $user_on_ready = $stream_callback{on_ready};
         $stream_callback{on_ready} = sub ($conn) {
-            _http2_ready($conn, $user_on_ready);
+            _http2_ready(
+                $conn, $user_on_ready, 0 + $http2_max_header_list_size,
+            );
         };
     }
 
@@ -169,6 +182,7 @@ sub new ($class, %option) {
         data             => $data,
         state            => $state,
         http2            => $http2,
+        http2_max_header_list_size => 0 + $http2_max_header_list_size,
     }, $class;
 }
 
@@ -176,6 +190,9 @@ sub listener         ($self) { $self->{listener} }
 sub connection_class ($self) { $self->{connection_class} }
 sub data             ($self) { $self->{data} }
 sub http2            ($self) { !!$self->{http2} }
+sub http2_max_header_list_size ($self) {
+    return $self->{http2_max_header_list_size};
+}
 sub loop             ($self) { $self->{listener}->loop }
 sub fh               ($self) { $self->{listener}->fh }
 sub fd               ($self) { $self->{listener}->fd }
