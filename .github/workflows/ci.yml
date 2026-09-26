@@ -261,6 +261,45 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         run: perl -Mblib bench/run-http-end-to-end.pl --requests=20000 --warmup=2000 --connections=100 --repeats=3
 
+  http1-only:
+    name: HTTP/1-only without optional H2 binding
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
+        with:
+          perl-version: '5'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev
+
+      - name: Install required dependencies only
+        run: |
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v0.117.tar.gz
+          cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
+            cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
+          cpanm --notest --installdeps .
+
+      - name: Verify HTTP/2 dependency stayed optional
+        run: |
+          if perl -MNet::HTTP2::nghttp2 -e 1 2>/dev/null; then
+            echo "Net::HTTP2::nghttp2 was unexpectedly installed by normal prerequisites"
+            exit 1
+          fi
+
+      - name: Build and test without HTTP/2 binding
+        run: |
+          perl Makefile.PL
+          make
+          make test
+          make disttest
+
   comparison:
     name: Cross-server diagnostic comparison
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[benchmark]'))
