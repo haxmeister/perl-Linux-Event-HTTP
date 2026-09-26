@@ -1536,7 +1536,7 @@ High-level HTTP/2 support applies to direct HTTPS requests with scalar,
 bodyless, or streaming Request bodies.
 
 A streaming producer is available immediately, even before TLS/ALPN completes.
-Bytes written before protocol selection are held in a bounded selector queue
+Bytes written before protocol selection are held in a selector queue with a 64 KiB cooperative high-water mark
 with cooperative backpressure. After ALPN selects H2 or HTTP/1.1, the same
 Transaction and Body::Stream producer are adopted by the selected protocol and
 the queued bytes are transferred in order. Content-Length is enforced before
