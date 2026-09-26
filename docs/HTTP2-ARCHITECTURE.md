@@ -1,6 +1,6 @@
 # Linux::Event::HTTP HTTP/2 architecture
 
-Status: design investigation
+Status: implementation hardening
 Date: 2026-09-25
 
 ## Purpose
@@ -127,19 +127,24 @@ but it should not be the default architectural choice. Its current public
 documentation still describes a beta RFC 7540 implementation and marks portions
 of its implementation incomplete.
 
-No dependency should be added to Makefile.PL until an integration spike proves
-that the selected binding exposes the control needed by Linux::Event::HTTP.
+The integration spike has proved that Net::HTTP2::nghttp2 exposes the control
+needed by Linux::Event::HTTP. The current HTTP/2 branch still loads it as an
+optional runtime capability rather than a required Makefile.PL prerequisite;
+the packaging decision remains separate from the protocol-engine decision.
 
 ## TLS and ALPN
 
-The current HTTP client advertises only:
+The default HTTP client remains HTTP/1.1-only. When the high-level Client is
+constructed with:
 
-    http/1.1
+    http2 => 1
 
-The HTTP/2-capable high-level client should advertise, in preference order:
+direct HTTPS connections advertise, in preference order:
 
     h2
     http/1.1
+
+The high-level Server uses the same preference order when HTTP/2 is enabled.
 
 Linux::Event already exposes the negotiated protocol through selected_alpn.
 
@@ -257,17 +262,20 @@ nghttp2 remains responsible for honoring the peer's actual
 SETTINGS_MAX_CONCURRENT_STREAMS and may queue submitted streams internally
 until peer capacity is available.
 
-The first connection to an origin cannot be multiplexed before TLS/ALPN has
-resolved. Therefore several Operations created synchronously before any H2
-connection is selected may still create several negotiating TLS connections.
-Avoiding that would require a separate pre-selection operation queue that can
-fan out differently depending on whether ALPN resolves to H2 or HTTP/1.1.
+The Client now has an origin-scoped pre-selection queue. Simultaneous Operations
+created before the first TLS/ALPN decision share one negotiating selector up to
+the local 100-Transaction cap.
 
-Streaming Request bodies do use a per-operation pre-selection body queue so the
-public producer remains immediately writable. This queue is not an operation
-scheduler: it only holds body bytes for that already-created Transaction until
-the connection selects H2 or HTTP/1.1. The selected protocol then adopts the
-same Body::Stream and drains the queued bytes into its ordinary body path.
+If ALPN selects H2, the queued Transactions are submitted onto that one
+multiplexed connection. If ALPN selects HTTP/1.1, the first Transaction remains
+on the negotiated connection and the remaining queued Transactions are fanned
+out onto separate HTTP/1.1 connections so fallback concurrency is preserved.
+
+Each Operation still receives its Transaction and Request synchronously before
+ALPN. Streaming Request bodies use per-Transaction pre-selection body queues so
+their public Body::Stream producers remain immediately writable. After protocol
+selection, the selected executor adopts the same Transaction and Body::Stream
+objects and drains any queued bytes into its ordinary body path.
 
 Connection coalescing across origins remains deferred.
 
@@ -550,7 +558,9 @@ The implementation should be tested with:
 
 Existing HTTP-level tests for redirects, authentication, cookies, buffering,
 streaming bodies, and operation history should be reused against HTTP/2 wherever
-the semantics are protocol-independent.
+the semantics are protocol-independent. Focused H2 coverage now includes
+redirect + cookie + authentication retry policy in
+`t/101-http2-high-level-policy.t`.
 
 Performance benchmarking should compare:
 
@@ -642,22 +652,30 @@ Stream.
 Therefore nghttp2 is now the selected first HTTP/2 protocol-engine direction,
 not merely a candidate.
 
-This does not yet make Net::HTTP2::nghttp2 a production dependency. The next
-implementation phase must first map HTTP/2 message semantics into the existing
-Request/Response/Transaction model.
+This does not yet make Net::HTTP2::nghttp2 a required production dependency.
+The protocol-engine question is settled; the remaining dependency question is
+how the CPAN distribution should advertise/install the optional H2 capability.
 
-## Immediate next action
+## Current implementation state
 
-Begin the shared message-mapping phase without refactoring the production
-HTTP/1 executor.
+The shared message mapper, private client/server nghttp2 executors, TLS ALPN
+selection, high-level Server/Client integration, multiplexing, streaming
+uploads/responses, decoded header limits, aggregate response-buffer limits,
+GOAWAY draining, and pre-ALPN same-origin queue are implemented on the HTTP/2
+experiment branch.
 
-The Request message-mapping decision is implemented on the HTTP/2 experiment
-branch.
+High-level redirect, cookie, and authentication policy has also been validated
+across multiple HTTP/2 Transactions without duplicating that policy inside the
+HTTP/2 executor.
 
-Request now exposes protocol-neutral scheme and authority metadata. The private
-_HTTP2 mapper translates pseudo-headers into Request/Response objects and creates
-one Transaction per HTTP/2 request stream.
+Current hardening work should focus on remaining production boundaries rather
+than rebuilding completed phases. In particular:
 
-The next implementation boundary is a private nghttp2 executor object that owns
-one Session plus the stream_id -> Transaction map while leaving public
-Client/Server APIs unchanged.
+- keep h2spec at or better than the documented nghttp2 baseline;
+- do not implement transparent GOAWAY replay without reliable received
+  last_stream_id information;
+- decide optional dependency/install metadata before release;
+- resolve/document the advanced custom connection_class contract;
+- add security/resource hardening where nghttp2 does not already provide it;
+- benchmark realistic multiplexed HTTP/2 workloads before native-buffer
+  optimization is considered.
