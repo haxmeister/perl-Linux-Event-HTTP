@@ -101,3 +101,9 @@ xshttp1/HTTP1.xs
 xshttp1/stream_consumer_abi.h
 xshttp1/Makefile.PL
 bench/servers/linuxevent-production-stage.pl
+t/90-http2-nghttp2-spike.t
+t/91-http2-alpn-spike.t
+t/92-http2-server-executor-spike.t
+t/93-http2-client-executor-spike.t
+t/94-http2-selector-transition-spike.t
+t/95-http2-high-level-client.t
