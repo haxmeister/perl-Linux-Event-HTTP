@@ -414,14 +414,40 @@ the Server C<tls> option:
         tls => {
             cert_file => '/etc/myapp/server-cert.pem',
             key_file  => '/etc/myapp/server-key.pem',
-            alpn      => ['http/1.1'],
         },
         on_request => sub ($conn, $req, $res) {
             $res->body("secure\n");
         },
     );
 
-A Connection subclass may define C<tls_defaults()> for reusable ALPN and
+Without C<http2>, HTTPS retains the existing HTTP/1 behavior.
+
+Enable HTTP/2 negotiation explicitly with:
+
+    my $server = Linux::Event::HTTP::Server->new(
+        loop  => $loop,
+        port  => 8443,
+        http2 => 1,
+        tls => {
+            cert_file => '/etc/myapp/server-cert.pem',
+            key_file  => '/etc/myapp/server-key.pem',
+        },
+        on_request => sub ($conn, $req, $res) {
+            $res->body("same callback API\n");
+        },
+    );
+
+The Server then advertises C<h2> before C<http/1.1>. When C<h2> is selected,
+the live TLS connection is changed to the private HTTP/2 executor before any
+HTTP/2 preface or SETTINGS bytes are emitted. If C<http/1.1> is selected, the
+existing HTTP/1 connection remains unchanged.
+
+C<http2 =E<gt> 1> currently requires the default connection class and owns the
+TLS ALPN list. A custom C<connection_class> remains HTTP/1-only for now rather
+than having its application-defined class identity silently replaced during an
+HTTP/2 transition.
+
+A Connection subclass may define C<tls_defaults()> for reusable HTTP/1 ALPN and
 timeout defaults. The Server C<tls> option is still required to activate TLS,
 so the same Connection class may be used for plain HTTP and HTTPS listeners.
 
@@ -434,6 +460,10 @@ Returns the underlying L<Linux::Event::IO::Sock::Listener> for advanced use.
 =head2 connection_class
 
 Returns the configured HTTP Connection class name.
+
+=head2 http2
+
+Returns true when this Server was constructed with C<http2 =E<gt> 1>.
 
 =head2 data
 
