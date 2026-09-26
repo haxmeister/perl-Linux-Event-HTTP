@@ -472,6 +472,11 @@ TLS ALPN list. A custom C<connection_class> remains HTTP/1-only for now rather
 than having its application-defined class identity silently replaced during an
 HTTP/2 transition.
 
+HTTP/2 currently requires the optional L<Net::HTTP2::nghttp2> binding and the
+underlying nghttp2 library. They are not yet normal distribution prerequisites.
+Constructing a Server with C<http2 =E<gt> 1> fails explicitly when that
+capability is unavailable.
+
 Decoded HTTP/2 request and trailer header lists default to a 65,536-byte limit,
 using the HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per
 field. Override it with C<http2_max_header_list_size>. The same value is
