@@ -128,7 +128,9 @@ documentation still describes a beta RFC 7540 implementation and marks portions
 of its implementation incomplete.
 
 The integration spike has proved that Net::HTTP2::nghttp2 exposes the control
-needed by Linux::Event::HTTP. The current HTTP/2 branch still loads it as an
+needed by Linux::Event::HTTP. HTTP/2 now requires version 0.011 or newer because
+0.011 fixes provider/session lifetime hazards during callback-driven stream
+teardown. The current HTTP/2 branch still loads it as an
 optional runtime capability rather than a required Makefile.PL prerequisite;
 the packaging decision remains separate from the protocol-engine decision.
 
