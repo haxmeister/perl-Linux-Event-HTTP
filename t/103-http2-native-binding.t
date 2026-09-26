@@ -18,9 +18,12 @@ use Linux::Event::Kernel::Timer;
 use Linux::Event::Loop;
 
 use constant {
-    H2_HEADERS    => 1,
-    H2_GOAWAY     => 7,
-    H2_END_STREAM => 0x1,
+    H2_HEADERS       => 1,
+    H2_SETTINGS      => 4,
+    H2_GOAWAY        => 7,
+    H2_END_STREAM    => 0x1,
+    H2_END_HEADERS   => 0x4,
+    H2_PROTOCOL_ERROR => 1,
 };
 
 sub flush_session ($stream, $session) {
@@ -231,5 +234,92 @@ is($received_goaway->{last_stream_id}, $goaway_stream_id,
 is($received_goaway->{error_code}, 0,
     'native GOAWAY callback exposes error_code');
 $goaway_client->close;
+
+sub h2_frame ($type, $flags, $stream_id, $payload = '') {
+    my $length = length($payload);
+    die 'test frame payload is too large' if $length > 0x00ff_ffff;
+    return pack(
+        'C C C C C N',
+        ($length >> 16) & 0xff,
+        ($length >> 8) & 0xff,
+        $length & 0xff,
+        $type,
+        $flags,
+        $stream_id,
+    ) . $payload;
+}
+
+sub first_goaway ($wire) {
+    my $offset = 0;
+    while ($offset + 9 <= length($wire)) {
+        my ($l1, $l2, $l3, $type, $flags, $stream_id) =
+            unpack('C C C C C N', substr($wire, $offset, 9));
+        my $length = ($l1 << 16) | ($l2 << 8) | $l3;
+        last if $offset + 9 + $length > length($wire);
+        my $payload = substr($wire, $offset + 9, $length);
+        if ($type == H2_GOAWAY && $length >= 8) {
+            my ($last_stream_id, $error_code) = unpack('N N', $payload);
+            return {
+                last_stream_id => $last_stream_id & 0x7fff_ffff,
+                error_code     => $error_code,
+            };
+        }
+        $offset += 9 + $length;
+    }
+    return undef;
+}
+
+my @strict_seen;
+my $strict_server = Linux::Event::HTTP::_HTTP2::Native->new_server(
+    callbacks => {
+        on_begin_headers => sub ($stream_id, $type, $flags) {
+            push @strict_seen, $stream_id;
+        },
+    },
+);
+$strict_server->send_connection_preface(max_concurrent_streams => 100);
+$strict_server->mem_send;
+
+my $client_magic = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+my $empty_settings = h2_frame(H2_SETTINGS, 0, 0);
+my $static_request_headers = pack('C C C', 0x82, 0x86, 0x84);
+my $stream5 = h2_frame(
+    H2_HEADERS,
+    H2_END_STREAM | H2_END_HEADERS,
+    5,
+    $static_request_headers,
+);
+my $first_input = $client_magic . $empty_settings . $stream5;
+is(
+    $strict_server->mem_recv($first_input),
+    length($first_input),
+    'native server accepts a first peer request on stream 5',
+);
+$strict_server->mem_send;
+
+my $stream3 = h2_frame(
+    H2_HEADERS,
+    H2_END_STREAM | H2_END_HEADERS,
+    3,
+    $static_request_headers,
+);
+is(
+    $strict_server->mem_recv($stream3),
+    length($stream3),
+    'native server consumes lower-numbered peer stream input before termination',
+);
+is_deeply(
+    \@strict_seen,
+    [5],
+    'lower-numbered new stream is not exposed to HTTP callbacks',
+);
+my $strict_goaway = first_goaway($strict_server->mem_send);
+ok($strict_goaway, 'lower-numbered new stream queues GOAWAY');
+is(
+    $strict_goaway->{error_code},
+    H2_PROTOCOL_ERROR,
+    'lower-numbered new stream terminates with PROTOCOL_ERROR',
+);
+$strict_server->close;
 
 done_testing;
