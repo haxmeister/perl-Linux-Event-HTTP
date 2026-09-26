@@ -463,7 +463,7 @@ make
 make test
 ```
 
-Linux::Event::HTTP currently requires Linux::Event 0.116 or newer, uses
+Linux::Event::HTTP currently requires Linux::Event 0.117 or newer, uses
 `HTTP::CookieJar` for cookie policy, and uses `Uniform::HTTP::Auth` for HTTP
 authentication mechanics.
 
