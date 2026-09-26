@@ -8,7 +8,7 @@ Updated: 2026-09-26 (America/Chicago)
 
 Active branch: `experiment/native-nghttp2-binding`, draft PR #40, based on
 `experiment/http2-nghttp2-spike`. Starting head: `954c7cc98aee84e80d47edaebdb7b3e723d552ce`.
-Validated implementation head: `53570eb431b74c02b865de2725713ee3d1ef29c4`.
+Validated implementation head: `78e6f0798e7b301351586674aabd2b0184081239`.
 This section supersedes the older stabilization state below. Do not merge yet.
 
 The private native bridge supports client/server sessions, multiplexing,
@@ -56,10 +56,19 @@ argument SVs rather than leaking them after teardown.
 Native h2spec passes the exact accepted gate: 146 tests, 144 passed, 1 skipped,
 1 failed (only the established stream-identifier case).
 
-Validation run: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/36242828225
+A follow-up review found and fixed two lifecycle hardening gaps. The retained
+HTTP server transport-close callback now removes the attached native-session
+wrapper after closing the H2 executor, so an application retaining a closed
+Server connection does not also retain the native callback table. The private
+XS session also now rejects reentrant mem_recv()/mem_send() calls while
+libnghttp2 is already on the stack, matching the safety invariant that prompted
+the earlier Net::HTTP2::nghttp2 0.011 floor. t/94 and t/103 contain focused
+regressions for these cases.
+
+Validation run: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/36243908080
 
 All seven Build-and-test lanes passed, including HTTP/1 and native t/103-109.
-Each lane runs 64 test files and 1,633 assertions. Resolved Perl versions:
+Each lane runs 64 test files and 1,637 assertions. Resolved Perl versions:
 
 | CI lane | Actual Perl | Build and test |
 | --- | --- | --- |
@@ -71,10 +80,13 @@ Each lane runs 64 test files and 1,633 assertions. Resolved Perl versions:
 | latest | 5.44.0 | PASS |
 | latest threaded | 5.44.0 threaded | PASS |
 
-CI run 36242828225 completed successfully. The latest lane's native h2spec
-gate, distribution integrity (including the packaged test suite), production
-HTTP/1 comparisons and benchmark smoke steps all passed. Local Perl 5.38.2 threaded also
-passed all 64 files/1,633 tests; local native subset: 7 files/145 tests.
+CI run 36243908080 completed successfully after the independent review fixes.
+The latest lane's native h2spec gate, distribution integrity (including the
+packaged test suite), production HTTP/1 comparisons and benchmark smoke steps
+all passed. The reviewed CI suite is 64 files/1,637 tests on every configured
+Perl lane. The Work-window local Perl 5.38.2 threaded validation before the
+review fixes passed 64 files/1,633 tests; its native subset was 7 files/145
+tests.
 The h2spec harness now accepts --native; PR #40's gate uses it. The accepted
 146/144/1/1 baseline has not been changed.
 
