@@ -77,6 +77,7 @@ sub new ($class, %option) {
         current_tx      => undef,
         in_session_call => 0,
         transport_blocked => 0,
+        transport_ending  => 0,
         closed          => 0,
         started         => 0,
     }, $class;
@@ -185,6 +186,26 @@ sub flush ($self) {
             last;
         }
     }
+    $self->_maybe_end_transport;
+    return;
+}
+
+sub _maybe_end_transport ($self) {
+    return if $self->{closed} || $self->{transport_ending};
+    return if $self->{transport_blocked};
+
+    my $session = $self->{session} or return;
+    if ($self->{peer_goaway}) {
+        return if $self->stream_count;
+    } else {
+        return if $session->want_read || $session->want_write;
+    }
+
+    my $stream = $self->{stream} or return;
+    return if $stream->is_closed;
+
+    $self->{transport_ending} = 1;
+    $stream->end;
     return;
 }
 
