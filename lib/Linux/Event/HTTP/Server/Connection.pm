@@ -288,7 +288,7 @@ sub _http_transport_close ($self) {
         if (my $transaction = $self->{_http_active_transaction}) {
             $transaction->_mark_cancelled if !$transaction->is_terminal;
         }
-        $self->_clear_transaction;
+        Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
     }
 
     my $callback = delete $self->{_http_user_on_close};
