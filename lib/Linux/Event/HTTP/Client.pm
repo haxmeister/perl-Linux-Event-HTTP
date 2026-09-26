@@ -125,14 +125,27 @@ sub _parse_proxy_url ($url, $where = 'request()') {
     return $destination;
 }
 
-sub _http2_available () {
+sub _http2_available ($session_class = undef) {
     return 0 if !eval {
-        require Net::HTTP2::nghttp2;
-        Net::HTTP2::nghttp2->VERSION('0.011');
         require Linux::Event::HTTP::_HTTP2::ClientSelector;
+        if (defined $session_class) {
+            (my $file = "$session_class.pm") =~ s{::}{/}g;
+            require $file;
+            die "$session_class does not provide new_client()"
+                if !$session_class->can('new_client');
+            die "$session_class reports HTTP/2 unavailable"
+                if $session_class->can('available')
+                && !$session_class->available;
+        } else {
+            require Net::HTTP2::nghttp2;
+            Net::HTTP2::nghttp2->VERSION('0.011');
+            require Net::HTTP2::nghttp2::Session;
+            die 'nghttp2 library is unavailable'
+                if !Net::HTTP2::nghttp2->available;
+        }
         1;
     };
-    return Net::HTTP2::nghttp2->available ? 1 : 0;
+    return 1;
 }
 
 sub new ($class, %option) {
@@ -147,6 +160,10 @@ sub new ($class, %option) {
             // 'Linux::Event::HTTP::Client::Connection',
     );
     my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $http2_session_class = delete $option{_http2_session_class};
+    croak 'new(): _http2_session_class must be a package name'
+        if defined($http2_session_class)
+        && (ref($http2_session_class) || $http2_session_class eq '');
     my $has_http2_max_header_list_size =
         exists $option{http2_max_header_list_size};
     my $http2_max_header_list_size =
@@ -177,8 +194,10 @@ sub new ($class, %option) {
         if !$http2 && $has_http2_max_buffered_response_bytes;
     croak 'new(): http2 currently requires the default connection_class'
         if $http2 && defined($connection_class_option);
-    croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2 0.011 or newer'
-        if $http2 && !_http2_available();
+    croak 'new(): _http2_session_class requires http2 => 1'
+        if defined($http2_session_class) && !$http2;
+    croak 'new(): HTTP/2 session backend is unavailable'
+        if $http2 && !_http2_available($http2_session_class);
     my $connect_timeout = delete $option{connect_timeout};
     my $max_redirects = _validate_max_redirects(
         exists($option{max_redirects}) ? delete($option{max_redirects}) : 5,
@@ -229,6 +248,7 @@ sub new ($class, %option) {
         auth             => $auth,
         proxy_auth       => $proxy_auth,
         http2            => $http2,
+        http2_session_class => $http2_session_class,
         http2_max_header_list_size => 0 + $http2_max_header_list_size,
         http2_max_buffered_response_bytes =>
             0 + $http2_max_buffered_response_bytes,
