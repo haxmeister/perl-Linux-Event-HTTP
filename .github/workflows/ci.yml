@@ -112,6 +112,62 @@ jobs:
           perl Makefile.PL
           make
 
+      - name: HTTP/2 h2spec conformance diagnostic
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          H2SPEC_VERSION=2.6.0
+          H2SPEC_DIR="$RUNNER_TEMP/h2spec"
+          CERT="$RUNNER_TEMP/h2spec-cert.pem"
+          KEY="$RUNNER_TEMP/h2spec-key.pem"
+          PORT=18443
+
+          mkdir -p "$H2SPEC_DIR"
+          curl --fail --location             "https://github.com/summerwind/h2spec/releases/download/v$H2SPEC_VERSION/h2spec_linux_amd64.tar.gz"             --output "$RUNNER_TEMP/h2spec.tar.gz"
+          tar -xzf "$RUNNER_TEMP/h2spec.tar.gz" -C "$H2SPEC_DIR"
+
+          openssl req -x509 -newkey rsa:2048 -nodes             -keyout "$KEY"             -out "$CERT"             -subj "/CN=localhost"             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"             -days 1 >/dev/null 2>&1
+
+          perl -Mblib tools/http2-h2spec-server.pl             --host 127.0.0.1             --port "$PORT"             --cert "$CERT"             --key "$KEY"             >"$RUNNER_TEMP/h2spec-server.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 100); do
+            if grep -q '^READY ' "$RUNNER_TEMP/h2spec-server.log"; then
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              cat "$RUNNER_TEMP/h2spec-server.log"
+              exit 1
+            fi
+            sleep 0.1
+          done
+
+          if ! grep -q '^READY ' "$RUNNER_TEMP/h2spec-server.log"; then
+            cat "$RUNNER_TEMP/h2spec-server.log"
+            echo "h2spec target server did not become ready" >&2
+            exit 1
+          fi
+
+          set +e
+          "$H2SPEC_DIR/h2spec" -t -k -h 127.0.0.1 -p "$PORT"             2>&1 | tee "$RUNNER_TEMP/h2spec-output.log"
+          STATUS=${PIPESTATUS[0]}
+          set -e
+
+          echo "===== h2spec target server log ====="
+          cat "$RUNNER_TEMP/h2spec-server.log"
+          exit "$STATUS"
+
+      - name: Upload HTTP/2 h2spec diagnostic
+        if: always() && github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: http2-h2spec-diagnostic
+          path: |
+            ${{ runner.temp }}/h2spec-output.log
+            ${{ runner.temp }}/h2spec-server.log
+
       - name: End-to-end benchmark smoke
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: perl -Mblib bench/run-http-end-to-end.pl --smoke
