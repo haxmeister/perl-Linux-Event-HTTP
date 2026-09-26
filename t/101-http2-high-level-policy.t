@@ -122,6 +122,7 @@ my $server = Linux::Event::HTTP::Server->new(
 my $origin = 'https://localhost:' . $server->port;
 my $jar = HTTP::CookieJar->new;
 my $auth = Uniform::HTTP::Auth->new(
+    origin  => $origin,
     schemes => ['basic'],
     credentials => {
         username => 'user',
