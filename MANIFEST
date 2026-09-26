@@ -119,6 +119,7 @@ t/103-http2-native-binding.t
 t/104-http2-native-raw-input.t
 t/105-http2-native-providers.t
 t/106-http2-native-executors.t
+t/107-http2-native-high-level.t
 tools/http2-h2spec-server.pl
 xshttp2/Makefile.PL
 xshttp2/Native.xs
