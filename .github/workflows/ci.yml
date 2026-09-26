@@ -63,8 +63,7 @@ jobs:
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
 
-      - name: Install HTTP/2 spike dependency
-        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike'
+      - name: Install optional HTTP/2 test dependency
         run: |
           sudo apt-get install --yes libnghttp2-dev
           cpanm --notest 'Net::HTTP2::nghttp2@0.011'
@@ -79,7 +78,7 @@ jobs:
           make test
 
       - name: HTTP/2 h2spec conformance gate
-        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
+        if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
           set -euo pipefail
           H2SPEC_VERSION=2.6.0
@@ -158,7 +157,7 @@ jobs:
           exit "$STATUS"
 
       - name: Upload HTTP/2 h2spec diagnostic
-        if: always() && github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
+        if: always() && matrix.perl == '5' && matrix.multi_thread == false
         uses: actions/upload-artifact@v4
         with:
           name: http2-h2spec-diagnostic
