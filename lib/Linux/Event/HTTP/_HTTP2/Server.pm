@@ -50,6 +50,7 @@ sub new ($class, %option) {
         delete($option{max_concurrent_streams}) // 100;
     my $max_header_list_size =
         delete($option{max_header_list_size}) // 65_536;
+    my $session_class = delete $option{_session_class};
     die 'new(): max_concurrent_streams must be a positive integer'
         if ref($max_concurrent_streams)
         || "$max_concurrent_streams" !~ /\A[0-9]+\z/
@@ -62,11 +63,21 @@ sub new ($class, %option) {
     die 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
-    require Net::HTTP2::nghttp2;
-    Net::HTTP2::nghttp2->VERSION('0.011');
-    require Net::HTTP2::nghttp2::Session;
-    die 'new(): nghttp2 library is unavailable'
-        if !Net::HTTP2::nghttp2->available;
+    if (!defined $session_class) {
+        require Net::HTTP2::nghttp2;
+        Net::HTTP2::nghttp2->VERSION('0.011');
+        require Net::HTTP2::nghttp2::Session;
+        die 'new(): nghttp2 library is unavailable'
+            if !Net::HTTP2::nghttp2->available;
+        $session_class = 'Net::HTTP2::nghttp2::Session';
+    } else {
+        die 'new(): _session_class must be a package name'
+            if ref($session_class) || $session_class eq '';
+        (my $file = "$session_class.pm") =~ s{::}{/}g;
+        require $file;
+        die 'new(): _session_class must provide new_server()'
+            if !$session_class->can('new_server');
+    }
 
     my $self = bless {
         stream          => $stream,
@@ -88,7 +99,7 @@ sub new ($class, %option) {
     my $weak = $self;
     weaken($weak);
 
-    my $session = Net::HTTP2::nghttp2::Session->new_server(
+    my $session = $session_class->new_server(
         callbacks => {
             on_begin_headers => sub (@args) {
                 my $self = $weak or return 0;
