@@ -32,6 +32,47 @@ sub _take_callback ($name, $option) {
     return $callback;
 }
 
+sub _http2_available () {
+    return 0 if !eval {
+        require Net::HTTP2::nghttp2;
+        require Linux::Event::HTTP::_HTTP2::Server;
+        require Linux::Event::HTTP::_HTTP2::ServerConnection;
+        1;
+    };
+    return Net::HTTP2::nghttp2->available ? 1 : 0;
+}
+
+sub _http2_ready ($conn, $user_ready) {
+    if (($conn->selected_alpn // '') ne 'h2') {
+        $user_ready->($conn) if $user_ready;
+        return;
+    }
+
+    $conn->pause_read;
+    $conn->loop->defer(sub {
+        return if $conn->is_closed;
+
+        my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
+            stream         => $conn,
+            connection     => $conn,
+            autostart      => 0,
+            on_request     => $conn->{_http_on_request},
+            on_body        => $conn->{_http_on_body},
+            on_request_end => $conn->{_http_on_request_end},
+        );
+        $conn->{_http2_executor} = $executor;
+
+        $conn->transition_to(
+            'Linux::Event::HTTP::_HTTP2::ServerConnection',
+        );
+        $executor->start;
+
+        $user_ready->($conn) if $user_ready;
+        $conn->resume_read if $conn->is_read_paused;
+    });
+    return;
+}
+
 sub new ($class, %option) {
     croak 'new(): stream_class is internal; use connection_class'
         if exists $option{stream_class};
@@ -44,10 +85,16 @@ sub new ($class, %option) {
     croak 'new(): on_request_final was removed; use on_request and Response->body or Transaction->response_body'
         if exists $option{on_request_final};
 
+    my $connection_class_option = delete $option{connection_class};
     my $connection_class = _load_connection_class(
-        delete($option{connection_class})
+        $connection_class_option
             // 'Linux::Event::HTTP::Server::Connection',
     );
+
+    my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    croak 'new(): http2 must be zero or one'
+        if !defined($http2) || ref($http2) || "$http2" !~ /A[01]z/;
+    $http2 = $http2 ? 1 : 0;
 
     my %callbacks;
     for my $name (qw(on_request on_body on_request_end)) {
@@ -73,6 +120,19 @@ sub new ($class, %option) {
     my $tls = delete $option{tls};
     croak 'new(): tls must be a hash reference'
         if $tls_enabled && ref($tls) ne 'HASH';
+    $tls = { %$tls } if $tls_enabled;
+
+    if ($http2) {
+        croak 'new(): http2 requires tls'
+            if !$tls_enabled;
+        croak 'new(): http2 currently requires the default connection_class'
+            if defined($connection_class_option);
+        croak 'new(): http2 owns TLS ALPN selection; do not supply tls => { alpn => ... }'
+            if exists $tls->{alpn};
+        croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
+            if !_http2_available();
+        $tls->{alpn} = [ 'h2', 'http/1.1' ];
+    }
 
     croak 'new(): HTTP Server requires on_request callback or connection_class method'
         if !$callbacks{on_request} && !$connection_class->can('on_request');
@@ -102,12 +162,14 @@ sub new ($class, %option) {
         connection_class => $connection_class,
         data             => $data,
         state            => $state,
+        http2            => $http2,
     }, $class;
 }
 
 sub listener         ($self) { $self->{listener} }
 sub connection_class ($self) { $self->{connection_class} }
 sub data             ($self) { $self->{data} }
+sub http2            ($self) { !!$self->{http2} }
 sub loop             ($self) { $self->{listener}->loop }
 sub fh               ($self) { $self->{listener}->fh }
 sub fd               ($self) { $self->{listener}->fd }
