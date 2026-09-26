@@ -264,9 +264,13 @@ sub _transport_ready ($self, $stream) {
         $self->{executor} = $executor;
         $stream->{_http2_executor} = $executor;
 
-        $stream->transition_to(
-            'Linux::Event::HTTP::_HTTP2::ClientConnection',
-        );
+        my $target = 'Linux::Event::HTTP::_HTTP2::ClientConnection';
+        if ($executor->session->isa('Linux::Event::HTTP::_HTTP2::Native')) {
+            require Linux::Event::HTTP::_HTTP2::NativeConnection;
+            $stream->{_http2_native_session} = $executor->session;
+            $target = 'Linux::Event::HTTP::_HTTP2::NativeConnection';
+        }
+        $stream->transition_to($target);
         $executor->start;
         $self->{protocol} = 'h2';
         $self->_notify_selected;

@@ -57,13 +57,12 @@ my $loop = Linux::Event::Loop->new;
 my $state = {
     server_connections => {},
     server_targets     => [],
-    max_server_streams => 0,
     warmup_complete    => 0,
     multiplex_complete => 0,
     response_body      => {},
     errors             => [],
 };
-my @response_timers;
+my %pending_response;
 my @operations;
 
 my $server = Linux::Event::HTTP::Server->new(
@@ -81,9 +80,8 @@ my $server = Linux::Event::HTTP::Server->new(
         push @{$state->{server_targets}}, $req->target;
 
         my $executor = $conn->{_http2_executor};
-        my $count = $executor ? $executor->stream_count : 0;
-        $state->{max_server_streams} = $count
-            if $count > $state->{max_server_streams};
+        $state->{server_class} = ref($conn);
+        $state->{server_input_calls} = $conn->{xs_state}->stats->{consumer_input_calls};
 
         if ($req->target eq '/warmup') {
             $res->body("warmup\n");
@@ -93,17 +91,20 @@ my $server = Linux::Event::HTTP::Server->new(
         if ($req->target =~ m{\A/multiplex/([1-6])\z}) {
             my $number = 0 + $1;
             my $tx = $conn->transaction;
-            my $timer;
-            $timer = Linux::Event::Kernel::Timer->new(
-                loop  => $loop,
-                after => 0.03 + ($number * 0.002),
-                on_timer => sub ($self) {
-                    $res->body("response-$number\n");
-                    $tx->send_response;
-                    $timer = undef;
-                },
-            );
-            push @response_timers, $timer;
+            # No response may complete until all six requests have arrived.
+            # A timer is not a concurrency barrier: transport batching can
+            # deliver the remaining HEADERS after the first timer fires.
+            $pending_response{$number} = [ $tx, $res ];
+            if (keys(%pending_response) == 6) {
+                $state->{streams_at_barrier} = $executor->stream_count;
+                $state->{completed_at_barrier} = $state->{multiplex_complete};
+                for my $ready (1 .. 6) {
+                    my ($ready_tx, $ready_res) = @{$pending_response{$ready}};
+                    $ready_res->body("response-$ready\n");
+                    $ready_tx->send_response;
+                }
+                %pending_response = ();
+            }
             return;
         }
 
@@ -203,10 +204,16 @@ is($state->{warmup_body}, "warmup\n", 'warmup body is delivered');
 is($state->{multiplex_complete}, 6,
     'all six concurrent high-level operations complete');
 
+is($state->{server_class}, 'Linux::Event::HTTP::_HTTP2::NativeConnection',
+    'ALPN selects the native consumer connection');
+cmp_ok($state->{server_input_calls}, '>', 0,
+    'high-level requests arrive through native consumer input');
 is(scalar(keys %{$state->{server_connections}}), 1,
     'native-backed requests use one HTTP/2 TLS connection');
-cmp_ok($state->{max_server_streams}, '>=', 6,
-    'server observes at least six simultaneously active HTTP/2 streams');
+is($state->{streams_at_barrier}, 6,
+    'all six server streams coexist before any response is released');
+is($state->{completed_at_barrier}, 0,
+    'no operation completes before all six requests arrive');
 
 for my $number (1 .. 6) {
     is($state->{immediate_version}{$number}, '2',

@@ -123,3 +123,6 @@ t/107-http2-native-high-level.t
 tools/http2-h2spec-server.pl
 xshttp2/Makefile.PL
 xshttp2/Native.xs
+lib/Linux/Event/HTTP/_HTTP2/NativeConnection.pm
+t/108-http2-native-transport.t
+t/109-http2-native-error-isolation.t

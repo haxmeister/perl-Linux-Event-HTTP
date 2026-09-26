@@ -11,13 +11,15 @@ use Linux::Event::Loop;
 my $host = '127.0.0.1';
 my $port = 18443;
 my ($cert, $key);
+my $native = 0;
 
 GetOptions(
+    'native!' => \$native,
     'host=s' => \$host,
     'port=i' => \$port,
     'cert=s' => \$cert,
     'key=s'  => \$key,
-) or die "usage: $0 --cert FILE --key FILE [--host HOST] [--port PORT]\n";
+) or die "usage: $0 --cert FILE --key FILE [--host HOST] [--port PORT] [--native]\n";
 
 die "--cert is required\n" if !defined($cert) || $cert eq '';
 die "--key is required\n" if !defined($key) || $key eq '';
@@ -31,6 +33,7 @@ my $server = Linux::Event::HTTP::Server->new(
     host  => $host,
     port  => $port,
     http2 => 1,
+    ($native ? (_http2_session_class => 'Linux::Event::HTTP::_HTTP2::Native') : ()),
     tls   => {
         cert_file => $cert,
         key_file  => $key,

@@ -234,6 +234,7 @@ sub transport_drain ($self) {
     return if $self->{closed};
     $self->{transport_blocked} = 0;
     $self->flush;
+    return if $self->{transport_blocked} || $self->{closed};
 
     for my $state (values %{$self->{streams}}) {
         my $provider = $state->{request_provider} or next;
@@ -279,6 +280,10 @@ sub _finish_close ($self, $error) {
     $self->{streams} = {};
     $self->{tx_stream} = {};
     $self->{buffered_response_bytes} = 0;
+    # A native input consumer retains the session until the transport unwinds.
+    # Close it explicitly once no nghttp2 call is active.
+    $self->{session}->close
+        if $self->{session} && $self->{session}->can('close');
     $self->{session} = undef;
     return;
 }

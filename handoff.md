@@ -4,6 +4,55 @@ Updated: 2026-09-25 (America/Chicago)
 
 ## CURRENT STATE - READ THIS FIRST
 
+### Native binding continuation (2026-09-26)
+
+Active branch: `experiment/native-nghttp2-binding`, draft PR #40, based on
+`experiment/http2-nghttp2-spike`. Starting head: `954c7cc98aee84e80d47edaebdb7b3e723d552ce`.
+This section supersedes the older stabilization state below. Do not merge yet.
+
+The original t/107 failure reproduces locally on Perl 5.38.2 threaded/core 0.117.
+Lifecycle trace: request 1 arrived at 0.543739 s and its timer sent its response
+at 0.575889 s (one server stream); requests 2 through 6 then arrived between
+0.576643 and 0.577111 s. Thus the peak of five came from response 1 already
+finishing before the next transport batch arrived. The old 32 ms timer does
+not establish simultaneous arrival. A replacement barrier holds all responses
+until six requests arrive, then asserts six live streams and zero completions
+before releasing responses. The barrier passed on Perl 5.38.2 threaded: this
+was transport timing, not a five-stream concurrency limit.
+
+The ALPN-selected high-level Client and Server now attach their passive native
+session before transitioning to `_HTTP2::NativeConnection`. Core 0.117 replaces
+the existing HTTP/1 provider and preserves the native input buffer. The new
+class has no ordinary `on_data` handler. The private session selector remains
+experimental; Net::HTTP2::nghttp2 is still the default.
+
+The raw provider no longer calls mem_send/write in XS. It brackets native
+mem_recv with the executor's dynamic in_session_call guard, then invokes the
+existing executor flush after nghttp2 returns. Stream write false stops output;
+the existing transport_drain callback resumes it. There is no added XS output
+queue. Consumer host retention holds state across callback-triggered close;
+the completion callback retains access to the executor even when on_close has
+removed it from the Stream. Native sessions are explicitly closed after the
+executor guard unwinds. Body::Stream drain notifications are withheld if a
+transport drain immediately blocks again.
+
+Local native regression suite t/103-109 passes (7 files, 145 tests).
+t/107 checks the native consumer class/input counter and six-stream barrier.
+t/108 exercises scalar and streaming bodies over real native-input sockets,
+repeated false writes/drains, no writes while blocked, and callback close.
+t/109 proves invalid prefaces close only their connection and a subsequent
+valid exchange still succeeds; retained native sessions are closed explicitly.
+This caught a raw-provider error-status bug: LES_CONSUMER_ERROR throws out of
+the loop. Peer input failures now use connection close, preserving the existing
+executor input policy. Skipped/suppressed XS callbacks also release their
+argument SVs rather than leaking them after teardown.
+Native h2spec passes the exact accepted gate: 146 tests, 144 passed, 1 skipped,
+1 failed (only the established stream-identifier case). The full local suite
+before t/109 passed 63 files/1,625 tests; final count and seven-lane CI pending.
+The h2spec harness now accepts --native; PR #40's gate uses it. The accepted
+146/144/1/1 baseline has not been changed.
+
+
 Repository: `haxmeister/perl-Linux-Event-HTTP`
 
 Canonical branch: `main`

@@ -152,12 +152,13 @@ leh2_call(pTHX_ leh2_state_t *state, const char *name, I32 argc, SV **argv)
     I32 i;
     dSP;
 
-    if (!state || state->closed || state->close_pending)
+    slot = (!state || state->closed || state->close_pending) ? NULL
+        : hv_fetch(state->callbacks, name, (I32)strlen(name), 0);
+    if (!slot || !SvOK(*slot)) {
+        for (i = 0; i < argc; ++i)
+            SvREFCNT_dec(argv[i]);
         return 0;
-
-    slot = hv_fetch(state->callbacks, name, (I32)strlen(name), 0);
-    if (!slot || !SvOK(*slot))
-        return 0;
+    }
 
     ENTER;
     SAVETMPS;
@@ -538,7 +539,8 @@ typedef struct leh2_raw_context_s {
     SV *stream;
     SV *session_obj;
     leh2_state_t *state;
-    CV *write_cv;
+    SV *executor;
+    CV *input_complete_cv;
 } leh2_raw_context_t;
 
 static CV *
@@ -557,74 +559,34 @@ leh2_raw_find_method(pTHX_ SV *stream, const char *name)
     return (CV *)SvREFCNT_inc((SV *)cv);
 }
 
+/* Output belongs to the executor. This callback runs only after mem_recv
+ * has unwound and the executor's in_session_call guard has been restored. */
 static int
-leh2_raw_write(pTHX_ leh2_raw_context_t *context, SV *bytes)
+leh2_raw_input_complete(pTHX_ leh2_raw_context_t *context, SV *error)
 {
+    int ok;
     dSP;
 
-    if (!context->write_cv)
-        context->write_cv = leh2_raw_find_method(aTHX_ context->stream, "write");
+    if (!context->input_complete_cv)
+        context->input_complete_cv = leh2_raw_find_method(
+            aTHX_ context->stream, "_http2_native_input_complete");
 
     ENTER;
     SAVETMPS;
     PUSHMARK(SP);
     XPUSHs(context->stream);
-    XPUSHs(bytes);
+    XPUSHs(context->executor ? context->executor : &PL_sv_undef);
+    XPUSHs(error ? error : &PL_sv_undef);
     PUTBACK;
-    call_sv((SV *)context->write_cv, G_DISCARD | G_EVAL);
+    call_sv((SV *)context->input_complete_cv, G_DISCARD | G_EVAL);
     SPAGAIN;
-
-    if (SvTRUE(ERRSV)) {
-        sv_setsv(ERRSV, &PL_sv_undef);
-        PUTBACK;
-        FREETMPS;
-        LEAVE;
-        return 0;
-    }
-
+    ok = !SvTRUE(ERRSV);
+    if (!ok)
+        leh2_store_callback_error(aTHX_ context->state);
     PUTBACK;
     FREETMPS;
     LEAVE;
-    return 1;
-}
-
-static int
-leh2_raw_flush(pTHX_ leh2_raw_context_t *context)
-{
-    leh2_state_t *state = context->state;
-
-    while (!state->closed && nghttp2_session_want_write(state->session)) {
-        const uint8_t *data = NULL;
-        ssize_t rv;
-        SV *bytes;
-
-        ++state->in_nghttp2;
-        rv = nghttp2_session_mem_send(state->session, &data);
-        if (rv > 0)
-            bytes = newSVpvn((const char *)data, (STRLEN)rv);
-        else
-            bytes = NULL;
-        leh2_leave_nghttp2(state);
-
-        if (state->callback_error)
-            return 0;
-        if (rv < 0)
-            return 0;
-        if (rv == 0)
-            break;
-        if (!bytes)
-            return 0;
-
-        sv_2mortal(bytes);
-        if (!leh2_raw_write(aTHX_ context, bytes))
-            return 0;
-        if (state->closed)
-            break;
-        if (context->host->is_closed(aTHX_ context->host_context))
-            break;
-    }
-
-    return 1;
+    return ok;
 }
 
 static void *
@@ -661,6 +623,9 @@ leh2_raw_consumer_create(pTHX_
     context->stream = SvREFCNT_inc(stream);
     context->session_obj = SvREFCNT_inc(*slot);
     context->state = leh2_state_from_sv(context->session_obj);
+    slot = hv_fetchs(stream_hv, "_http2_executor", 0);
+    if (slot && SvOK(*slot))
+        context->executor = newSVsv(*slot);
     return context;
 }
 
@@ -674,6 +639,7 @@ leh2_raw_consumer_input(pTHX_
     leh2_raw_context_t *context = (leh2_raw_context_t *)opaque;
     leh2_state_t *state;
     ssize_t rv;
+    SV *error = NULL;
     int result = LES_CONSUMER_CONTINUE;
 
     if (!context || !consumed)
@@ -690,6 +656,18 @@ leh2_raw_consumer_input(pTHX_
         goto done;
     }
 
+    /* Mirror executor->input's dynamic guard without creating a wire SV.
+     * Retention keeps this context, session and executor alive if a semantic
+     * callback closes the Stream while nghttp2 is still on the stack. */
+    ENTER;
+    SAVETMPS;
+    if (context->executor) {
+        HV *executor_hv = (HV *)SvRV(context->executor);
+        SV *key = sv_2mortal(newSVpvs("in_session_call"));
+        SV **slot = hv_fetchs(executor_hv, "in_session_call", 1);
+        save_helem(executor_hv, key, slot);
+        sv_setiv(*slot, 1);
+    }
     ++state->in_nghttp2;
     rv = nghttp2_session_mem_recv(
         state->session,
@@ -697,18 +675,22 @@ leh2_raw_consumer_input(pTHX_
         length
     );
     leh2_leave_nghttp2(state);
+    FREETMPS;
+    LEAVE;
 
-    if (rv < 0 || state->callback_error) {
-        result = LES_CONSUMER_ERROR;
-        goto done;
-    }
+    if (rv >= 0)
+        *consumed = (size_t)rv;
+    if (state->callback_error)
+        error = newSVsv(state->callback_error);
+    else if (rv < 0)
+        error = newSVpv(nghttp2_strerror((int)rv), 0);
 
-    *consumed = (size_t)rv;
-
-    if (!state->closed && !leh2_raw_flush(aTHX_ context)) {
-        result = LES_CONSUMER_ERROR;
-        goto done;
-    }
+    /* Malformed peer input closes this connection; LES_CONSUMER_ERROR is
+     * an ABI/programming failure and would throw out of the whole Loop. */
+    if (!leh2_raw_input_complete(aTHX_ context, error) || error)
+        result = LES_CONSUMER_CLOSE;
+    if (error)
+        SvREFCNT_dec(error);
 
     if (context->host->is_closed(aTHX_ context->host_context))
         result = LES_CONSUMER_CLOSE;
@@ -742,8 +724,10 @@ leh2_raw_consumer_destroy(pTHX_ void *opaque)
     if (!context)
         return;
 
-    if (context->write_cv)
-        SvREFCNT_dec((SV *)context->write_cv);
+    if (context->input_complete_cv)
+        SvREFCNT_dec((SV *)context->input_complete_cv);
+    if (context->executor)
+        SvREFCNT_dec(context->executor);
     if (context->session_obj)
         SvREFCNT_dec(context->session_obj);
     if (context->stream)

@@ -71,6 +71,7 @@ WriteMakefile(
                 Linux::Event::HTTP::_HTTP1::Chunked
                 Linux::Event::HTTP::_HTTP2
                 Linux::Event::HTTP::_HTTP2::Native
+                Linux::Event::HTTP::_HTTP2::NativeConnection
                 Linux::Event::HTTP::_HTTP2::Client
                 Linux::Event::HTTP::_HTTP2::ClientConnection
                 Linux::Event::HTTP::_HTTP2::ClientSelector

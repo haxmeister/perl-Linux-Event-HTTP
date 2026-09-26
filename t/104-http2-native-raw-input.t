@@ -33,6 +33,26 @@ use Linux::Event::Loop;
     package T::NativeH2RawStream;
     use parent 'Linux::Event::IO::Sock::Stream';
 
+    sub _http2_native_input_complete ($self, $executor = undef, $error = undef) {
+        die $error if defined $error;
+        return if $self->{output_blocked};
+        my $session = $self->{_http2_native_session};
+        while (!$session->is_closed && $session->want_write) {
+            my $bytes = $session->mem_send;
+            last if !length $bytes;
+            if (!$self->write($bytes)) {
+                $self->{output_blocked} = 1;
+                last;
+            }
+        }
+    }
+
+    sub on_drain ($self) {
+        $self->{output_blocked} = 0;
+        $self->_http2_native_input_complete;
+    }
+
+
     Linux::Event::Framer->declare_native_consumer(
         __PACKAGE__,
         Linux::Event::HTTP::_HTTP2::Native->_raw_consumer_definition,

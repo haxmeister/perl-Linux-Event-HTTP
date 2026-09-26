@@ -80,6 +80,8 @@ jobs:
 
       - name: HTTP/2 h2spec conformance gate
         if: github.event_name == 'pull_request' && (github.head_ref == 'experiment/http2-nghttp2-spike' || github.head_ref == 'experiment/native-nghttp2-binding') && matrix.perl == '5' && matrix.multi_thread == false
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           H2SPEC_VERSION=2.6.0
@@ -109,7 +111,11 @@ jobs:
           test -s "$KEY"
           echo "certificate generation complete" >>"$H2SPEC_LOG"
 
-          perl -Mblib tools/http2-h2spec-server.pl             --host 127.0.0.1             --port "$PORT"             --cert "$CERT"             --key "$KEY"             >"$SERVER_LOG" 2>&1 &
+          BACKEND_ARGS=()
+          if [ "$HEAD_REF" = "experiment/native-nghttp2-binding" ]; then
+            BACKEND_ARGS=(--native)
+          fi
+          perl -Mblib tools/http2-h2spec-server.pl "${BACKEND_ARGS[@]}"             --host 127.0.0.1             --port "$PORT"             --cert "$CERT"             --key "$KEY"             >"$SERVER_LOG" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 

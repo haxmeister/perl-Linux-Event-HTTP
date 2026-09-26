@@ -81,9 +81,13 @@ sub _http2_ready (
         );
         $conn->{_http2_executor} = $executor;
 
-        $conn->transition_to(
-            'Linux::Event::HTTP::_HTTP2::ServerConnection',
-        );
+        my $target = 'Linux::Event::HTTP::_HTTP2::ServerConnection';
+        if ($executor->session->isa('Linux::Event::HTTP::_HTTP2::Native')) {
+            require Linux::Event::HTTP::_HTTP2::NativeConnection;
+            $conn->{_http2_native_session} = $executor->session;
+            $target = 'Linux::Event::HTTP::_HTTP2::NativeConnection';
+        }
+        $conn->transition_to($target);
         $executor->start;
 
         $user_ready->($conn) if $user_ready;
