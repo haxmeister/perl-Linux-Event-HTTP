@@ -18,6 +18,7 @@ sub new ($class, %option) {
     my $timeout = delete $option{timeout};
     my $scheme = delete($option{scheme}) // 'https';
     my $authority = delete $option{authority};
+    my $on_selected = delete $option{on_selected};
 
     croak 'new(): loop is required' if !blessed($loop);
     croak 'new(): host is required'
@@ -27,6 +28,8 @@ sub new ($class, %option) {
     croak 'new(): transport is required' if !blessed($transport);
     croak 'new(): authority is required'
         if !defined($authority) || ref($authority) || $authority eq '';
+    croak 'new(): on_selected must be a coderef'
+        if defined($on_selected) && ref($on_selected) ne 'CODE';
     croak 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -43,6 +46,7 @@ sub new ($class, %option) {
         transaction => undef,
         pending     => undef,
         closed      => 0,
+        on_selected => $on_selected,
     }, $class;
 
     my %connect = (
@@ -72,6 +76,24 @@ sub is_closed ($self) {
 sub protocol ($self) { $self->{protocol} }
 
 sub _http2_capable ($self) { 1 }
+
+sub can_accept_transaction ($self) {
+    return 0 if $self->is_closed;
+    return 0 if $self->{protocol} ne 'h2';
+    my $executor = $self->{executor} or return 0;
+    return $executor->can_accept_transaction;
+}
+
+sub active_streams ($self) {
+    return 0 if $self->{protocol} ne 'h2' || !$self->{executor};
+    return $self->{executor}->stream_count;
+}
+
+sub _notify_selected ($self) {
+    my $callback = $self->{on_selected} or return;
+    $callback->($self, $self->{protocol});
+    return;
+}
 
 sub transaction ($self) {
     my $tx = $self->{transaction} or return undef;
@@ -145,6 +167,7 @@ sub _transport_ready ($self, $stream) {
     my $alpn = $stream->selected_alpn // '';
     if ($alpn eq 'http/1.1') {
         $self->{protocol} = 'http/1.1';
+        $self->_notify_selected;
         $self->_submit_pending_http1;
         return;
     }
@@ -174,6 +197,7 @@ sub _transport_ready ($self, $stream) {
         );
         $executor->start;
         $self->{protocol} = 'h2';
+        $self->_notify_selected;
 
         $self->_submit_pending_h2;
         $stream->resume_read if $stream->is_read_paused;
