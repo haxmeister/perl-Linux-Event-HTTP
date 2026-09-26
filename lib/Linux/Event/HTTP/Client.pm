@@ -1646,6 +1646,21 @@ For an HTTPS proxy endpoint, TLS is established to the proxy itself. An HTTPS
 target sent through ordinary forward-proxy mode is not silently converted into
 a CONNECT tunnel.
 
+=head1 CLIENT UPGRADE
+
+An ordinary HTTP/1.1 request can opt into protocol Upgrade with:
+
+    upgrade_to => 'MyProtocolConnection'
+
+The Request must advertise the Upgrade normally. On a validated 101 response,
+the HTTP Transaction completes and the same live Linux::Event stream transitions
+to the requested class.
+
+Already-read post-HTTP bytes are preserved for the new protocol.
+
+Upgrade is an HTTP/1 transport handoff and therefore uses the HTTP/1 path even
+when this Client has C<http2 =E<gt> 1>.
+
 =head1 CONNECT TUNNELS
 
 Use C<connect_tunnel> when a real HTTP/1.1 CONNECT tunnel is required:
@@ -1662,6 +1677,17 @@ response-head boundary and transitions the same live Linux::Event stream to the
 requested tunnel class.
 
 Non-2xx responses remain ordinary HTTP responses.
+
+=head1 CONNECTION REUSE
+
+HTTP/1 connections are reused when response framing and persistence rules leave
+the connection safe for another exchange.
+
+Selected HTTP/2 connections remain in a per-origin pool while streams are
+active and may carry concurrent Operations.
+
+Forward-proxy HTTP/1 connections are pooled by route origin rather than target
+origin.
 
 =head1 METHODS
 
@@ -1720,6 +1746,10 @@ Returns the configured default forward-proxy URL or undef.
 =head2 connection_class
 
 Returns the configured HTTP/1 Client::Connection class.
+
+=head2 is_closed
+
+True after the Client has been closed.
 
 =head2 close
 
