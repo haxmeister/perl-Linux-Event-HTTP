@@ -261,6 +261,20 @@ leh2_on_frame_recv(nghttp2_session *session, const nghttp2_frame *frame,
 }
 
 static int
+leh2_on_error(nghttp2_session *session, int lib_error_code,
+    const char *msg, size_t len, void *user_data)
+{
+    leh2_state_t *state = (leh2_state_t *)user_data;
+    SV *args[2];
+    dTHX;
+
+    (void)session;
+    args[0] = newSViv(lib_error_code);
+    args[1] = newSVpvn(msg ? msg : "", msg ? len : 0);
+    return leh2_call(aTHX_ state, "on_error", 2, args);
+}
+
+static int
 leh2_on_stream_close(nghttp2_session *session, int32_t stream_id,
     uint32_t error_code, void *user_data)
 {
@@ -794,6 +808,8 @@ CODE:
         cbs, leh2_on_frame_recv);
     nghttp2_session_callbacks_set_on_stream_close_callback(
         cbs, leh2_on_stream_close);
+    nghttp2_session_callbacks_set_error_callback2(
+        cbs, leh2_on_error);
 
     if (is_server)
         rv = nghttp2_session_server_new(&state->session, cbs, state);
