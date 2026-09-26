@@ -294,6 +294,29 @@ policy, or callback methods belong on a class:
 C<connection_class> defaults to
 L<Linux::Event::HTTP::Server::Connection>.
 
+=head1 MANAGED PRE-FORK SERVERS
+
+Linux::Event 0.117 provides a Loop-aware C<fork> operation. A plain HTTP server
+can participate without a separate worker API because C<listener> exposes the
+underlying L<Linux::Event::IO::Sock::Listener>:
+
+    my $pid = $loop->fork(
+        share => [ $server->listener ],
+    );
+
+The Listener remains active in both processes. Each process has its own rebuilt
+Loop reactor and may accept connections from the intentionally shared listening
+socket.
+
+Call C<< $loop->fork(...) >> only while the Loop is quiescent, as required by
+Linux::Event. Worker creation, supervision, restart policy, privilege changes,
+and process shutdown remain application concerns rather than HTTP protocol
+features.
+
+This shared-Listener pattern is covered for plain HTTP. Do not assume the same
+deployment recipe for a TLS Listener until the TLS case has been validated
+separately.
+
 =head1 TUNING AND CONNECTION CALLBACKS
 
 Supply deployment-specific Stream tuning directly to the Server. These values
