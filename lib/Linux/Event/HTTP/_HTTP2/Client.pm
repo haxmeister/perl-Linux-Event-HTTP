@@ -25,6 +25,11 @@ sub new ($class, %option) {
     my $stream = delete $option{stream};
     die 'new(): stream must be an object with write()'
         if !blessed($stream) || !$stream->can('write');
+    my $autostart = exists($option{autostart})
+        ? delete($option{autostart}) : 1;
+    die 'new(): autostart must be zero or one'
+        if !defined($autostart) || ref($autostart)
+        || "$autostart" !~ /\A[01]\z/;
     die 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -41,6 +46,7 @@ sub new ($class, %option) {
         in_session_call   => 0,
         transport_blocked => 0,
         closed            => 0,
+        started           => 0,
     }, $class;
 
     my $weak = $self;
@@ -72,12 +78,22 @@ sub new ($class, %option) {
     );
 
     $self->{session} = $session;
-    $session->send_connection_preface(
+    $self->start if $autostart;
+    return $self;
+}
+
+sub start ($self) {
+    die 'start(): executor is closed' if $self->{closed};
+    return $self if $self->{started};
+    $self->{started} = 1;
+    $self->{session}->send_connection_preface(
         max_concurrent_streams => 100,
     );
     $self->flush;
     return $self;
 }
+
+sub started ($self) { !!$self->{started} }
 
 sub session ($self) { $self->{session} }
 sub stream  ($self) { $self->{stream} }
@@ -93,6 +109,7 @@ sub transaction_for_stream ($self, $stream_id) {
 
 sub input ($self, $bytes) {
     die 'input(): executor is closed' if $self->{closed};
+    die 'input(): executor is not started' if !$self->{started};
     die 'input(): bytes must be a scalar' if ref $bytes;
     return 0 if !defined($bytes) || $bytes eq '';
 
@@ -110,6 +127,7 @@ sub input ($self, $bytes) {
 
 sub flush ($self) {
     return if $self->{closed};
+    return if !$self->{started};
     return if $self->{in_session_call};
     return if $self->{transport_blocked};
 
@@ -168,6 +186,7 @@ sub _buffer_limit ($value) {
 
 sub request ($self, $request, %option) {
     die 'request(): executor is closed' if $self->{closed};
+    die 'request(): executor is not started' if !$self->{started};
     die 'request(): requires a Linux::Event::HTTP::Request'
         if !blessed($request)
         || !$request->isa('Linux::Event::HTTP::Request');
