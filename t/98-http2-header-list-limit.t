@@ -5,15 +5,25 @@ use warnings;
 use Test::More;
 use Scalar::Util qw(refaddr);
 
+our $H2_SESSION_CLASS;
 BEGIN {
-    eval {
-        require Net::HTTP2::nghttp2;
-        Net::HTTP2::nghttp2->VERSION('0.011');
-        1;
-    } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
+    if ($ENV{LEHTTP_H2_NATIVE_TEST}) {
+        eval {
+            require Linux::Event::HTTP::_HTTP2::Native;
+            Linux::Event::HTTP::_HTTP2::Native->available;
+            1;
+        } or plan skip_all => 'native libnghttp2 bridge is not built';
+        $H2_SESSION_CLASS = 'Linux::Event::HTTP::_HTTP2::Native';
+    } else {
+        eval {
+            require Net::HTTP2::nghttp2;
+            Net::HTTP2::nghttp2->VERSION('0.011');
+            1;
+        } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
 
-    Net::HTTP2::nghttp2->available
-        or plan skip_all => 'nghttp2 library is not available';
+        Net::HTTP2::nghttp2->available
+            or plan skip_all => 'nghttp2 library is not available';
+    }
 }
 
 use Linux::Event::HTTP::Request;
@@ -66,6 +76,8 @@ my $server_request_hits = 0;
 my $server_stream = T::HTTP2HeaderLimitStream->new;
 my $server = Linux::Event::HTTP::_HTTP2::Server->new(
     stream               => $server_stream,
+    (defined($H2_SESSION_CLASS)
+        ? (_session_class => $H2_SESSION_CLASS) : ()),
     max_header_list_size => 96,
     on_request => sub {
         ++$server_request_hits;
@@ -118,6 +130,8 @@ my @client_error;
 my $client_stream = T::HTTP2HeaderLimitStream->new;
 my $client = Linux::Event::HTTP::_HTTP2::Client->new(
     stream               => $client_stream,
+    (defined($H2_SESSION_CLASS)
+        ? (_session_class => $H2_SESSION_CLASS) : ()),
     max_header_list_size => 80,
 );
 
@@ -176,6 +190,8 @@ ok(!$client->{closed},
     my $ok = eval {
         Linux::Event::HTTP::_HTTP2::Client->new(
             stream               => T::HTTP2HeaderLimitStream->new,
+            (defined($H2_SESSION_CLASS)
+                ? (_session_class => $H2_SESSION_CLASS) : ()),
             max_header_list_size => 0,
         );
         1;
@@ -189,6 +205,8 @@ ok(!$client->{closed},
     my $ok = eval {
         Linux::Event::HTTP::_HTTP2::Server->new(
             stream               => T::HTTP2HeaderLimitStream->new,
+            (defined($H2_SESSION_CLASS)
+                ? (_session_class => $H2_SESSION_CLASS) : ()),
             max_header_list_size => 'bad',
             on_request           => sub {},
         );
