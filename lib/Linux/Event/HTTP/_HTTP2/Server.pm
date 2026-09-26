@@ -164,7 +164,17 @@ sub input ($self, $bytes) {
         if !defined($consumed) || $consumed != length($bytes);
 
     $self->flush;
+    $self->_maybe_close_after_peer_goaway;
     return $consumed;
+}
+
+sub _maybe_close_after_peer_goaway ($self) {
+    return if !$self->{peer_goaway};
+    return if $self->{closed};
+    return if $self->stream_count;
+    my $stream = $self->{stream} or return;
+    $stream->close if !$stream->is_closed;
+    return;
 }
 
 sub flush ($self) {
@@ -184,6 +194,7 @@ sub flush ($self) {
             last;
         }
     }
+    $self->_maybe_close_after_peer_goaway;
     return;
 }
 
@@ -268,6 +279,11 @@ sub _on_header ($self, $stream_id, $name, $value, $flags) {
 }
 
 sub _on_frame_recv ($self, $frame) {
+    if (($frame->{type} // -1) == H2_GOAWAY) {
+        $self->{peer_goaway} = 1;
+        return 0;
+    }
+
     my $stream_id = $frame->{stream_id} // 0;
     return 0 if !$stream_id;
 
