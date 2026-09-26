@@ -6,6 +6,16 @@ use Test::More;
 
 our $H2_SESSION_CLASS;
 BEGIN {
+    eval {
+        require Net::HTTP2::nghttp2;
+        Net::HTTP2::nghttp2->VERSION('0.011');
+        require Net::HTTP2::nghttp2::Session;
+        1;
+    } or plan skip_all => 'Net::HTTP2::nghttp2 peer harness is not installed';
+
+    Net::HTTP2::nghttp2->available
+        or plan skip_all => 'nghttp2 library is not available';
+
     if ($ENV{LEHTTP_H2_NATIVE_TEST}) {
         eval {
             require Linux::Event::HTTP::_HTTP2::Native;
@@ -13,16 +23,6 @@ BEGIN {
             1;
         } or plan skip_all => 'native libnghttp2 bridge is not built';
         $H2_SESSION_CLASS = 'Linux::Event::HTTP::_HTTP2::Native';
-    } else {
-        eval {
-            require Net::HTTP2::nghttp2;
-            Net::HTTP2::nghttp2->VERSION('0.011');
-            require Net::HTTP2::nghttp2::Session;
-            1;
-        } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
-
-        Net::HTTP2::nghttp2->available
-            or plan skip_all => 'nghttp2 library is not available';
     }
 }
 
