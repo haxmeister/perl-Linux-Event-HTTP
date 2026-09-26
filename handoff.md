@@ -21,8 +21,8 @@ Draft PR: #39.
 
 Current stabilization code head before this handoff update:
 
-`272115a44fe69b49b83596ba4f0962e1954d8c36`
-"Gracefully retire surplus reusable connections"
+`ed173a2be55e001f4ea891ee4746381ce4c7ab89`
+"Fix HTTP/2 policy auth test origin"
 
 The high-level HTTP/2 Server/Client work, multiplexing, streaming uploads,
 decoded header-list limits, aggregate buffered-response limits, and ALPN
@@ -147,6 +147,14 @@ Validation:
   The latest lane reported 55 files / 1,444 tests, Result PASS, passed the
   h2spec conformance gate, production comparison/smoke work, and distribution
   integrity.
+- CI run `36216974089` validates high-level redirect, cookie, and
+  authentication policy over HTTP/2. It fully passed on Perl 5.36, 5.38, 5.40,
+  5.42, 5.44, latest, and latest-threaded; latest also passed h2spec and
+  distribution integrity. Focused coverage is
+  `t/101-http2-high-level-policy.t`, which executes one Operation through
+  302 -> cookie storage -> 401 Basic challenge -> authenticated 200 on one H2
+  TLS connection. All three Transactions retain HTTP/2 Request/Response
+  identity and the expected Operation redirect/auth history.
 
 The earlier pre-ALPN connection fan-out issue is now resolved. Do not revert to
 one negotiating TLS connection per simultaneous operation.
@@ -913,10 +921,14 @@ CI run `36210309139` passed Build-and-test, including t/96, on:
 
 Remaining client-pool work:
 
-- Operations created before any connection has completed ALPN may still create
-  multiple negotiating TLS connections;
-- transparent GOAWAY replay is not yet implemented;
+- transparent GOAWAY replay is not implemented because
+  Net::HTTP2::nghttp2 0.008 does not expose the received GOAWAY
+  last_stream_id needed to identify safely replayable streams;
 - cross-origin H2 connection coalescing remains deferred.
+
+Pre-ALPN same-origin fan-out is implemented: simultaneous Operations share a
+bounded negotiating selector and either collapse onto H2 or fan back out after
+HTTP/1.1 selection.
 
 ### High-level HTTP/2 streaming Request bodies
 
