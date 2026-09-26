@@ -133,6 +133,11 @@ sub new ($class, %option) {
         croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
             if !_http2_available();
         $tls->{alpn} = [ 'h2', 'http/1.1' ];
+
+        my $user_on_ready = $stream_callback{on_ready};
+        $stream_callback{on_ready} = sub ($conn) {
+            _http2_ready($conn, $user_on_ready);
+        };
     }
 
     croak 'new(): HTTP Server requires on_request callback or connection_class method'
