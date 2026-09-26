@@ -623,6 +623,29 @@ its HTTP/1-native-consumer -> HTTP/2-raw transition.**
 
 This is an HTTP executor-lifecycle requirement, not a Linux::Event core bug.
 
+CI coverage was subsequently expanded because the old matrix only tested Perl
+5.36, latest Perl, and latest threaded Perl. The HTTP/2 spike dependency was
+also previously installed only on the latest non-threaded lane, allowing H2
+tests to skip on the other Perls.
+
+Commit `d84ca034c3dfb87f5e0655ea6877a5d371f04ed2` expands the matrix to:
+
+- Perl 5.36;
+- Perl 5.38;
+- Perl 5.40;
+- Perl 5.42;
+- Perl 5.44;
+- latest Perl;
+- latest threaded Perl.
+
+On the HTTP/2 spike branch, Net::HTTP2::nghttp2 is installed in every one of
+those lanes so t/90 through t/94 are exercised rather than skipped.
+
+CI run `36208655559` confirms Build-and-test success on 5.36, 5.38, 5.40,
+5.42, 5.44, latest, and latest-threaded. The explicit non-latest lanes and
+latest-threaded completed successfully; latest non-threaded also passed the
+test suite and continued through the longer benchmark/dist steps.
+
 Clean validation run `36208252365` removed all phase instrumentation and used
 the actual private HTTP/2 connection classes. Results:
 
