@@ -20,6 +20,18 @@ jobs:
           - perl: '5.36'
             multi_thread: false
             label: '5.36'
+          - perl: '5.38'
+            multi_thread: false
+            label: '5.38'
+          - perl: '5.40'
+            multi_thread: false
+            label: '5.40'
+          - perl: '5.42'
+            multi_thread: false
+            label: '5.42'
+          - perl: '5.44'
+            multi_thread: false
+            label: '5.44'
           - perl: '5'
             multi_thread: false
             label: 'latest'
@@ -44,12 +56,18 @@ jobs:
 
       - name: Install pinned current Linux::Event core
         run: |
-          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/007db40e22374c6d7bf8e056b2d354681d20c852.tar.gz
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v0.117.tar.gz
 
       - name: Install Uniform::HTTP release dependency
         run: |
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
+
+      - name: Install HTTP/2 spike dependency
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike'
+        run: |
+          sudo apt-get install --yes libnghttp2-dev
+          cpanm --notest 'Net::HTTP2::nghttp2@0.011'
 
       - name: Install Perl dependencies
         run: cpanm --notest --installdeps .
@@ -59,6 +77,95 @@ jobs:
           perl Makefile.PL
           make
           make test
+
+      - name: HTTP/2 h2spec conformance gate
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          set -euo pipefail
+          H2SPEC_VERSION=2.6.0
+          H2SPEC_DIR="$RUNNER_TEMP/h2spec"
+          H2SPEC_LOG="$RUNNER_TEMP/h2spec-output.log"
+          SERVER_LOG="$RUNNER_TEMP/h2spec-server.log"
+          CERT="$RUNNER_TEMP/h2spec-cert.pem"
+          KEY="$RUNNER_TEMP/h2spec-key.pem"
+          PORT=18443
+
+          : >"$H2SPEC_LOG"
+          : >"$SERVER_LOG"
+          echo "h2spec harness starting" >>"$H2SPEC_LOG"
+
+          mkdir -p "$H2SPEC_DIR"
+          curl --fail --location --silent --show-error             "https://github.com/summerwind/h2spec/releases/download/v$H2SPEC_VERSION/h2spec_linux_amd64.tar.gz"             --output "$RUNNER_TEMP/h2spec.tar.gz"
+          tar -xzf "$RUNNER_TEMP/h2spec.tar.gz" -C "$H2SPEC_DIR"
+          test -x "$H2SPEC_DIR/h2spec"
+          "$H2SPEC_DIR/h2spec" --version 2>&1 | tee -a "$H2SPEC_LOG" || true
+
+          unset OPENSSL_CONF || true
+          if ! /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes             -keyout "$KEY"             -out "$CERT"             -subj "/CN=localhost"             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"             -days 1 >>"$H2SPEC_LOG" 2>&1; then
+            echo "certificate generation failed" >>"$H2SPEC_LOG"
+            exit 1
+          fi
+          test -s "$CERT"
+          test -s "$KEY"
+          echo "certificate generation complete" >>"$H2SPEC_LOG"
+
+          perl -Mblib tools/http2-h2spec-server.pl             --host 127.0.0.1             --port "$PORT"             --cert "$CERT"             --key "$KEY"             >"$SERVER_LOG" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 100); do
+            if grep -q '^READY ' "$SERVER_LOG"; then
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              cat "$SERVER_LOG"
+              echo "h2spec target server exited before readiness" >>"$H2SPEC_LOG"
+              exit 1
+            fi
+            sleep 0.1
+          done
+
+          if ! grep -q '^READY ' "$SERVER_LOG"; then
+            cat "$SERVER_LOG"
+            echo "h2spec target server did not become ready" >>"$H2SPEC_LOG"
+            exit 1
+          fi
+
+          set +e
+          "$H2SPEC_DIR/h2spec" -t -k -h 127.0.0.1 -p "$PORT"             2>&1 | tee -a "$H2SPEC_LOG"
+          STATUS=${PIPESTATUS[0]}
+          set -e
+
+          echo "H2SPEC_EXIT_STATUS=$STATUS" | tee -a "$H2SPEC_LOG"
+          echo "===== h2spec target server log ====="
+          cat "$SERVER_LOG"
+
+          if [ "$STATUS" -eq 0 ]; then
+            exit 0
+          fi
+
+          FAILURES="$RUNNER_TEMP/h2spec-failures.log"
+          awk '/^Failures:/{capture=1} capture{print}' "$H2SPEC_LOG" >"$FAILURES"
+
+          if [ "$STATUS" -eq 1 ] \
+             && grep -Fq '146 tests, 144 passed, 1 skipped, 1 failed' "$H2SPEC_LOG" \
+             && grep -Fq 'Sends stream identifier that is numerically smaller than previous' "$FAILURES"; then
+            echo "h2spec matches the known nghttp2 baseline exception" \
+              | tee -a "$H2SPEC_LOG"
+            exit 0
+          fi
+
+          exit "$STATUS"
+
+      - name: Upload HTTP/2 h2spec diagnostic
+        if: always() && github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: http2-h2spec-diagnostic
+          path: |
+            ${{ runner.temp }}/h2spec-output.log
+            ${{ runner.temp }}/h2spec-server.log
+
 
       - name: Build exact pre-raw baseline
         if: matrix.perl == '5' && matrix.multi_thread == false && github.head_ref != 'experiment/client-receive-path'
@@ -154,6 +261,45 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         run: perl -Mblib bench/run-http-end-to-end.pl --requests=20000 --warmup=2000 --connections=100 --repeats=3
 
+  http1-only:
+    name: HTTP/1-only without optional H2 binding
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678 # v1
+        with:
+          perl-version: '5'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev
+
+      - name: Install required dependencies only
+        run: |
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v0.117.tar.gz
+          cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
+            cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
+          cpanm --notest --installdeps .
+
+      - name: Verify HTTP/2 dependency stayed optional
+        run: |
+          if perl -MNet::HTTP2::nghttp2 -e 1 2>/dev/null; then
+            echo "Net::HTTP2::nghttp2 was unexpectedly installed by normal prerequisites"
+            exit 1
+          fi
+
+      - name: Build and test without HTTP/2 binding
+        run: |
+          perl Makefile.PL
+          make
+          make test
+          make disttest
+
   comparison:
     name: Cross-server diagnostic comparison
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[benchmark]'))
@@ -175,7 +321,7 @@ jobs:
 
       - name: Install HTTP benchmark competitors
         run: |
-          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/007db40e22374c6d7bf8e056b2d354681d20c852.tar.gz
+          cpanm --notest https://github.com/haxmeister/perl-linux-event/archive/refs/tags/v0.117.tar.gz
           cpanm --notest 'Uniform::HTTP::Auth@0.02' || \
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
           cpanm --notest --installdeps .

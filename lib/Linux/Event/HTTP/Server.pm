@@ -32,6 +32,49 @@ sub _take_callback ($name, $option) {
     return $callback;
 }
 
+sub _http2_available () {
+    return 0 if !eval {
+        require Net::HTTP2::nghttp2;
+        Net::HTTP2::nghttp2->VERSION('0.011');
+        require Linux::Event::HTTP::_HTTP2::Server;
+        require Linux::Event::HTTP::_HTTP2::ServerConnection;
+        1;
+    };
+    return Net::HTTP2::nghttp2->available ? 1 : 0;
+}
+
+sub _http2_ready ($conn, $user_ready, $max_header_list_size) {
+    if (($conn->selected_alpn // '') ne 'h2') {
+        $user_ready->($conn) if $user_ready;
+        return;
+    }
+
+    $conn->pause_read;
+    $conn->loop->defer(sub {
+        return if $conn->is_closed;
+
+        my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
+            stream         => $conn,
+            connection     => $conn,
+            autostart      => 0,
+            on_request     => $conn->{_http_on_request},
+            on_body        => $conn->{_http_on_body},
+            on_request_end => $conn->{_http_on_request_end},
+            max_header_list_size => $max_header_list_size,
+        );
+        $conn->{_http2_executor} = $executor;
+
+        $conn->transition_to(
+            'Linux::Event::HTTP::_HTTP2::ServerConnection',
+        );
+        $executor->start;
+
+        $user_ready->($conn) if $user_ready;
+        $conn->resume_read if $conn->is_read_paused;
+    });
+    return;
+}
+
 sub new ($class, %option) {
     croak 'new(): stream_class is internal; use connection_class'
         if exists $option{stream_class};
@@ -44,10 +87,29 @@ sub new ($class, %option) {
     croak 'new(): on_request_final was removed; use on_request and Response->body or Transaction->response_body'
         if exists $option{on_request_final};
 
+    my $connection_class_option = delete $option{connection_class};
     my $connection_class = _load_connection_class(
-        delete($option{connection_class})
+        $connection_class_option
             // 'Linux::Event::HTTP::Server::Connection',
     );
+
+    my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $has_http2_max_header_list_size =
+        exists $option{http2_max_header_list_size};
+    my $http2_max_header_list_size =
+        $has_http2_max_header_list_size
+            ? delete($option{http2_max_header_list_size})
+            : 65_536;
+    croak 'new(): http2 must be zero or one'
+        if !defined($http2) || ref($http2)
+        || ("$http2" ne '0' && "$http2" ne '1');
+    $http2 = $http2 ? 1 : 0;
+    croak 'new(): http2_max_header_list_size must be a positive integer'
+        if ref($http2_max_header_list_size)
+        || "$http2_max_header_list_size" !~ /\A[0-9]+\z/
+        || $http2_max_header_list_size < 1;
+    croak 'new(): http2_max_header_list_size requires http2 => 1'
+        if !$http2 && $has_http2_max_header_list_size;
 
     my %callbacks;
     for my $name (qw(on_request on_body on_request_end)) {
@@ -73,6 +135,26 @@ sub new ($class, %option) {
     my $tls = delete $option{tls};
     croak 'new(): tls must be a hash reference'
         if $tls_enabled && ref($tls) ne 'HASH';
+    $tls = { %$tls } if $tls_enabled;
+
+    if ($http2) {
+        croak 'new(): http2 requires tls'
+            if !$tls_enabled;
+        croak 'new(): http2 currently requires the default connection_class'
+            if defined($connection_class_option);
+        croak 'new(): http2 owns TLS ALPN selection; do not supply tls => { alpn => ... }'
+            if exists $tls->{alpn};
+        croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2 0.011 or newer'
+            if !_http2_available();
+        $tls->{alpn} = [ 'h2', 'http/1.1' ];
+
+        my $user_on_ready = $stream_callback{on_ready};
+        $stream_callback{on_ready} = sub ($conn) {
+            _http2_ready(
+                $conn, $user_on_ready, 0 + $http2_max_header_list_size,
+            );
+        };
+    }
 
     croak 'new(): HTTP Server requires on_request callback or connection_class method'
         if !$callbacks{on_request} && !$connection_class->can('on_request');
@@ -102,12 +184,18 @@ sub new ($class, %option) {
         connection_class => $connection_class,
         data             => $data,
         state            => $state,
+        http2            => $http2,
+        http2_max_header_list_size => 0 + $http2_max_header_list_size,
     }, $class;
 }
 
 sub listener         ($self) { $self->{listener} }
 sub connection_class ($self) { $self->{connection_class} }
 sub data             ($self) { $self->{data} }
+sub http2            ($self) { !!$self->{http2} }
+sub http2_max_header_list_size ($self) {
+    return $self->{http2_max_header_list_size};
+}
 sub loop             ($self) { $self->{listener}->loop }
 sub fh               ($self) { $self->{listener}->fh }
 sub fd               ($self) { $self->{listener}->fd }
@@ -294,6 +382,29 @@ policy, or callback methods belong on a class:
 C<connection_class> defaults to
 L<Linux::Event::HTTP::Server::Connection>.
 
+=head1 MANAGED PRE-FORK SERVERS
+
+Linux::Event 0.117 provides a Loop-aware C<fork> operation. A plain HTTP server
+can participate without a separate worker API because C<listener> exposes the
+underlying L<Linux::Event::IO::Sock::Listener>:
+
+    my $pid = $loop->fork(
+        share => [ $server->listener ],
+    );
+
+The Listener remains active in both processes. Each process has its own rebuilt
+Loop reactor and may accept connections from the intentionally shared listening
+socket.
+
+Call C<< $loop->fork(...) >> only while the Loop is quiescent, as required by
+Linux::Event. Worker creation, supervision, restart policy, privilege changes,
+and process shutdown remain application concerns rather than HTTP protocol
+features.
+
+This shared-Listener pattern is covered for plain HTTP. Do not assume the same
+deployment recipe for a TLS Listener until the TLS case has been validated
+separately.
+
 =head1 TUNING AND CONNECTION CALLBACKS
 
 Supply deployment-specific Stream tuning directly to the Server. These values
@@ -329,14 +440,52 @@ the Server C<tls> option:
         tls => {
             cert_file => '/etc/myapp/server-cert.pem',
             key_file  => '/etc/myapp/server-key.pem',
-            alpn      => ['http/1.1'],
         },
         on_request => sub ($conn, $req, $res) {
             $res->body("secure\n");
         },
     );
 
-A Connection subclass may define C<tls_defaults()> for reusable ALPN and
+Without C<http2>, HTTPS retains the existing HTTP/1 behavior.
+
+Enable HTTP/2 negotiation explicitly with:
+
+    my $server = Linux::Event::HTTP::Server->new(
+        loop  => $loop,
+        port  => 8443,
+        http2 => 1,
+        tls => {
+            cert_file => '/etc/myapp/server-cert.pem',
+            key_file  => '/etc/myapp/server-key.pem',
+        },
+        on_request => sub ($conn, $req, $res) {
+            $res->body("same callback API\n");
+        },
+    );
+
+The Server then advertises C<h2> before C<http/1.1>. When C<h2> is selected,
+the live TLS connection is changed to the private HTTP/2 executor before any
+HTTP/2 preface or SETTINGS bytes are emitted. If C<http/1.1> is selected, the
+existing HTTP/1 connection remains unchanged.
+
+C<http2 =E<gt> 1> currently requires the default connection class and owns the
+TLS ALPN list. A custom C<connection_class> remains HTTP/1-only for now rather
+than having its application-defined class identity silently replaced during an
+HTTP/2 transition.
+
+HTTP/2 requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer binding
+and the underlying nghttp2 library. Distribution metadata records this as the
+optional C<http2> feature rather than requiring it for HTTP/1-only installs.
+Constructing a Server with C<http2 =E<gt> 1> fails explicitly when that
+capability is unavailable.
+
+Decoded HTTP/2 request and trailer header lists default to a 65,536-byte limit,
+using the HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per
+field. Override it with C<http2_max_header_list_size>. The same value is
+advertised to the peer through SETTINGS_MAX_HEADER_LIST_SIZE and enforced again
+after HPACK decoding.
+
+A Connection subclass may define C<tls_defaults()> for reusable HTTP/1 ALPN and
 timeout defaults. The Server C<tls> option is still required to activate TLS,
 so the same Connection class may be used for plain HTTP and HTTPS listeners.
 
@@ -349,6 +498,15 @@ Returns the underlying L<Linux::Event::IO::Sock::Listener> for advanced use.
 =head2 connection_class
 
 Returns the configured HTTP Connection class name.
+
+=head2 http2
+
+Returns true when this Server was constructed with C<http2 =E<gt> 1>.
+
+=head2 http2_max_header_list_size
+
+Returns the decoded HTTP/2 request/trailer header-list limit. The default is
+65,536 bytes.
 
 =head2 data
 

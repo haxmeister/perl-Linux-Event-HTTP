@@ -62,10 +62,29 @@ sub _assert_writable ($self, $operation) {
 sub write ($self, $bytes) {
     my $operation = $self->{kind} . '_body->write';
     my $transaction = $self->_assert_writable($operation);
-    my $accepted = $transaction->_write_body(
-        $self->{kind}, $bytes, 0, $operation,
-    );
-    $self->{flow_blocked} = 1 if !$accepted;
+
+    # A protocol controller may discover and then relieve flow pressure while
+    # _write_body() is still on the stack. Mark the provisional blocked state
+    # first so a reentrant _drain() cannot be lost. A successful write clears
+    # it; a false return leaves it set only if no drain already cleared it.
+    $self->{flow_blocked} = 1;
+    my ($accepted, $ok, $error);
+    {
+        local $@;
+        $ok = eval {
+            $accepted = $transaction->_write_body(
+                $self->{kind}, $bytes, 0, $operation,
+            );
+            1;
+        };
+        $error = $@;
+    }
+    if (!$ok) {
+        $self->{flow_blocked} = 0;
+        die $error;
+    }
+
+    $self->{flow_blocked} = 0 if $accepted;
     return $accepted;
 }
 

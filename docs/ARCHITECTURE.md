@@ -11,7 +11,10 @@ The design separates five responsibilities:
   backpressure, deadlines, ordered output queues, and event dispatch.
 - **Protocol execution** - Client::Connection and Server::Connection own HTTP/1
   parsing, serialization, framing, ordering, persistence, protocol handoff, and
-  movement of bytes across Linux::Event transports.
+  movement of bytes across Linux::Event transports. Private HTTP/2 Client and
+  Server executors own multiplexed stream/Transaction state while
+  Net::HTTP2::nghttp2 owns HTTP/2 framing, HPACK, SETTINGS, GOAWAY, and flow
+  control.
 - **Messages** - Request and Response represent HTTP messages independent of
   whether they were created or received by a client or server.
 - **Exchange lifecycle** - Transaction represents exactly one Request/Response
@@ -140,8 +143,9 @@ Transaction
 
 A Transaction does not own a socket, parser, connection pool, URL, proxy route,
 redirect chain, authentication manager, cookie jar, or transport output queue.
-Its Client::Connection or Server::Connection controller performs protocol
-execution.
+Its protocol executor performs connection-specific work. For HTTP/1 that is the
+public Client::Connection or Server::Connection path; for HTTP/2 it is a private
+per-connection executor that maps one Transaction to each HTTP/2 stream.
 
 A redirect is another HTTP exchange and therefore another Transaction. An
 automatic 401/407 authentication retry is also another HTTP exchange and
@@ -212,7 +216,10 @@ The objects have different lifetimes:
 - `$res` is that exchange's Response.
 
 A complete HTTP response does not imply transport shutdown. On persistent
-HTTP/1.1 the same socket normally remains available for later Transactions.
+HTTP/1.1 the same socket normally remains available for later Transactions. On
+HTTP/2 the same connection can carry multiple live Transactions concurrently;
+`$conn->transaction` refers to the Transaction for the HTTP callback currently
+executing, so delayed work must retain the Transaction explicitly.
 
 ## Client model
 
@@ -247,6 +254,13 @@ Client::Connection
     persistence/reuse eligibility
     validated 101 / CONNECT handoff
 
+private HTTP/2 executor
+    one selected H2 connection
+    many concurrent stream Transactions
+    Net::HTTP2::nghttp2 session integration
+    per-stream cancellation and body state
+    GOAWAY drain state
+
 Transaction
     exactly one Request/Response exchange
 ```
@@ -275,6 +289,12 @@ it with `proxy => undef`.
 
 The current connection-reuse policy is deliberately bounded:
 
+- direct HTTPS uses HTTP/1.1 by default; `http2 => 1` enables ALPN selection
+  between H2 and HTTP/1.1;
+- selected H2 connections are pooled separately per origin and admit concurrent
+  streams up to the local cap while nghttp2 enforces peer SETTINGS;
+- GOAWAY makes an H2 connection draining: it accepts no new work and retires
+  after its active streams finish;
 - no HTTP/1 pipelining;
 - one active Transaction per Client::Connection;
 - sequential keep-alive reuse;

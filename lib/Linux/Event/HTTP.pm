@@ -54,11 +54,18 @@ Linux::Event continues to own sockets, TLS, readiness, buffering, backpressure,
 connection acquisition primitives, ordered byte output, and the live stream
 transition primitive used for protocol handoff.
 
-The initial protocol executor targets HTTP/1.x. Server request-head parsing uses
-vendored picohttpparser with lazy native Request state. The client response-head
-parser is deliberately strict Perl code so correctness and actual workload cost
-can be measured before adding more HTTP-specific XS. The existing native
-chunked decoder is shared by client and server.
+HTTP/1.x and HTTP/2 share the same public Request, Response, Transaction,
+Client, and Server model. HTTP/1 server request heads and client response heads
+are parsed through the private native HTTP/1 input path built around vendored
+picohttpparser; HTTP/1 body framing remains owned by Linux::Event::HTTP.
+
+HTTP/2 is optional and uses L<Net::HTTP2::nghttp2> 0.011 or newer as the
+libnghttp2 binding. Linux::Event continues to own the transport while nghttp2
+owns HTTP/2 framing, HPACK, stream state, SETTINGS, GOAWAY, and flow control.
+The Linux::Event::HTTP executors translate that protocol state into the same
+public message and Transaction objects used by HTTP/1. Direct HTTPS can enable
+HTTP/2 explicitly with C<http2 =E<gt> 1>; ALPN selects C<h2> or falls back to
+HTTP/1.1 on the same high-level API.
 
 Incoming bodies are incremental-first and are not implicitly accumulated into
 unbounded whole-body scalars. Complete scalar message bodies remain available as
@@ -133,6 +140,10 @@ The high-level Client delegates cookie policy to L<HTTP::CookieJar> and HTTP
 authentication mechanics to L<Uniform::HTTP::Auth>. Linux::Event::HTTP keeps
 routing, replay, Transaction, connection, and callback lifecycle around those
 independent policy engines.
+
+HTTP/2 support delegates its wire protocol engine to L<Net::HTTP2::nghttp2>
+0.011 or newer. That dependency is optional so HTTP/1-only installations do not
+need libnghttp2.
 
 =head1 SECURITY
 

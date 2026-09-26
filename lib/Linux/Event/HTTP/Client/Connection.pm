@@ -85,7 +85,9 @@ sub transaction ($self) {
 }
 
 sub _http_client_transport_drain ($self) {
-    if (my $transaction = $self->{_http_client_active_transaction}) {
+    if (my $executor = $self->{_http2_executor}) {
+        $executor->transport_drain;
+    } elsif (my $transaction = $self->{_http_client_active_transaction}) {
         if (my $body = $transaction->_request_body_object) {
             $body->_drain;
         }
@@ -203,7 +205,8 @@ sub _prepare_request ($request, $streaming = 0) {
             $chunked = 1;
         }
 
-        $request->_begin_stream_body;
+        $request->_begin_stream_body
+            if !$request->_has_incremental_body;
         my $head = _serialize_request_head($request);
         return (
             $head,
@@ -246,6 +249,7 @@ sub _prepare_request ($request, $streaming = 0) {
 
 sub request ($self, $request, %option) {
     croak 'request(): connection is closed' if $self->is_closed;
+    my $provided_transaction = delete $option{_transaction};
     croak 'request(): connection is not reusable' if !$self->{_http_client_reusable};
     croak 'request(): another Transaction is already active on this connection'
         if $self->{_http_client_active_transaction};
@@ -330,14 +334,30 @@ sub request ($self, $request, %option) {
 
     $request->_mark_committed;
 
-    my $transaction = Linux::Event::HTTP::Transaction->_new(
-        request    => $request,
-        controller => $self,
-    );
-    $transaction->_activate;
-    my $request_body = defined($stream_body)
-        ? $transaction->request_body(%$stream_body)
-        : undef;
+    my $transaction;
+    if ($provided_transaction) {
+        croak 'request(): _transaction must be a Linux::Event::HTTP::Transaction'
+            if !blessed($provided_transaction)
+            || !$provided_transaction->isa('Linux::Event::HTTP::Transaction');
+        croak 'request(): _transaction Request does not match'
+            if refaddr($provided_transaction->request) != refaddr($request);
+        croak 'request(): _transaction is already terminal'
+            if $provided_transaction->is_terminal;
+        $transaction = $provided_transaction;
+        $transaction->_set_controller($self);
+        $transaction->_activate;
+    } else {
+        $transaction = Linux::Event::HTTP::Transaction->_new(
+            request    => $request,
+            controller => $self,
+        );
+        $transaction->_activate;
+    }
+    my $request_body;
+    if (defined $stream_body) {
+        $request_body = $transaction->_request_body_object;
+        $request_body //= $transaction->request_body(%$stream_body);
+    }
 
     $self->{_http_client_active_transaction} = $transaction;
     $self->{_http_client_callbacks} = \%callback;

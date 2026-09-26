@@ -268,7 +268,9 @@ sub _http_native_content_length_complete ($self) {
 }
 
 sub _http_transport_drain ($self) {
-    if (my $transaction = $self->{_http_active_transaction}) {
+    if (my $executor = $self->{_http2_executor}) {
+        $executor->transport_drain;
+    } elsif (my $transaction = $self->{_http_active_transaction}) {
         if (my $body = $transaction->_response_body_object) {
             $body->_drain;
         }
@@ -280,10 +282,14 @@ sub _http_transport_drain ($self) {
 }
 
 sub _http_transport_close ($self) {
-    if (my $transaction = $self->{_http_active_transaction}) {
-        $transaction->_mark_cancelled if !$transaction->is_terminal;
+    if (my $executor = delete $self->{_http2_executor}) {
+        $executor->close;
+    } else {
+        if (my $transaction = $self->{_http_active_transaction}) {
+            $transaction->_mark_cancelled if !$transaction->is_terminal;
+        }
+        Linux::Event::HTTP::Server::Connection::_clear_transaction($self);
     }
-    $self->_clear_transaction;
 
     my $callback = delete $self->{_http_user_on_close};
     delete $self->{_http_user_on_drain};

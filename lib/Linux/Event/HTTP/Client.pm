@@ -125,16 +125,60 @@ sub _parse_proxy_url ($url, $where = 'request()') {
     return $destination;
 }
 
+sub _http2_available () {
+    return 0 if !eval {
+        require Net::HTTP2::nghttp2;
+        Net::HTTP2::nghttp2->VERSION('0.011');
+        require Linux::Event::HTTP::_HTTP2::ClientSelector;
+        1;
+    };
+    return Net::HTTP2::nghttp2->available ? 1 : 0;
+}
+
 sub new ($class, %option) {
     my $loop = delete $option{loop}
         // croak 'new(): loop is required';
     croak 'new(): loop must be an object implementing add() and watch_fd()'
         if !blessed($loop) || !$loop->can('add') || !$loop->can('watch_fd');
 
+    my $connection_class_option = delete $option{connection_class};
     my $connection_class = _load_connection_class(
-        delete($option{connection_class})
+        $connection_class_option
             // 'Linux::Event::HTTP::Client::Connection',
     );
+    my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $has_http2_max_header_list_size =
+        exists $option{http2_max_header_list_size};
+    my $http2_max_header_list_size =
+        $has_http2_max_header_list_size
+            ? delete($option{http2_max_header_list_size})
+            : 65_536;
+    my $has_http2_max_buffered_response_bytes =
+        exists $option{http2_max_buffered_response_bytes};
+    my $http2_max_buffered_response_bytes =
+        $has_http2_max_buffered_response_bytes
+            ? delete($option{http2_max_buffered_response_bytes})
+            : 67_108_864;
+    croak 'new(): http2 must be zero or one'
+        if !defined($http2) || ref($http2)
+        || ("$http2" ne '0' && "$http2" ne '1');
+    $http2 = $http2 ? 1 : 0;
+    croak 'new(): http2_max_header_list_size must be a positive integer'
+        if ref($http2_max_header_list_size)
+        || "$http2_max_header_list_size" !~ /\A[0-9]+\z/
+        || $http2_max_header_list_size < 1;
+    croak 'new(): http2_max_header_list_size requires http2 => 1'
+        if !$http2 && $has_http2_max_header_list_size;
+    croak 'new(): http2_max_buffered_response_bytes must be a positive integer'
+        if ref($http2_max_buffered_response_bytes)
+        || "$http2_max_buffered_response_bytes" !~ /\A[0-9]+\z/
+        || $http2_max_buffered_response_bytes < 1;
+    croak 'new(): http2_max_buffered_response_bytes requires http2 => 1'
+        if !$http2 && $has_http2_max_buffered_response_bytes;
+    croak 'new(): http2 currently requires the default connection_class'
+        if $http2 && defined($connection_class_option);
+    croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2 0.011 or newer'
+        if $http2 && !_http2_available();
     my $connect_timeout = delete $option{connect_timeout};
     my $max_redirects = _validate_max_redirects(
         exists($option{max_redirects}) ? delete($option{max_redirects}) : 5,
@@ -184,7 +228,13 @@ sub new ($class, %option) {
         cookie_jar       => $cookie_jar,
         auth             => $auth,
         proxy_auth       => $proxy_auth,
+        http2            => $http2,
+        http2_max_header_list_size => 0 + $http2_max_header_list_size,
+        http2_max_buffered_response_bytes =>
+            0 + $http2_max_buffered_response_bytes,
         idle             => {},
+        h2_pool          => {},
+        h2_negotiating   => {},
         connections      => {},
         closed           => 0,
     }, $class;
@@ -198,6 +248,13 @@ sub proxy            ($self) { $self->{proxy_url} }
 sub cookie_jar       ($self) { $self->{cookie_jar} }
 sub auth             ($self) { $self->{auth} }
 sub proxy_auth       ($self) { $self->{proxy_auth} }
+sub http2            ($self) { !!$self->{http2} }
+sub http2_max_header_list_size ($self) {
+    return $self->{http2_max_header_list_size};
+}
+sub http2_max_buffered_response_bytes ($self) {
+    return $self->{http2_max_buffered_response_bytes};
+}
 sub is_closed        ($self) { !!$self->{closed} }
 
 sub _copy_headers ($headers) {
@@ -238,15 +295,132 @@ sub _track_connection ($self, $connection) {
     return $connection;
 }
 
-sub _take_idle_connection ($self, $origin) {
+sub _register_negotiating_connection ($self, $origin, $connection) {
+    return if $self->{closed} || !$connection || $connection->is_closed;
+    return if !$connection->can('_http2_capable')
+        || !$connection->_http2_capable;
+
+    my $protocol = $connection->protocol // '';
+    return if $protocol ne 'negotiating' && $protocol ne 'selecting-h2';
+
+    my $pool = $self->{h2_negotiating}{$origin} //= [];
+    my $id = refaddr($connection);
+    return $connection if grep { refaddr($_) == $id } @$pool;
+    push @$pool, $connection;
+    return $connection;
+}
+
+sub _remove_negotiating_connection ($self, $origin, $connection) {
+    my $pool = $self->{h2_negotiating}{$origin} or return;
+    my $id = refaddr($connection);
+    my @keep = grep {
+        $_ && refaddr($_) != $id && !$_->is_closed
+    } @$pool;
+
+    if (@keep) {
+        $self->{h2_negotiating}{$origin} = \@keep;
+    } else {
+        delete $self->{h2_negotiating}{$origin};
+    }
+    return;
+}
+
+sub _take_negotiating_connection ($self, $origin) {
+    my $pool = $self->{h2_negotiating}{$origin} or return undef;
+    my @keep;
+    my $selected;
+
+    for my $connection (@$pool) {
+        next if !$connection || $connection->is_closed;
+        my $protocol = $connection->protocol // '';
+        next if $protocol ne 'negotiating' && $protocol ne 'selecting-h2';
+
+        push @keep, $connection;
+        $selected //= $connection
+            if $connection->can_queue_transaction;
+    }
+
+    if (@keep) {
+        $self->{h2_negotiating}{$origin} = \@keep;
+    } else {
+        delete $self->{h2_negotiating}{$origin};
+    }
+
+    return $selected;
+}
+
+sub _register_h2_connection ($self, $origin, $connection) {
+    return if $self->{closed} || !$connection || $connection->is_closed;
+    return if !$connection->can('_http2_capable')
+        || !$connection->_http2_capable;
+    return if ($connection->protocol // '') ne 'h2';
+
+    my $pool = $self->{h2_pool}{$origin} //= [];
+    my $id = refaddr($connection);
+    return $connection if grep { refaddr($_) == $id } @$pool;
+    push @$pool, $connection;
+    return $connection;
+}
+
+sub _take_h2_connection ($self, $origin) {
+    my $pool = $self->{h2_pool}{$origin} or return undef;
+    my @keep;
+    my $selected;
+
+    for my $connection (@$pool) {
+        next if !$connection || $connection->is_closed;
+
+        if (($connection->protocol // '') ne 'h2') {
+            next;
+        }
+
+        if (!$connection->can_accept_transaction) {
+            if ($connection->active_streams == 0) {
+                $connection->close;
+                next;
+            }
+            push @keep, $connection;
+            next;
+        }
+
+        push @keep, $connection;
+        $selected //= $connection;
+    }
+
+    if (@keep) {
+        $self->{h2_pool}{$origin} = \@keep;
+    } else {
+        delete $self->{h2_pool}{$origin};
+    }
+
+    return $selected;
+}
+
+sub _take_idle_connection ($self, $origin, $allow_http2 = 0) {
     my $connection = delete $self->{idle}{$origin};
     return undef if !$connection;
     return undef if $connection->is_closed;
     return undef if defined $connection->transaction;
+
+    my $is_selector = $connection->can('_http2_capable')
+        && $connection->_http2_capable ? 1 : 0;
+
+    if ($is_selector && ($connection->protocol // '') eq 'h2') {
+        $self->_register_h2_connection($origin, $connection);
+        return $allow_http2
+            ? $self->_take_h2_connection($origin)
+            : undef;
+    }
+
+    if ($allow_http2 && !$is_selector) {
+        $connection->close;
+        return undef;
+    }
+
     return $connection;
 }
 
-sub _new_connection ($self, $destination) {
+sub _new_connection ($self, $destination, $allow_http2 = 0) {
     my %connect = (
         loop => $self->{loop},
         host => $destination->{host},
@@ -259,28 +433,83 @@ sub _new_connection ($self, $destination) {
         require Linux::Event::TLS;
         $connect{transport} = Linux::Event::TLS->client(
             server_name => $destination->{host},
-            alpn        => ['http/1.1'],
+            alpn        => $allow_http2
+                ? [ 'h2', 'http/1.1' ]
+                : [ 'http/1.1' ],
             %{$self->{tls}},
         );
     }
 
-    my $connection = $self->{connection_class}->connect(%connect);
+    my $connection;
+    if ($allow_http2 && $destination->{scheme} eq 'https') {
+        require Linux::Event::HTTP::_HTTP2::ClientSelector;
+        my $weak_self = $self;
+        weaken($weak_self);
+        my $origin = $destination->{origin};
+        $connection = Linux::Event::HTTP::_HTTP2::ClientSelector->new(
+            %connect,
+            scheme    => $destination->{scheme},
+            authority => $destination->{host_header},
+            max_header_list_size => $self->{http2_max_header_list_size},
+            max_buffered_response_bytes =>
+                $self->{http2_max_buffered_response_bytes},
+            http1_connection_factory => sub ($selected) {
+                my $client = $weak_self
+                    or die 'HTTP Client disappeared during ALPN selection';
+                return $client->_new_connection($destination, 0);
+            },
+            on_selected => sub ($selected, $protocol) {
+                my $client = $weak_self or return;
+                $client->_remove_negotiating_connection(
+                    $origin, $selected,
+                );
+                $client->_register_h2_connection($origin, $selected)
+                    if $protocol eq 'h2';
+            },
+        );
+        $self->_register_negotiating_connection($origin, $connection);
+    } else {
+        $connection = $self->{connection_class}->connect(%connect);
+    }
     return $self->_track_connection($connection);
 }
 
-sub _connection_for ($self, $destination) {
-    return $self->_take_idle_connection($destination->{origin})
-        // $self->_new_connection($destination);
+sub _connection_for ($self, $destination, $allow_http2 = 0) {
+    if ($allow_http2) {
+        my $h2 = $self->_take_h2_connection($destination->{origin});
+        return $h2 if $h2;
+
+        my $negotiating =
+            $self->_take_negotiating_connection($destination->{origin});
+        return $negotiating if $negotiating;
+    }
+
+    return $self->_take_idle_connection(
+        $destination->{origin}, $allow_http2,
+    ) // $self->_new_connection($destination, $allow_http2);
 }
 
 sub _release_connection ($self, $origin, $connection) {
     return if $self->{closed};
     return if !$connection || $connection->is_closed;
+
+    if ($connection->can('_http2_capable')
+        && $connection->_http2_capable
+        && ($connection->protocol // '') eq 'h2') {
+        $self->_register_h2_connection($origin, $connection);
+        $self->_take_h2_connection($origin);
+        return;
+    }
+
     return if defined $connection->transaction;
 
     if (my $idle = $self->{idle}{$origin}) {
         if (!$idle->is_closed && refaddr($idle) != refaddr($connection)) {
-            $connection->close;
+            if ($connection->can('end')) {
+                $connection->end;
+            } else {
+                $connection->close;
+            }
             return;
         }
     }
@@ -397,6 +626,7 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
         method              => $method,
         headers             => $headers,
         version             => $spec->{version},
+        version_explicit    => $spec->{version_explicit},
         has_body            => 0,
         body                => undef,
         has_stream_body     => 0,
@@ -522,7 +752,13 @@ sub _start_operation_hop ($self, $operation, $spec) {
     $request{body} = $spec->{body} if $spec->{has_body};
     my $message = Linux::Event::HTTP::Request->new(%request);
 
-    my $connection = $self->_connection_for($route);
+    my $allow_http2 = $self->{http2}
+        && !$proxy
+        && $destination->{scheme} eq 'https'
+        && !$spec->{version_explicit}
+        && !defined($spec->{upgrade_to});
+
+    my $connection = $self->_connection_for($route, $allow_http2);
     my $callback = $spec->{callback};
     my ($auth_retry, $redirect);
     my $upgraded = 0;
@@ -572,6 +808,15 @@ sub _start_operation_hop ($self, $operation, $spec) {
         if $spec->{has_stream_body};
     $connection_callback{buffer_body} = $spec->{buffer_body}
         if $spec->{has_buffer_body};
+
+    if ($allow_http2
+        && $connection->can('_http2_capable')
+        && $connection->_http2_capable) {
+        $connection_callback{_http1_reassign} = sub ($replacement) {
+            $connection = $replacement;
+            return;
+        };
+    }
 
     if (defined $spec->{upgrade_to}) {
         $connection_callback{upgrade_to} = $spec->{upgrade_to};
@@ -724,6 +969,7 @@ sub request ($self, $method, $url, %option) {
             if $proxy_auth && $name eq 'proxy-authorization';
     }
 
+    my $version_explicit = exists $option{version};
     my $version = delete($option{version}) // '1.1';
     my $has_body = exists $option{body};
     my $body = delete $option{body};
@@ -788,6 +1034,7 @@ sub request ($self, $method, $url, %option) {
         method              => $method,
         headers             => $headers,
         version             => $version,
+        version_explicit    => $version_explicit ? 1 : 0,
         has_body            => $has_body ? 1 : 0,
         body                => $body,
         has_stream_body     => $has_stream_body ? 1 : 0,
@@ -826,7 +1073,7 @@ sub _start_connect_tunnel_attempt ($self, $operation, $spec) {
         version => '1.1',
         headers => $headers,
     );
-    my $connection = $self->_connection_for($destination);
+    my $connection = $self->_connection_for($destination, 0);
     my $callback = $spec->{callback};
     my ($auth_retry, $tunneled);
 
@@ -1075,7 +1322,14 @@ sub close ($self) {
     $self->{closed} = 1;
 
     my %closed;
-    for my $connection (values %{$self->{idle}}, values %{$self->{connections}}) {
+    my @h2 = map { @$_ } values %{$self->{h2_pool}};
+    my @negotiating = map { @$_ } values %{$self->{h2_negotiating}};
+    for my $connection (
+        values %{$self->{idle}},
+        @h2,
+        @negotiating,
+        values %{$self->{connections}},
+    ) {
         next if !$connection;
         my $id = refaddr($connection);
         next if $closed{$id}++;
@@ -1083,6 +1337,8 @@ sub close ($self) {
     }
 
     $self->{idle} = {};
+    $self->{h2_pool} = {};
+    $self->{h2_negotiating} = {};
     $self->{connections} = {};
     return $self;
 }
@@ -1320,6 +1576,20 @@ Returns the Linux::Event Loop.
 
 Returns the configured Client::Connection class.
 
+=head2 http2
+
+Returns true when the Client was constructed with C<http2 =E<gt> 1>.
+
+=head2 http2_max_header_list_size
+
+Returns the decoded HTTP/2 response header-list limit. The default is 65,536
+bytes.
+
+=head2 http2_max_buffered_response_bytes
+
+Returns the aggregate per-H2-connection budget for simultaneously buffered
+response bodies. The default is 67,108,864 bytes (64 MiB).
+
 =head2 max_redirects
 
 Returns the Client default redirect limit.
@@ -1352,23 +1622,123 @@ requests. Returns the Client.
 
 =head1 CONNECTION REUSE
 
-At most one idle connection is retained per route origin. For direct requests,
-the route origin is the target origin. For a request using a proxy route, the
-route origin is the proxy endpoint, so sequential requests for different target
-origins can reuse the same persistent proxy connection. Cookie and target-auth
-selection do not use route origin; proxy authentication does.
+For HTTP/1, at most one idle connection is retained per route origin. For direct
+requests, the route origin is the target origin. For a request using a proxy
+route, the route origin is the proxy endpoint, so sequential requests for
+different target origins can reuse the same persistent proxy connection. Cookie
+and target-auth selection do not use route origin; proxy authentication does.
+
+When several HTTP/1 connections for one route become idle, one is retained and
+surplus reusable transports are ended gracefully.
+
+HTTP/2 uses a separate per-origin pool. A selected H2 connection remains
+available while streams are active and can accept concurrent Transactions up to
+the local admission limit. A GOAWAY connection is marked draining, accepts no
+new work, and retires after its active streams finish.
 
 A connection that successfully leaves HTTP through Upgrade or CONNECT is never
 returned to the HTTP idle pool. A non-2xx CONNECT response remains HTTP and may
 leave a reusable proxy connection when its normal response framing permits it.
 
-=head1 HTTPS
+=head1 HTTPS AND HTTP/2
 
-HTTPS uses the same Client::Connection class with a Linux::Event TLS transport.
-For a direct HTTPS request, TLS is established to the target URL host. For an
-C<https> forward-proxy endpoint, TLS is established to the proxy and the target
-URI is then sent in absolute-form. Cookie and target-auth origin identity remain
-the target URL; proxy-auth origin identity remains the proxy endpoint.
+HTTPS uses Linux::Event TLS transport.
+
+Without C<http2>, the Client advertises only C<http/1.1> and retains the
+existing HTTP/1 behavior.
+
+Enable HTTP/2 negotiation for direct HTTPS requests with:
+
+    my $client = Linux::Event::HTTP::Client->new(
+        loop  => $loop,
+        http2 => 1,
+        tls   => {
+            verify => 1,
+        },
+    );
+
+The Client advertises C<h2> before C<http/1.1>. If the peer selects C<h2>, the
+same live TLS Stream is transitioned from the HTTP/1 native-consumer connection
+to the private HTTP/2 executor before any HTTP/2 preface or SETTINGS bytes are
+sent. If the peer selects C<http/1.1>, the existing HTTP/1 connection remains
+in use.
+
+The operation and Transaction are created immediately, before TLS negotiation
+finishes. If H2 is selected, that same mutable Request object is committed as
+HTTP/2: its version becomes C<2>, its scheme and authority metadata are filled,
+and the HTTP/1 Host field is consumed into authority rather than exposed as an
+ordinary HTTP/2 field. Object identity is preserved.
+
+An already-selected H2 connection commits later Requests as HTTP/2 immediately.
+
+High-level HTTP/2 support applies to direct HTTPS requests with scalar,
+bodyless, or streaming Request bodies.
+
+Operations started for the same origin before the first TLS/ALPN decision share
+a bounded negotiating selector. Up to 100 provisional Transactions can wait on
+one selector. If ALPN selects H2, those Transactions are submitted onto the one
+multiplexed connection. If ALPN selects HTTP/1.1, the first Transaction stays on
+the negotiated connection and the remainder are fanned out onto separate
+HTTP/1.1 connections so fallback concurrency is preserved.
+
+A streaming producer is available immediately, even before TLS/ALPN completes.
+Bytes written before protocol selection are held in a per-Transaction selector
+queue with a 64 KiB cooperative high-water mark. After ALPN selects H2 or
+HTTP/1.1, the same Transaction and Body::Stream producer are adopted by the
+selected protocol and the queued bytes are transferred in order. Content-Length
+is enforced before selection when present. Unknown-length HTTP/1.1 fallback
+gains normal chunked framing; H2 does not synthesize Transfer-Encoding.
+
+Explicit forward-proxy routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and
+explicit HTTP version selection continue to use the existing HTTP/1 path even
+when C<http2> is true.
+
+HTTP/2 requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer binding
+and the underlying nghttp2 library. Distribution metadata records this as the
+optional C<http2> feature rather than requiring it for HTTP/1-only installs.
+Constructing a Client with C<http2 =E<gt> 1> fails explicitly when that
+capability is unavailable.
+
+Redirect, cookie, and target-authentication policy remains owned by the
+high-level Client. Redirect and authentication retries create normal additional
+Transactions and may reuse the selected H2 connection; the HTTP/2 executor does
+not duplicate those policies.
+
+Selected H2 connections remain available to the Client pool while streams are
+active, so later Operations to the same origin can use concurrent HTTP/2
+streams on one TLS connection. The current local admission cap is 100 active
+streams per connection; nghttp2 continues to enforce the peer's actual
+SETTINGS_MAX_CONCURRENT_STREAMS behavior.
+
+A connection that has received GOAWAY is marked draining and receives no new
+Operations. Existing streams are allowed to finish. Transparent retry of
+streams affected by GOAWAY is not yet part of the high-level policy.
+
+Decoded HTTP/2 response header lists default to a 65,536-byte limit, using the
+HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per field.
+Override it with C<http2_max_header_list_size>. The value is advertised through
+SETTINGS_MAX_HEADER_LIST_SIZE and independently enforced after HPACK decoding.
+An oversized header block fails only its stream.
+
+Concurrent H2 C<buffer_body> responses also share a connection-wide aggregate
+memory budget. The default is 67,108,864 bytes (64 MiB), configurable with
+C<http2_max_buffered_response_bytes>. This limit is independent from each
+operation's own C<buffer_body> ceiling. Crossing the aggregate limit fails only
+the stream whose next body chunk would exceed the connection budget; unrelated
+streams continue. Completed or failed streams immediately release their
+connection-level buffer accounting.
+
+Operations submitted before any connection to the origin has completed ALPN
+selection may still create more than one initial TLS connection. Once an H2
+connection is selected, it enters the multiplex-capable pool.
+
+C<http2 =E<gt> 1> currently requires the default C<connection_class> and an
+installed C<Net::HTTP2::nghttp2> implementation.
+
+For an C<https> forward-proxy endpoint, TLS is established to the proxy and the
+target URI is sent in HTTP/1 absolute-form. Cookie and target-auth origin
+identity remain the target URL; proxy-auth origin identity remains the proxy
+endpoint.
 
 =head1 SEE ALSO
 

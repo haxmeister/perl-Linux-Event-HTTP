@@ -11,6 +11,216 @@ Canonical branch: `main`
 Project boundary: modify only Linux::Event::HTTP unless the user explicitly
 authorizes another repository in the current chat.
 
+### Active HTTP/2 stabilization state
+
+Active branch:
+
+`experiment/http2-nghttp2-spike`
+
+Draft PR: #39.
+
+### HTTP/2 backend decision (2026-09-26)
+
+Use the released `Net::HTTP2::nghttp2 0.011` binding as the production HTTP/2
+backend. Do not merge the private native binding experiment into the release
+path.
+
+The private binding experiment proved that a wrapper-level strict stream-ID
+check can make h2spec report zero failures, but deeper validation showed that
+such a check can misclassify a legitimate late-HEADERS race after a locally
+serialized RST_STREAM. libnghttp2 deliberately keeps conservative behavior for
+that ambiguity. The remaining h2spec stream-ID failure is therefore accepted as
+the underlying libnghttp2 policy rather than overridden in Linux::Event::HTTP.
+
+No upstream pull request to Net::HTTP2::nghttp2 is planned for this behavior.
+Continue development and release work against the current CPAN 0.011 binding.
+
+HTTP/2 remains optional for HTTP/1-only installations. `Makefile.PL` now
+records an optional `http2` feature requiring `Net::HTTP2::nghttp2 >= 0.011`,
+and the README documents explicit installation of that binding.
+
+Current stabilization code head before this handoff update:
+
+`a37583a5f4176ef46b9913dc8aa1c1ee1660557c`
+"Defer HTTP/2 teardown across nghttp2 callbacks"
+
+The high-level HTTP/2 Server/Client work, multiplexing, streaming uploads,
+decoded header-list limits, aggregate buffered-response limits, and ALPN
+selector transition are already implemented on this branch. The current work
+was a correctness/conformance hardening pass.
+
+The hardening pass found and fixed seven HTTP-side defects:
+
+1. `Linux::Event::HTTP::_HTTP2::Server` handled GOAWAY but omitted the
+   `H2_GOAWAY => 7` constant. That compile error made every HTTP/2-enabled
+   high-level test report a misleading "Net::HTTP2::nghttp2 unavailable"
+   failure. Commit `2bfcacb9720c89fc89691ae0893dedc0d908a3be` fixes it.
+
+2. The Server::Connection transport-close callback is cached before
+   `transition_to()`. After the object becomes
+   `_HTTP2::ServerConnection`, calling `$self->_clear_transaction` from that
+   retained callback incorrectly assumes the object still inherits the HTTP/1
+   class. Commit `34880db818cb1ac1f7e7a940b34433e43089d95e` makes the callback
+   invoke its owning HTTP/1 cleanup subroutine directly. Commit
+   `1bc53334d2885fe4655dbef29b9fe70794f4c47f` adds a focused regression.
+
+3. HTTP/2 server shutdown used immediate `Stream->close` after peer GOAWAY.
+   With unread peer bytes this produced an abortive TCP reset. Merely leaving
+   the transport open instead produced a timeout because nghttp2 had already
+   finished the session. The final behavior uses `Stream->end`: queued HTTP/2
+   output is allowed to finish, then the writable side shuts down gracefully.
+   The same lifecycle rule is used when nghttp2 reports that it wants neither
+   read nor write after a connection-level protocol error. Commits
+   `7fa30b5e1d905468248d6ad3828486dba934319e` and
+   `defeead0cc362d8259b2184ce3d801f688af589c` contain the implementation and
+   focused regression coverage.
+
+4. The HTTP/2 Client correctly stopped assigning new work after peer GOAWAY,
+   but a draining connection could remain open after its final active stream
+   disappeared until some later request happened to revisit the pool. The
+   Client executor now retires that transport with `Stream->end` after the
+   drain completes, while leaving ordinary reusable H2 connections open.
+   Transport shutdown is initiated from the post-nghttp2 flush path rather
+   than reentrantly from inside the nghttp2 stream-close callback. Commits
+   `d1c0a6b291b2164d655aae144a6413e45d51a2c6`,
+   `fc282b7a0943bd7b9a1b17a11a387070885da9a6`, and
+   `f9ab6b3d266543a0459353a15657e211466a1e4a` contain the implementation,
+   focused regression, and reentrancy tightening.
+
+5. Pre-ALPN client bursts previously opened one negotiating TLS connection per
+   operation because a selector could hold only one provisional Transaction.
+   The Client now keeps an origin-scoped negotiating-selector pool. One selector
+   may hold up to 100 provisional Transactions while ALPN is unresolved. If H2
+   wins, all queued Transactions are submitted onto the selected multiplexed
+   connection while preserving their original Request/Transaction identity and
+   streaming-body controllers. If HTTP/1.1 wins, the first Transaction remains
+   on the negotiated connection and the remainder are reassigned onto separate
+   HTTP/1.1 connections, preserving fallback concurrency rather than serializing
+   them. The main implementation commits are
+   `7e839265cad0b74140048a4fed835059f2e815cc`,
+   `10eda72217e41350351dcdd9fdd880bdb317b63a`,
+   `d817e787ec2202604d1e675464f433c7dceee756`, and
+   `74d77163f4a5c907dfe5b4e0c6cb0a7872c4b1e1`.
+
+6. The new fallback-concurrency test exposed an older TLS lifecycle problem:
+   when more than one reusable same-origin HTTP/1 connection completed, the
+   Client kept one idle connection and discarded the surplus with immediate
+   `close()`. Over TLS this can produce "peer closed without close_notify".
+   Surplus reusable connections now retire with `end()` when available.
+   ClientSelector exposes a private delegating `end()` for the same purpose.
+   Commits `0ed883c2e57555fb4fe5018ef3ab1d199607094c` and
+   `272115a44fe69b49b83596ba4f0962e1954d8c36` contain that fix.
+
+7. Moving the HTTP/2 binding floor from Net::HTTP2::nghttp2 0.008 to 0.011
+   exposed a real reentrant teardown bug. A high-level callback such as
+   on_complete can close the Client while nghttp2 mem_recv() is still executing
+   the callback that delivered that completion. The old executor close path
+   immediately destroyed the Session in that callback. Net::HTTP2::nghttp2
+   0.011 deliberately hardens this lifecycle and made the unsafe pattern
+   visible. Client and Server executors now mark close pending while a Session
+   call is active, stop accepting further callback work, return from mem_recv()
+   or mem_send(), and only then destroy Session/provider state. The same commit
+   also removes a raw spike-only mem_send() call from inside an nghttp2
+   callback. Commit
+   `a37583a5f4176ef46b9913dc8aa1c1ee1660557c` contains the fix.
+
+Focused integration coverage:
+
+`t/100-http2-prealpn-fanout.t`
+
+starts six H2-capable operations and four HTTP/1.1-fallback operations before
+either TLS handshake completes. It proves:
+
+- each client initially creates only one negotiating TLS connection;
+- the six H2 operations complete through one selected H2 connection;
+- the four HTTP/1.1 fallback operations fan out onto four concurrent
+  connections after ALPN resolves;
+- every Request retains provisional HTTP/1.1 identity before ALPN;
+- H2 Requests become version 2 after selection while fallback Requests remain
+  version 1.1;
+- every target is delivered exactly once;
+- surplus fallback TLS connections retire without a missing-close_notify error.
+
+`t/101-http2-high-level-policy.t` proves protocol-neutral high-level policy by
+running one Operation through 302 redirect -> Set-Cookie -> 401 Basic challenge
+-> authenticated 200 over one selected H2 connection.
+
+`t/102-http2-cancellation-isolation.t` proves that client-side Operation
+cancellation and server-side Transaction cancellation reset only the intended
+HTTP/2 stream while sibling streams on the same TLS connection continue and
+complete normally.
+
+The HTTP/2 binding floor is now Net::HTTP2::nghttp2 0.011. HTTP/2 tests also
+require 0.011 before running, so systems with an older optional binding skip the
+optional H2 suite rather than exercising an unsupported lifecycle.
+
+Version 0.011 is important for this integration because it hardens provider and
+Session teardown around callbacks and refuses reentrant mem_send()/mem_recv().
+Its build path requires nghttp2 >= 1.57. That also means the server benefits
+from nghttp2's HTTP/2 Rapid Reset RST_STREAM limiter; Linux::Event::HTTP leaves
+the binding's default token-bucket policy in place rather than adding another
+public tuning option at this stage.
+
+h2spec v2.6.0 now reaches the full 146-test run with:
+
+- 144 passed;
+- 1 skipped;
+- 1 failed.
+
+The sole remaining failure is:
+
+`5.1.1 - Sends stream identifier that is numerically smaller than previous`
+
+Stock nghttpd/libnghttp2 is independently documented with this same h2spec
+failure. Do not add application-level response reordering merely to hide that
+underlying nghttp2/h2spec baseline behavior.
+
+CI now treats h2spec as a gate rather than a non-blocking diagnostic. A clean
+run is accepted, and the pinned v2.6.0 run is also accepted when it has exactly
+the known 144-pass / 1-skip / 1-fail baseline and that one failure is the
+stream-identifier case above. Any additional h2spec failure fails CI.
+
+Validation:
+
+- CI run `36215138738` fully passed after the graceful HTTP/2 shutdown fix,
+  including Build-and-test on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and
+  latest-threaded, the h2spec run, benchmark smoke/comparisons, and distribution
+  integrity.
+- CI run `36215274760` validates the added server regressions and conformance
+  gate. It fully passed Build-and-test on every configured Perl lane, the
+  latest-Perl h2spec gate, benchmark/smoke work, and distribution integrity.
+- CI run `36215569666` validates the client GOAWAY retirement change and its
+  focused regression. It fully passed on Perl 5.36, 5.38, 5.40, 5.42, 5.44,
+  latest, and latest-threaded. The latest lane also passed the h2spec
+  conformance gate, same-run production comparisons, benchmark smoke tests,
+  and distribution integrity.
+- CI run `36216660868` validates the pre-ALPN selector queue, HTTP/1.1
+  fallback fan-out, and graceful surplus-connection retirement. Build-and-test
+  passed on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and latest-threaded.
+  The latest lane reported 55 files / 1,444 tests, Result PASS, passed the
+  h2spec conformance gate, production comparison/smoke work, and distribution
+  integrity.
+- CI run `36216974089` validates high-level redirect, cookie, and
+  authentication policy over HTTP/2. It fully passed on Perl 5.36, 5.38, 5.40,
+  5.42, 5.44, latest, and latest-threaded; latest also passed h2spec and
+  distribution integrity. Focused coverage is
+  `t/101-http2-high-level-policy.t`, which executes one Operation through
+  302 -> cookie storage -> 401 Basic challenge -> authenticated 200 on one H2
+  TLS connection. All three Transactions retain HTTP/2 Request/Response
+  identity and the expected Operation redirect/auth history.
+- CI run `36217849502` validates Net::HTTP2::nghttp2 0.011, the cancellation
+  isolation test, and deferred Session teardown. It fully passed Build-and-test
+  on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and latest-threaded. The latest
+  lane reported 57 files / 1,488 tests, Result PASS; t/102 passed; h2spec stayed
+  at exactly 144 passed / 1 skipped / 1 known baseline failure; production
+  comparison/smoke work and distribution integrity also passed.
+
+The earlier pre-ALPN connection fan-out issue is now resolved. Do not revert to
+one negotiating TLS connection per simultaneous operation.
+
+The next useful HTTP/2 work should begin from this state rather than revisiting
+the earlier ALPN/core-segfault investigation.
+
 ### Post-0.002 main state
 
 The native client response-head work from PR #38 is now merged to `main`.
@@ -115,7 +325,7 @@ expected to become the 0.003 development cycle unless the user decides otherwise
 
 Linux::Event::HTTP 0.002 requires:
 
-`Linux::Event >= 0.116`
+`Linux::Event >= 0.117`
 
 Do not lower that dependency without a specific compatibility investigation.
 
@@ -429,6 +639,512 @@ change the public Client/Server API or refactor the production HTTP/1 executor.
 The spike should prove Linux::Event transport integration, concurrent streams,
 streaming DATA defer/resume, h2spec viability, and basic overhead before the
 backend choice is frozen.
+
+### HTTP/2 nghttp2 integration spike result
+
+Active experiment branch:
+
+`experiment/http2-nghttp2-spike`
+
+Draft PR: #39.
+
+The transport/protocol-engine spike has validated Net::HTTP2::nghttp2 0.008 as
+the preferred HTTP/2 engine direction.
+
+Key spike commits:
+
+- `fc7d3039bfa50c68b6e35a94586bcacb74c647fe`
+  "experiment: add nghttp2 Linux::Event integration spike";
+- `af6f6fb0a6ecee6ece8fd576f38ccb79c52e3aa4`
+  "experiment: fix nghttp2 pseudo-header capture";
+- `1b42ecc80e1dac4d408993d4b3cdce36ce126aee`
+  "experiment: prove h2 ALPN selection with nghttp2".
+
+Validated CI run:
+
+`36195688110`
+
+Latest-Perl results:
+
+- Net::HTTP2::nghttp2 0.008 plus libnghttp2 installed successfully in CI;
+- `t/90-http2-nghttp2-spike.t` PASS;
+- `t/91-http2-alpn-spike.t` PASS;
+- full checkout test run with the two optional spike tests:
+  44 files / 1,084 tests, PASS;
+- existing HTTP end-to-end benchmark smoke PASS;
+- existing client receive-path benchmark smoke PASS;
+- `make disttest` PASS for the production MANIFEST.
+
+The plain-TCP spike proves one Linux::Event connection can host one nghttp2
+session with nine simultaneous streams:
+
+- seven concurrent GET streams;
+- one POST stream carrying request DATA;
+- one deferred response whose data provider returns no data until a
+  Linux::Event Timer fires, then resumes the stream.
+
+All streams completed independently.
+
+The TLS spike proves:
+
+- server and client both advertise `h2` before `http/1.1`;
+- both sides expose negotiated `selected_alpn eq 'h2'` before application
+  protocol bytes are processed;
+- nghttp2 sessions can be created after TLS transport readiness;
+- an HTTP/2 request/response completes over the encrypted Linux::Event Stream.
+
+The early spike failures were test-scaffolding errors, not protocol-engine or
+Linux::Event failures. One came from a pseudo-header test regex losing its
+backslash while being generated through JavaScript; another came from following
+a stale Session synopsis that showed a leading session callback argument. The
+actual 0.008 callback contract and XS implementation use the documented
+positional forms without a leading session object.
+
+Decision:
+
+Net::HTTP2::nghttp2 is the selected implementation direction for the first
+Linux::Event::HTTP HTTP/2 executor. Do not build a competing in-house HPACK/frame
+engine and do not use the higher-level Net::HTTP2 client abstraction.
+
+The spike remains experimental and does not yet add Net::HTTP2::nghttp2 to the
+production Makefile.PL dependency set.
+
+The next design/implementation boundary is HTTP/2 message mapping, specifically
+how `:scheme` and `:authority` are preserved in the protocol-neutral Request
+API without exposing pseudo-headers as ordinary headers.
+
+### HTTP/2 message mapping decision
+
+The Request pseudo-header mapping decision is now implemented on
+`experiment/http2-nghttp2-spike`.
+
+Key commits:
+
+- `ac2278c2517121cf4e9e0516f01d53beeb2aac5a`
+  "http2: add Request scheme and authority metadata";
+- `b28becb9acbfb88d5fa3dfdb4ad6c4ec5ca2318d`
+  "http2: add private message mapping adapter";
+- `53a9d056b40f1b7212a92f49049346cb4ea30082`
+  "http2: test message and Transaction mapping".
+
+Decisions:
+
+- `Request->scheme` and `Request->authority` are protocol-neutral message
+  metadata.
+- HTTP/2 maps `:scheme` and `:authority` directly into those accessors.
+- HTTP/2 pseudo-headers never appear in the ordinary lossless header list.
+- HTTP/1 origin-form derives authority from one Host field but does not invent a
+  scheme.
+- HTTP/1 absolute-form derives both scheme and authority from the target.
+- HTTP/1 and HTTP/2 ordinary CONNECT expose authority-form through
+  `Request->target` and `Request->authority`.
+- Extended CONNECT `:protocol` remains explicitly unsupported for now.
+- the private `Linux::Event::HTTP::_HTTP2` mapper validates HTTP/2 header
+  ordering and connection-specific field rules at the protocol boundary.
+- one HTTP/2 request stream maps to one ordinary Transaction whose Response uses
+  version `2`.
+
+The next implementation step is a private HTTP/2 executor around one nghttp2
+Session and a stream-id-to-Transaction map. It should consume the mapper rather
+than duplicating message semantics in callbacks.
+
+### Linux::Event 0.117 review and HTTP/2 selector diagnosis
+
+The HTTP/2 experiment now targets the released Linux::Event 0.117 baseline.
+
+A Linux::Event core investigation attempted to reproduce the earlier selector
+SIGSEGV without HTTP code. Core could not reproduce a transition failure.
+
+The core investigation covered the exact intended transition shape:
+
+- TLS Stream with an active external/native raw consumer;
+- ALPN selecting h2;
+- pause_read;
+- Loop->defer;
+- native-consumer -> ordinary raw transition_to();
+- object/fd/TLS identity preservation;
+- preserved decrypted plaintext;
+- later duplex TLS I/O after transition;
+- native-consumer destruction exactly once.
+
+That regression passes the full Linux::Event functional matrix. The retained
+core investigation branch head reported back to HTTP is:
+
+`e1cc1010a0134e77f874b9c0a6fe62831bf4c82b`
+
+and contains only the focused regression, MANIFEST entry, and handoff
+documentation. No production core source change was required.
+
+The HTTP-side diagnosis then found the actual ordering problem.
+
+The original selector constructed the HTTP/2 executor before transition_to().
+The executor constructor was active: it created the nghttp2 Session, called
+send_connection_preface(), called mem_send(), and immediately wrote the
+preface/SETTINGS bytes through the Stream while the Stream was still the
+HTTP/1 native-consumer connection class.
+
+The old effective order was:
+
+    TLS ALPN selects h2
+    pause_read
+    Loop->defer
+    construct H2 executor
+    send/flush H2 preface and SETTINGS on HTTP/1 connection
+    transition_to H2 raw connection
+    resume_read
+
+That ordering produced the SIGSEGV seen in the earlier t/94 runs.
+
+The selector was instrumented around executor construction, transition,
+executor start/flush, resume_read, target on_data, and executor input. The H2
+executor was then made capable of passive construction with `autostart => 0`.
+
+The corrected order is:
+
+    TLS ALPN selects h2
+    pause_read
+    Loop->defer
+    construct passive H2 executor
+    attach executor to the connection
+    transition_to H2 raw connection
+    start H2 executor
+    send/flush H2 preface and SETTINGS
+    resume_read
+    process H2 input
+
+Diagnostic run `36208108220` proves this removes the crash:
+
+- client executor construction completes;
+- client transition_to() completes;
+- client executor start/preface flush completes;
+- server executor construction completes;
+- server transition_to() completes;
+- server executor start/preface flush completes;
+- both sides resume reads;
+- both H2 raw target on_data callbacks run;
+- repeated server/client executor input() calls return normally;
+- the complete t/94 selector test passes inside the Build-and-test step,
+  including the HTTP/1.1 ALPN fallback connection.
+
+Therefore the HTTP/2 selector rule is now explicit:
+
+**No HTTP/2 protocol bytes may be written until the live Stream has completed
+its HTTP/1-native-consumer -> HTTP/2-raw transition.**
+
+This is an HTTP executor-lifecycle requirement, not a Linux::Event core bug.
+
+CI coverage was subsequently expanded because the old matrix only tested Perl
+5.36, latest Perl, and latest threaded Perl. The HTTP/2 spike dependency was
+also previously installed only on the latest non-threaded lane, allowing H2
+tests to skip on the other Perls.
+
+Commit `d84ca034c3dfb87f5e0655ea6877a5d371f04ed2` expands the matrix to:
+
+- Perl 5.36;
+- Perl 5.38;
+- Perl 5.40;
+- Perl 5.42;
+- Perl 5.44;
+- latest Perl;
+- latest threaded Perl.
+
+On the HTTP/2 spike branch, Net::HTTP2::nghttp2 is installed in every one of
+those lanes so t/90 through t/94 are exercised rather than skipped.
+
+CI run `36208655559` confirms Build-and-test success on 5.36, 5.38, 5.40,
+5.42, 5.44, latest, and latest-threaded. The explicit non-latest lanes and
+latest-threaded completed successfully; latest non-threaded also passed the
+test suite and continued through the longer benchmark/dist steps.
+
+Clean validation run `36208252365` removed all phase instrumentation and used
+the actual private HTTP/2 connection classes. Results:
+
+- Perl 5.36: PASS;
+- latest Perl: PASS;
+- latest threaded Perl: PASS;
+- Build and test: PASS, including the cleaned t/94 selector;
+- same-run production native HTTP comparisons: PASS;
+- end-to-end benchmark smoke: PASS;
+- client receive-path benchmark smoke: PASS;
+- distribution integrity / disttest: PASS.
+
+The selector fix is therefore validated independently of the temporary
+diagnostic subclasses and warning markers.
+
+Linux::Event 0.117 feature adoption in HTTP is also now underway/completed on
+this branch:
+
+1. Loop->defer()
+   - distribution prerequisite raised to Linux::Event >= 0.117;
+   - server Upgrade uses Loop->defer();
+   - server CONNECT uses Loop->defer();
+   - client Upgrade uses Loop->defer();
+   - client CONNECT uses Loop->defer();
+   - real-duration timers remain Kernel::Timer objects;
+   - existing focused Upgrade/CONNECT tests pass.
+
+2. Loop->fork()
+   - t/43-managed-fork-server.t validates plain HTTP Listener sharing through:
+         $loop->fork(share => [ $server->listener ])
+   - Server POD documents this as a deployment pattern;
+   - worker creation/supervision remains application policy;
+   - TLS/HTTPS managed-fork Listener sharing remains unclaimed until separately
+     validated.
+
+3. Kernel::Inotify
+   - no HTTP protocol integration planned; file/config/certificate watching is
+     application/deployment policy.
+
+4. TTY ownership changes
+   - no HTTP impact.
+
+5. ordinary-fork misuse detection
+   - indirect safety improvement only; no HTTP wrapper required.
+
+The next HTTP/2 work is to keep the now-validated selector ordering, complete a
+clean final branch gate without the temporary phase diagnostics, and then wire
+the private HTTP/2 executors behind the high-level Server/Client ALPN selection
+path.
+
+### High-level HTTP/2 Server, Client, and multiplexing
+
+The private HTTP/2 executors are now wired behind opt-in high-level APIs on
+`experiment/http2-nghttp2-spike`.
+
+High-level Server:
+
+    Linux::Event::HTTP::Server->new(
+        http2 => 1,
+        tls   => { ... },
+        ...
+    )
+
+- advertises h2 before http/1.1;
+- transitions to the private H2 ServerConnection only after ALPN selects h2;
+- constructs the executor passively, transitions first, then starts H2;
+- preserves the ordinary on_request/on_body/on_request_end callback shape;
+- HTTP/1.1 ALPN fallback stays on the existing Server::Connection;
+- currently requires the default connection_class.
+
+High-level Client:
+
+    Linux::Event::HTTP::Client->new(
+        http2 => 1,
+        tls   => { ... },
+    )
+
+- advertises h2 before http/1.1 for direct HTTPS operations;
+- preserves immediate Operation/Transaction/Request identity while initial ALPN
+  is unresolved;
+- if H2 wins, the same mutable Request becomes version 2 and gains
+  scheme/authority metadata before commit;
+- maps a caller Host field into :authority and removes Host from the normal H2
+  field list;
+- falls back cleanly to the existing HTTP/1.1 connection when h2 is not
+  selected;
+- selected H2 connections are pooled per origin and can accept concurrent
+  streams while earlier Transactions are still active;
+- local admission is capped at 100 active submitted streams per H2 connection;
+- nghttp2 enforces peer SETTINGS_MAX_CONCURRENT_STREAMS;
+- GOAWAY marks a connection draining so the pool stops assigning new work.
+
+Current high-level HTTP/2 exclusions intentionally fall back to HTTP/1:
+
+- streaming Request bodies before ALPN selection;
+- forward proxy routes;
+- Upgrade;
+- CONNECT tunnel handoff;
+- explicit HTTP version selection.
+
+Multiplex validation:
+
+`t/96-http2-high-level-multiplex.t`
+
+establishes one H2 TLS connection and, while the first stream is still active,
+launches six more high-level Operations. The server delays all six responses.
+The test requires:
+
+- one server TLS connection for all requests;
+- at least six simultaneously active H2 streams;
+- independent status/body completion for every Operation.
+
+CI run `36210309139` passed Build-and-test, including t/96, on:
+
+- Perl 5.36;
+- Perl 5.38;
+- Perl 5.40;
+- Perl 5.42;
+- Perl 5.44;
+- latest Perl;
+- latest threaded Perl.
+
+Remaining client-pool work:
+
+- transparent GOAWAY replay is not implemented because
+  Net::HTTP2::nghttp2 0.008 does not expose the received GOAWAY
+  last_stream_id needed to identify safely replayable streams;
+- cross-origin H2 connection coalescing remains deferred.
+
+Pre-ALPN same-origin fan-out is implemented: simultaneous Operations share a
+bounded negotiating selector and either collapse onto H2 or fan back out after
+HTTP/1.1 selection.
+
+### High-level HTTP/2 streaming Request bodies
+
+High-level streaming uploads now participate in HTTP/2 ALPN selection rather
+than being forced to HTTP/1.
+
+The public behavior is intentionally unchanged:
+
+    my $op = $client->post(
+        $url,
+        stream_body => {
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
+        },
+    );
+
+    my $body = $op->request_body;
+    $body->write($bytes);
+    $body->complete;
+
+The producer is available immediately, including before TLS handshake/ALPN
+completion.
+
+Implementation:
+
+- the selector creates the ordinary Transaction and Body::Stream immediately;
+- pre-selection body writes go into a selector-owned ordered queue;
+- cooperative selector backpressure begins at 65,536 queued bytes;
+- Content-Length is enforced while bytes are still pre-selection;
+- when ALPN resolves, the selected HTTP/1 or H2 executor adopts the same
+  Transaction and existing Body::Stream rather than creating another producer;
+- queued bytes are transferred once into the selected protocol's ordinary body
+  output path;
+- later writes go directly to that protocol executor;
+- an HTTP/1.1 fallback with unknown body length adds normal chunked framing;
+- H2 does not add Transfer-Encoding;
+- on_drain/on_cancel remain attached to the same producer object.
+
+Focused validation:
+
+`t/97-http2-high-level-streaming-upload.t`
+
+covers:
+
+- a 100,000-byte write made before ALPN;
+- pre-selection false/backpressure return;
+- H2 selection and body transfer;
+- on_drain continuation adding the final 4 bytes;
+- exact 100,004-byte H2 request body;
+- Content-Length preservation;
+- no H2 Transfer-Encoding;
+- Request identity/version/authority preservation;
+- no producer cancellation after successful completion;
+- HTTP/1.1 ALPN fallback using the same pre-selection producer;
+- automatic chunked HTTP/1.1 framing for unknown length;
+- immediate pre-ALPN Content-Length mismatch rejection.
+
+CI run `36211493852` passed Build-and-test with t/97 on Perl 5.36, 5.38,
+5.40, 5.42, 5.44, latest, and latest-threaded. A completed 5.42 lane reported
+52 files / 1,338 tests, Result PASS.
+
+The latest non-threaded lane also completed the full regression gate:
+
+- Build and test: PASS;
+- same-run production native HTTP comparisons: PASS;
+- end-to-end benchmark smoke: PASS;
+- client receive-path benchmark smoke: PASS;
+- distribution integrity / disttest: PASS.
+
+### HTTP/2 decoded header-list hardening
+
+Both private HTTP/2 executors now enforce a decoded header-list limit.
+
+Public option on high-level Server and Client:
+
+    http2_max_header_list_size => 65_536
+
+The option requires `http2 => 1`.
+
+Accounting follows HTTP/2 SETTINGS_MAX_HEADER_LIST_SIZE semantics:
+
+    length(name) + length(value) + 32
+
+for each decoded field.
+
+Behavior:
+
+- default limit is 65,536 bytes;
+- the configured limit is advertised through SETTINGS_MAX_HEADER_LIST_SIZE;
+- the same limit is independently enforced after HPACK decoding;
+- Server applies it to initial Request headers and Request trailers;
+- Client applies it to Response header blocks;
+- an over-limit block resets/fails only the offending stream using
+  ENHANCE_YOUR_CALM rather than closing the entire H2 connection;
+- repeated fields after the limit trip do not cause repeated application errors.
+
+Focused coverage:
+
+`t/98-http2-header-list-limit.t`
+
+checks the emitted SETTINGS frame and both Server and Client decoded-limit
+paths using a fake transport.
+
+CI run `36212199466` passed Build-and-test, including t/98, on Perl 5.36,
+5.38, 5.40, 5.42, 5.44, latest, and latest-threaded. The Perl 5.42 lane
+reported 53 files / 1,360 tests, Result PASS.
+
+GOAWAY replay note discovered during this hardening pass:
+
+Net::HTTP2::nghttp2 0.008 exposes receipt of a GOAWAY frame through
+on_frame_recv, but its frame hash does not expose GOAWAY last_stream_id and no
+alternate Session accessor provides it. Safe transparent replay requires that
+value to distinguish streams the peer promises it did not process. Therefore
+HTTP currently marks the connection draining and does not automatically replay
+streams. Do not guess from stream-close timing or replay all active requests.
+
+### HTTP/2 aggregate buffered-response hardening
+
+High-level H2 Client buffering now has a per-connection aggregate memory budget.
+
+Public option:
+
+    http2_max_buffered_response_bytes => 67_108_864
+
+The option requires `http2 => 1`; default is 64 MiB.
+
+This limit is separate from per-operation `buffer_body => $max`.
+
+The H2 Client executor tracks body bytes currently retained for active buffered
+responses across all multiplexed streams. Before appending each DATA chunk it
+checks both:
+
+- the operation's own buffer_body limit;
+- the connection-wide aggregate H2 buffer limit.
+
+If the aggregate limit would be exceeded:
+
+- only the offending stream fails with CANCEL;
+- unrelated H2 streams remain healthy;
+- the connection remains usable;
+- the rejected chunk is not added to the aggregate accounting.
+
+Accounting is released when a buffered response completes, fails, is cancelled,
+or the connection closes.
+
+Focused test:
+
+`t/99-http2-aggregate-buffer-limit.t`
+
+creates two concurrently buffered H2 streams with a 10-byte connection budget.
+The first holds 6 bytes; a 6-byte chunk on the second stream is rejected without
+affecting the first; the first then grows to 10 bytes, completes successfully,
+and releases aggregate accounting to zero.
+
+CI run `36212430127` passed Build-and-test with t/99 on Perl 5.36, 5.38,
+5.40, 5.42, 5.44, latest, and latest-threaded. The Perl 5.44 lane reported
+54 files / 1,383 tests, Result PASS.
 
 ### HTTP/2 distribution decision
 

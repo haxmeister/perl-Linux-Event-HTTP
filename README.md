@@ -389,33 +389,85 @@ A validated 101 completes the HTTP Transaction before Linux::Event
 `transition_to()` hands the same live stream to the next protocol. Already-read
 post-HTTP bytes are preserved.
 
-## HTTPS
+## HTTPS and HTTP/2
 
 HTTPS uses the same Client, Server, Request, Response, Transaction, Operation,
-and Connection classes. TLS remains Linux::Event transport policy; there is no
+and Connection concepts. TLS remains Linux::Event transport policy; there is no
 parallel HTTPS hierarchy.
 
-Server TLS is configured on `Server->new(tls => {...})`. Direct Client HTTPS
-uses the target URL host as the TLS server name and currently advertises only
-`http/1.1` through ALPN. An HTTPS proxy endpoint uses TLS to the proxy itself.
-Cookie and target-authentication origin identity remain the target URL; proxy
+Server TLS is configured on `Server->new(tls => {...})`. By default, direct
+Client HTTPS remains HTTP/1.1. HTTP/2 can be enabled explicitly on the high-level
+Client and Server:
+
+```perl
+my $server = Linux::Event::HTTP::Server->new(
+    loop  => $loop,
+    host  => '127.0.0.1',
+    port  => 8443,
+    http2 => 1,
+    tls   => {
+        cert_file => $cert_file,
+        key_file  => $key_file,
+    },
+    on_request => sub ($conn, $req, $res) {
+        $res->body("hello\n");
+    },
+);
+
+my $client = Linux::Event::HTTP::Client->new(
+    loop  => $loop,
+    http2 => 1,
+);
+```
+
+With `http2 => 1`, direct HTTPS advertises `h2` before `http/1.1` through
+ALPN. If H2 is selected, one TLS connection can carry many concurrent
+Transactions. If the peer selects HTTP/1.1, the existing HTTP/1 executor is used
+instead.
+
+Operations started before the first ALPN decision for an origin share a bounded
+negotiating selector. An H2 result collapses them onto one multiplexed
+connection; an HTTP/1.1 result fans them back out so fallback requests are not
+forced through one serialized connection.
+
+HTTP/2 support requires the optional `Net::HTTP2::nghttp2` 0.011 or
+newer binding and libnghttp2. The CPAN metadata records this as the optional
+`http2` feature rather than forcing the binding onto HTTP/1-only installs.
+Install it explicitly when HTTP/2 is wanted:
+
+```sh
+cpanm 'Net::HTTP2::nghttp2@0.011'
+```
+
+Asking for `http2 => 1` without the capability installed produces an explicit
+constructor error.
+
+An HTTPS proxy endpoint uses TLS to the proxy itself. Cookie and
+target-authentication origin identity remain the target URL; proxy
 authentication identity remains the route endpoint.
 
 ## Connection reuse
 
-The initial HTTP/1 reuse policy is deliberately bounded:
+The HTTP/1 reuse policy is deliberately bounded:
 
 - one active Transaction per Client::Connection;
 - no HTTP/1 pipelining on the client;
 - sequential keep-alive reuse;
 - at most one idle connection retained per route origin;
 - concurrent operations may open additional connections;
-- extra connections close when they later become idle;
+- surplus reusable connections retire gracefully when they later become idle;
 - connections that leave HTTP through Upgrade or successful CONNECT never return
   to the HTTP idle pool.
 
+HTTP/2 uses a separate per-origin pool. Selected H2 connections accept multiple
+concurrent streams up to the local admission limit while nghttp2 enforces peer
+SETTINGS. GOAWAY marks a connection draining so it receives no new work; after
+its active streams finish, the transport is retired gracefully.
+
 Server::Connection supports ordered persistent request processing and deferred
-responses on the same accepted HTTP/1 connection.
+responses on the same accepted HTTP/1 connection. HTTP/2 server callbacks use
+the same Request/Response shape, while `$conn->transaction` is scoped to the
+currently executing H2 stream callback.
 
 ## Advanced connection subclasses
 
@@ -463,7 +515,7 @@ make
 make test
 ```
 
-Linux::Event::HTTP currently requires Linux::Event 0.116 or newer, uses
+Linux::Event::HTTP currently requires Linux::Event 0.117 or newer, uses
 `HTTP::CookieJar` for cookie policy, and uses `Uniform::HTTP::Auth` for HTTP
 authentication mechanics.
 

@@ -1,7 +1,7 @@
 # Linux::Event::HTTP HTTP/2 architecture
 
-Status: design investigation
-Date: 2026-09-25
+Status: production candidate
+Date: 2026-09-26
 
 ## Purpose
 
@@ -87,15 +87,18 @@ The intended internal split is conceptually:
             |
             +-- HTTP/2 executor
 
-Exact private package names are not yet frozen. A likely internal namespace is:
+The implemented private HTTP/2 namespace is:
 
     Linux::Event::HTTP::_HTTP2
     Linux::Event::HTTP::_HTTP2::Client
     Linux::Event::HTTP::_HTTP2::Server
-    Linux::Event::HTTP::_HTTP2::Stream
+    Linux::Event::HTTP::_HTTP2::ClientConnection
+    Linux::Event::HTTP::_HTTP2::ServerConnection
+    Linux::Event::HTTP::_HTTP2::ClientSelector
+    Linux::Event::HTTP::_HTTP2::ClientSelectorConnection
 
-These are protocol implementation objects, not replacement public message
-classes.
+These are protocol implementation and selection objects, not replacement public
+message classes.
 
 ## Protocol engine recommendation
 
@@ -127,19 +130,35 @@ but it should not be the default architectural choice. Its current public
 documentation still describes a beta RFC 7540 implementation and marks portions
 of its implementation incomplete.
 
-No dependency should be added to Makefile.PL until an integration spike proves
-that the selected binding exposes the control needed by Linux::Event::HTTP.
+The integration work has proved that Net::HTTP2::nghttp2 exposes the control
+needed by Linux::Event::HTTP. HTTP/2 requires version 0.011 or newer because
+0.011 fixes provider/session lifetime hazards during callback-driven stream
+teardown and explicitly rejects reentrant mem_send()/mem_recv(). Its build path
+requires nghttp2 >= 1.57.
+
+The binding remains optional for HTTP/1-only installations. Distribution
+metadata records an optional `http2` feature requiring
+`Net::HTTP2::nghttp2 >= 0.011`, while requesting `http2 => 1` at runtime
+without that capability produces an explicit constructor error.
+
+nghttp2 >= 1.57 also provides the HTTP/2 Rapid Reset RST_STREAM rate limiter.
+The binding leaves nghttp2's default limiter active when no custom burst/rate is
+provided. Linux::Event::HTTP currently relies on that tested default rather than
+adding a second public rate-limit policy.
 
 ## TLS and ALPN
 
-The current HTTP client advertises only:
+The default HTTP client remains HTTP/1.1-only. When the high-level Client is
+constructed with:
 
-    http/1.1
+    http2 => 1
 
-The HTTP/2-capable high-level client should advertise, in preference order:
+direct HTTPS connections advertise, in preference order:
 
     h2
     http/1.1
+
+The high-level Server uses the same preference order when HTTP/2 is enabled.
 
 Linux::Event already exposes the negotiated protocol through selected_alpn.
 
@@ -149,9 +168,54 @@ executor.
 For servers, ALPN selection must also occur before protocol bytes are dispatched
 to the HTTP/1 parser or HTTP/2 engine.
 
-This implies a protocol-selection layer around the transport. The exact way this
-composes with the existing public connection_class subclass extension point
-needs a spike before implementation is committed.
+The protocol-selection spike has validated the connection transition boundary.
+
+A critical ordering invariant is:
+
+    TLS handshake completes
+    selected_alpn is inspected
+    pause_read
+    Loop->defer(...)
+    construct the selected HTTP/2 executor passively
+    attach the executor to the live connection
+    transition_to the HTTP/2 raw connection class
+    start the HTTP/2 executor
+    emit preface / SETTINGS
+    resume_read
+
+The HTTP/2 executor must not emit protocol bytes while the live Stream is still
+the HTTP/1 native-consumer connection class.
+
+The initial spike violated this rule because the executor constructor
+immediately called send_connection_preface(), mem_send(), and Stream->write()
+before transition_to(). That ordering produced the selector SIGSEGV.
+
+Passive construction followed by transition, explicit start/flush, and then
+resume_read completes successfully while preserving Stream identity, fd
+identity, TLS transport, the shared application callback shape, and HTTP/1.1
+ALPN fallback.
+
+HTTP/1.1 selection performs no transition and continues using the existing
+HTTP/1 connection implementation.
+
+## nghttp2 callback lifecycle
+
+A Net::HTTP2::nghttp2 Session call is a non-reentrant boundary.
+
+Do not call mem_send() or mem_recv() from inside one of the Session's callbacks.
+Callbacks may submit protocol work, but serialization/receive driving resumes
+only after the active Session call returns.
+
+The same rule applies to teardown. Application callbacks can close a Client,
+Server-side connection, or Stream while nghttp2 is delivering a callback.
+Therefore the private executors track whether a Session call is active. A close
+requested during that interval is recorded as pending; subsequent callbacks are
+ignored, control returns from mem_recv()/mem_send(), and only then are Session,
+provider, and stream maps destroyed.
+
+This is not merely defensive style. Validation against Net::HTTP2::nghttp2
+0.011 exposed real crashes when the older executor destroyed Session state
+reentrantly from an application completion callback.
 
 ## HTTP/2 connection state
 
@@ -209,24 +273,48 @@ There must not be one connection-global active Transaction for HTTP/2.
 
 ## Client multiplexing
 
-The current HTTP/1 Client pool treats a connection as capacity 0 or 1.
+The high-level Client now has a separate per-origin H2 connection pool.
 
-HTTP/2 requires capacity-aware pooling.
+Once ALPN selects H2, that selector remains available while streams are active.
+Later Operations can therefore submit new streams without waiting for earlier
+Transactions to complete.
 
-Conceptually an executor needs:
+The private H2 client executor exposes only a capacity predicate to the pool.
+The pool does not know stream IDs, HPACK state, or flow-control windows.
 
-    can_accept_transaction
-    available_stream_capacity
-    draining / GOAWAY state
+Current admission behavior:
 
-A single HTTP/2 connection may run many Client::Operations concurrently.
+    local active-stream cap: 100
+    peer SETTINGS enforcement: nghttp2
+    GOAWAY: mark connection draining, admit no new streams
+    draining connection with no active streams: retire it
+    no available H2 capacity: open another connection
 
-Initial pooling should remain origin-based even though HTTP/2 permits connection
-coalescing in some cases. Origin coalescing adds certificate, authority, DNS, and
-policy complexity and should be deferred.
+The local cap prevents unbounded application submission into one Session.
+nghttp2 remains responsible for honoring the peer's actual
+SETTINGS_MAX_CONCURRENT_STREAMS and may queue submitted streams internally
+until peer capacity is available.
 
-If the peer stream limit is exhausted, Client may queue work or open another
-connection according to later pool policy.
+The Client now has an origin-scoped pre-selection queue. Simultaneous Operations
+created before the first TLS/ALPN decision share one negotiating selector up to
+the local 100-Transaction cap.
+
+If ALPN selects H2, the queued Transactions are submitted onto that one
+multiplexed connection. If ALPN selects HTTP/1.1, the first Transaction remains
+on the negotiated connection and the remaining queued Transactions are fanned
+out onto separate HTTP/1.1 connections so fallback concurrency is preserved.
+
+Each Operation still receives its Transaction and Request synchronously before
+ALPN. Streaming Request bodies use per-Transaction pre-selection body queues so
+their public Body::Stream producers remain immediately writable. After protocol
+selection, the selected executor adopts the same Transaction and Body::Stream
+objects and drains any queued bytes into its ordinary body path.
+
+Connection coalescing across origins remains deferred.
+
+GOAWAY retry policy also remains deferred. New work is kept off a draining
+connection, but automatic replay of streams based on GOAWAY last-stream-id is
+not yet implemented.
 
 ## Request pseudo-header mapping
 
@@ -241,16 +329,15 @@ The intended mapping is:
 
 Normal HTTP field lines remain in the normal lossless header list.
 
-The clean representation for :scheme and :authority is still an open public API
-decision.
-
-Preferred direction:
+The representation for :scheme and :authority is now decided:
 
     Request->scheme
     Request->authority
 
-These would be protocol-neutral message metadata rather than HTTP/2
-pseudo-header accessors.
+These are protocol-neutral message metadata rather than HTTP/2 pseudo-header
+accessors. HTTP/2 maps the pseudo-header values directly into these accessors.
+HTTP/1 derives them only when the request message itself carries enough
+information.
 
 For HTTP/1, authority can be derived where the request target or Host field
 provides it. Scheme is not always present on an HTTP/1 wire request and can be
@@ -259,7 +346,8 @@ undefined when the message itself does not carry it.
 Do not synthesize a Host header merely because an HTTP/2 request carried
 :authority. That would make the ordinary header list no longer lossless.
 
-This API extension needs a focused design review before implementation.
+Pseudo-headers never appear in the ordinary lossless header list. The private
+_HTTP2 mapper consumes them at the protocol boundary.
 
 ## Response mapping
 
@@ -413,6 +501,18 @@ The implementation must define and test limits for at least:
 Where nghttp2 already provides safe enforcement, use it rather than duplicating
 protocol state in Perl.
 
+Current implemented limits include:
+
+    server/client decoded header list: 65,536 bytes by default
+    client aggregate active buffer_body storage: 64 MiB per H2 connection
+    server advertised concurrent streams: 100
+    client local active-stream admission cap: 100
+
+The decoded header limit is advertised through SETTINGS_MAX_HEADER_LIST_SIZE and
+enforced independently after HPACK expansion. The aggregate response buffer
+limit counts only bytes still owned by active H2 buffer_body streams on that
+connection and is released when a stream completes or fails.
+
 Application-visible limits should be added only when there is a useful policy
 choice rather than exposing every nghttp2 setting.
 
@@ -491,7 +591,9 @@ The implementation should be tested with:
 
 Existing HTTP-level tests for redirects, authentication, cookies, buffering,
 streaming bodies, and operation history should be reused against HTTP/2 wherever
-the semantics are protocol-independent.
+the semantics are protocol-independent. Focused H2 coverage now includes
+redirect + cookie + authentication retry policy in
+`t/101-http2-high-level-policy.t`.
 
 Performance benchmarking should compare:
 
@@ -566,18 +668,47 @@ Add h2load comparison benchmarks.
 Only then investigate native-buffer integration, connection coalescing,
 cleartext prior knowledge, trailers, extended CONNECT, and WebSocket-over-H2.
 
-## Immediate next action
+## Validated nghttp2 spike
 
-Create a focused integration spike for Net::HTTP2::nghttp2.
+The initial transport spike is complete.
 
-The spike should not alter the public Client/Server API and should not refactor
-the HTTP/1 executor yet.
+Net::HTTP2::nghttp2 0.008 installed successfully in the project CI environment
+and interoperated directly with Linux::Event Streams.
 
-Its purpose is to answer three questions:
+The cleartext spike carried nine simultaneous streams on one connection,
+including request DATA and a deferred/resumed response body.
 
-1. Does the nghttp2 Session API give Linux::Event::HTTP enough control over
-   stream lifecycle and flow control?
-2. Can it integrate cleanly with Linux::Event backpressure without per-stream
-   closure churn or duplicate output queues?
-3. Is its correctness/performance baseline good enough to make it the single
-   HTTP/2 protocol engine for this distribution?
+The TLS spike negotiated `h2` through Linux::Event ALPN before application
+protocol input and then completed an nghttp2 request/response over the encrypted
+Stream.
+
+Therefore nghttp2 is now the selected first HTTP/2 protocol-engine direction,
+not merely a candidate.
+
+This does not yet make Net::HTTP2::nghttp2 a required production dependency.
+The protocol-engine question is settled; the remaining dependency question is
+how the CPAN distribution should advertise/install the optional H2 capability.
+
+## Current implementation state
+
+The shared message mapper, private client/server nghttp2 executors, TLS ALPN
+selection, high-level Server/Client integration, multiplexing, streaming
+uploads/responses, decoded header limits, aggregate response-buffer limits,
+GOAWAY draining, and pre-ALPN same-origin queue are implemented on the HTTP/2
+experiment branch.
+
+High-level redirect, cookie, and authentication policy has also been validated
+across multiple HTTP/2 Transactions without duplicating that policy inside the
+HTTP/2 executor.
+
+Current hardening work should focus on remaining production boundaries rather
+than rebuilding completed phases. In particular:
+
+- keep h2spec at or better than the documented nghttp2 baseline;
+- do not implement transparent GOAWAY replay without reliable received
+  last_stream_id information;
+- decide optional dependency/install metadata before release;
+- resolve/document the advanced custom connection_class contract;
+- add security/resource hardening where nghttp2 does not already provide it;
+- benchmark realistic multiplexed HTTP/2 workloads before native-buffer
+  optimization is considered.

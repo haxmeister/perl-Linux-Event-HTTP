@@ -76,6 +76,32 @@ sub _validate_target ($target) {
     return $bytes;
 }
 
+sub _validate_scheme ($scheme) {
+    return undef if !defined $scheme;
+    my $bytes = _byte_string('scheme', $scheme);
+    die 'invalid request scheme'
+        if $bytes !~ /\A[A-Za-z][A-Za-z0-9+.-]*\z/;
+    return $bytes;
+}
+
+sub _validate_authority ($authority) {
+    return undef if !defined $authority;
+    my $bytes = _byte_string('authority', $authority);
+    die 'invalid request authority'
+        if $bytes eq '' || $bytes =~ /[\x00-\x20\x7f\/?#]/;
+    return $bytes;
+}
+
+sub _target_metadata ($method, $target) {
+    if ($target =~ /\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?#]+)/) {
+        return ($1, $2);
+    }
+    if (uc($method) eq 'CONNECT' && $target !~ /[\/?#]/) {
+        return (undef, $target);
+    }
+    return (undef, undef);
+}
+
 sub _validate_version ($version) {
     die 'invalid HTTP version'
         if !defined($version) || ref($version)
@@ -112,6 +138,10 @@ sub new ($class, %args) {
     my $method  = delete $args{method};
     my $target  = delete $args{target};
     my $version = delete($args{version}) // '1.1';
+    my $has_scheme = exists $args{scheme};
+    my $scheme = delete $args{scheme};
+    my $has_authority = exists $args{authority};
+    my $authority = delete $args{authority};
     my $headers = delete $args{headers};
     my $has_body = exists $args{body};
     my $body = delete $args{body};
@@ -121,11 +151,15 @@ sub new ($class, %args) {
     _validate_method($method);
     $target = _validate_target($target);
     _validate_version($version);
+    $scheme = _validate_scheme($scheme) if $has_scheme;
+    $authority = _validate_authority($authority) if $has_authority;
 
     my $self = bless {
         method    => "$method",
         target    => $target,
         version   => "$version",
+        ($has_scheme ? (scheme => $scheme) : ()),
+        ($has_authority ? (authority => $authority) : ()),
         headers   => [],
         body_kind => undef,
         body      => undef,
@@ -174,6 +208,43 @@ sub target ($self, @args) {
 
 sub target_is_exact ($self) {
     return 1;
+}
+
+sub scheme ($self, @args) {
+    if (@args) {
+        die 'scheme accepts exactly one value' if @args != 1;
+        die 'received request metadata is read-only' if _is_native($self);
+        $self->_assert_mutable;
+        $self->{scheme} = _validate_scheme($args[0]);
+        return $self;
+    }
+
+    if (!_is_native($self) && exists $self->{scheme}) {
+        return $self->{scheme};
+    }
+    my ($scheme) = _target_metadata($self->method, $self->target);
+    return $scheme;
+}
+
+sub authority ($self, @args) {
+    if (@args) {
+        die 'authority accepts exactly one value' if @args != 1;
+        die 'received request metadata is read-only' if _is_native($self);
+        $self->_assert_mutable;
+        $self->{authority} = _validate_authority($args[0]);
+        return $self;
+    }
+
+    if (!_is_native($self) && exists $self->{authority}) {
+        return $self->{authority};
+    }
+
+    my (undef, $authority) = _target_metadata($self->method, $self->target);
+    return $authority if defined $authority;
+
+    my @host = $self->_header_values_list('Host');
+    return $host[0] if @host == 1;
+    return undef;
 }
 
 sub version ($self, @args) {
@@ -444,7 +515,8 @@ buffered into the Request object.
 =head2 new
 
 Constructs a mutable request message. C<method> and C<target> are required.
-C<version> defaults to C<1.1>. C<headers> is an optional array reference of
+C<version> defaults to C<1.1>. C<scheme> and C<authority> are optional
+protocol-neutral request metadata. C<headers> is an optional array reference of
 C<[name, value]> pairs so duplicates and field order are preserved. C<body> is
 an optional complete scalar byte body.
 
@@ -462,6 +534,25 @@ constructed request may set it before commit.
 
 Returns true. Linux::Event::HTTP preserves the exact Request target rather than
 reconstructing it from decomposed URL or routing state.
+
+=head2 scheme
+
+Gets the request URI scheme when the message carries or can derive one. HTTP/2
+maps C<:scheme> here. An HTTP/1 absolute-form target can also provide it.
+Origin-form HTTP/1 requests normally return undef because the scheme is not part
+of that request message. A mutable local Request may set or clear the value
+before commit.
+
+=head2 authority
+
+Gets the request authority when the message carries or can derive one. HTTP/2
+maps C<:authority> here without manufacturing a Host header. HTTP/1 derives the
+authority from absolute-form or CONNECT authority-form targets when present,
+otherwise from one unambiguous Host field. A mutable local Request may set or
+clear the value before commit.
+
+These accessors are message metadata, not HTTP/2 pseudo-header accessors.
+Pseudo-headers never appear in the ordinary header list.
 
 =head2 version
 
