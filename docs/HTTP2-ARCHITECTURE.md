@@ -460,6 +460,18 @@ The implementation must define and test limits for at least:
 Where nghttp2 already provides safe enforcement, use it rather than duplicating
 protocol state in Perl.
 
+Current implemented limits include:
+
+    server/client decoded header list: 65,536 bytes by default
+    client aggregate active buffer_body storage: 64 MiB per H2 connection
+    server advertised concurrent streams: 100
+    client local active-stream admission cap: 100
+
+The decoded header limit is advertised through SETTINGS_MAX_HEADER_LIST_SIZE and
+enforced independently after HPACK expansion. The aggregate response buffer
+limit counts only bytes still owned by active H2 buffer_body streams on that
+connection and is released when a stream completes or fails.
+
 Application-visible limits should be added only when there is a useful policy
 choice rather than exposing every nghttp2 setting.
 
