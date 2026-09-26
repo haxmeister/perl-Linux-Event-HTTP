@@ -1104,6 +1104,8 @@ CODE:
     state = leh2_state_from_sv(self);
     if (state->closed)
         croak("mem_recv(): session is closed");
+    if (state->in_nghttp2)
+        croak("mem_recv(): reentrant nghttp2 session call is not allowed");
 
     data = (const uint8_t *)SvPVbyte(bytes, len);
     ++state->in_nghttp2;
@@ -1128,6 +1130,8 @@ CODE:
     state = leh2_state_from_sv(self);
     if (state->closed)
         croak("mem_send(): session is closed");
+    if (state->in_nghttp2)
+        croak("mem_send(): reentrant nghttp2 session call is not allowed");
 
     ++state->in_nghttp2;
     rv = nghttp2_session_mem_send(state->session, &data);
