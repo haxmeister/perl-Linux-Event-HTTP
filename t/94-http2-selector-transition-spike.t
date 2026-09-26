@@ -66,13 +66,40 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
 
 
 {
+    package T::HTTP2DebugServerExecutor;
+    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::Server';
+
+    sub input ($self, $bytes) {
+        warn "T94 SERVER J before executor input\n";
+        my $consumed = $self->SUPER::input($bytes);
+        warn "T94 SERVER K after executor input\n";
+        return $consumed;
+    }
+}
+
+{
+    package T::HTTP2DebugClientExecutor;
+    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::Client';
+
+    sub input ($self, $bytes) {
+        warn "T94 CLIENT J before executor input\n";
+        my $consumed = $self->SUPER::input($bytes);
+        warn "T94 CLIENT K after executor input\n";
+        return $consumed;
+    }
+}
+
+{
     package T::HTTP2ServerTarget;
     use parent -norequire, 'Linux::Event::HTTP::_HTTP2::ServerConnection';
 
     sub on_data ($conn, $bytes) {
         warn "T94 SERVER G first/raw H2 on_data\n"
             if !$conn->{_t94_seen_h2_data}++;
-        return $conn->SUPER::on_data($bytes);
+        my $result = $conn->SUPER::on_data($bytes);
+        warn "T94 SERVER L after target on_data
+";
+        return $result;
     }
 }
 
@@ -83,7 +110,10 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
     sub on_data ($conn, $bytes) {
         warn "T94 CLIENT G first/raw H2 on_data\n"
             if !$conn->{_t94_seen_h2_data}++;
-        return $conn->SUPER::on_data($bytes);
+        my $result = $conn->SUPER::on_data($bytes);
+        warn "T94 CLIENT L after target on_data
+";
+        return $result;
     }
 }
 
@@ -105,7 +135,7 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
             $conn->pause_read;
             $conn->loop->defer(sub {
                 warn "T94 SERVER A before executor construction\n";
-                my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
+                my $executor = T::HTTP2DebugServerExecutor->new(
                     stream         => $conn,
                     connection     => $conn,
                     autostart      => 0,
@@ -263,7 +293,7 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
         $conn->pause_read;
         $conn->loop->defer(sub {
             warn "T94 CLIENT A before executor construction\n";
-            $h2_executor = Linux::Event::HTTP::_HTTP2::Client->new(
+            $h2_executor = T::HTTP2DebugClientExecutor->new(
                 stream    => $conn,
                 autostart => 0,
             );
