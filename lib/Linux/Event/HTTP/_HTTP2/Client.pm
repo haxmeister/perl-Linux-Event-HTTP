@@ -13,6 +13,7 @@ our $VERSION = '0.002';
 use constant {
     H2_DATA       => 0,
     H2_HEADERS    => 1,
+    H2_GOAWAY     => 7,
     H2_END_STREAM => 0x1,
     H2_INTERNAL_ERROR => 2,
     H2_CANCEL     => 8,
@@ -27,9 +28,15 @@ sub new ($class, %option) {
         if !blessed($stream) || !$stream->can('write');
     my $autostart = exists($option{autostart})
         ? delete($option{autostart}) : 1;
+    my $max_active_streams = exists($option{max_active_streams})
+        ? delete($option{max_active_streams}) : 100;
     die 'new(): autostart must be zero or one'
         if !defined($autostart) || ref($autostart)
         || "$autostart" !~ /\A[01]\z/;
+    die 'new(): max_active_streams must be a positive integer'
+        if !defined($max_active_streams) || ref($max_active_streams)
+        || "$max_active_streams" !~ /\A[0-9]+\z/
+        || $max_active_streams < 1;
     die 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -47,6 +54,8 @@ sub new ($class, %option) {
         transport_blocked => 0,
         closed            => 0,
         started           => 0,
+        draining          => 0,
+        max_active_streams => 0 + $max_active_streams,
     }, $class;
 
     my $weak = $self;
@@ -100,6 +109,13 @@ sub stream  ($self) { $self->{stream} }
 
 sub stream_count ($self) {
     return scalar keys %{$self->{streams}};
+}
+
+sub draining ($self) { !!$self->{draining} }
+
+sub can_accept_transaction ($self) {
+    return 0 if $self->{closed} || !$self->{started} || $self->{draining};
+    return $self->stream_count < $self->{max_active_streams} ? 1 : 0;
 }
 
 sub transaction_for_stream ($self, $stream_id) {
@@ -186,6 +202,8 @@ sub _buffer_limit ($value) {
 
 sub request ($self, $request, %option) {
     die 'request(): executor is closed' if $self->{closed};
+    die 'request(): HTTP/2 connection cannot accept another stream'
+        if !$self->can_accept_transaction;
     my $provided_transaction = delete $option{_transaction};
     die 'request(): executor is not started' if !$self->{started};
     die 'request(): requires a Linux::Event::HTTP::Request'
@@ -340,6 +358,11 @@ sub _status_from_block ($block) {
 }
 
 sub _on_frame_recv ($self, $frame) {
+    if (($frame->{type} // -1) == H2_GOAWAY) {
+        $self->{draining} = 1;
+        return 0;
+    }
+
     my $stream_id = $frame->{stream_id} // 0;
     return 0 if !$stream_id;
     my $state = $self->{streams}{$stream_id} or return 0;
