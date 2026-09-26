@@ -18,6 +18,14 @@ sub new_client ($class, %option) {
     return $class->_new(0, $callbacks);
 }
 
+sub _raw_consumer_definition ($class) {
+    return {
+        provider           => \&_raw_consumer_operations_address,
+        abi_version        => 1,
+        operations_address => _raw_consumer_operations_address(),
+    };
+}
+
 sub new_server ($class, %option) {
     my $callbacks = delete($option{callbacks}) // {};
     die 'new_server(): callbacks must be a hash reference'
