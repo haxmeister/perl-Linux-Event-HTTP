@@ -472,6 +472,12 @@ TLS ALPN list. A custom C<connection_class> remains HTTP/1-only for now rather
 than having its application-defined class identity silently replaced during an
 HTTP/2 transition.
 
+Decoded HTTP/2 request and trailer header lists default to a 65,536-byte limit,
+using the HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per
+field. Override it with C<http2_max_header_list_size>. The same value is
+advertised to the peer through SETTINGS_MAX_HEADER_LIST_SIZE and enforced again
+after HPACK decoding.
+
 A Connection subclass may define C<tls_defaults()> for reusable HTTP/1 ALPN and
 timeout defaults. The Server C<tls> option is still required to activate TLS,
 so the same Connection class may be used for plain HTTP and HTTPS listeners.
@@ -489,6 +495,11 @@ Returns the configured HTTP Connection class name.
 =head2 http2
 
 Returns true when this Server was constructed with C<http2 =E<gt> 1>.
+
+=head2 http2_max_header_list_size
+
+Returns the decoded HTTP/2 request/trailer header-list limit. The default is
+65,536 bytes.
 
 =head2 data
 
