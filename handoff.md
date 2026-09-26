@@ -4,108 +4,124 @@ Updated: 2026-09-26 (America/Chicago)
 
 ## CURRENT STATE - READ THIS FIRST
 
-### Native binding continuation (2026-09-26)
+### Native binding decision evaluation (2026-09-26)
 
 Active branch: `experiment/native-nghttp2-binding`, draft PR #40, based on
-`experiment/http2-nghttp2-spike`. Starting head: `954c7cc98aee84e80d47edaebdb7b3e723d552ce`.
-Validated implementation head: `78e6f0798e7b301351586674aabd2b0184081239`.
-This section supersedes the older stabilization state below. Do not merge yet.
+`experiment/http2-nghttp2-spike`. Do not merge this branch to main without
+explicit user authorization. The user is still deciding whether Linux::Event::HTTP
+should own a private libnghttp2 binding at all.
 
-The private native bridge supports client/server sessions, multiplexing,
-libnghttp2 framing/HPACK, decoded header/DATA callbacks, static bodies, streaming
-providers, deferred DATA/resume_stream, and GOAWAY last_stream_id. Existing
-Client/Server executors still own Request/Response/Transaction semantics. It
-now also supports real TLS/ALPN native input and executor-managed output.
+The private native binding is now technically successful:
 
-The original t/107 failure reproduces locally on Perl 5.38.2 threaded/core 0.117.
-Lifecycle trace: request 1 arrived at 0.543739 s and its timer sent its response
-at 0.575889 s (one server stream); requests 2 through 6 then arrived between
-0.576643 and 0.577111 s. Thus the peak of five came from response 1 already
-finishing before the next transport batch arrived. The old 32 ms timer does
-not establish simultaneous arrival. A replacement barrier holds all responses
-until six requests arrive, then asserts six live streams and zero completions
-before releasing responses. The barrier passed on Perl 5.38.2 threaded: this
-was transport timing, not a five-stream concurrency limit.
+- existing H2 Client/Server executors remain shared between backends;
+- native TLS/ALPN transition and direct Linux::Event raw-consumer input work;
+- executor-owned output/backpressure and reentrant teardown are covered;
+- the same 10 existing H2 policy/executor tests run with the native backend
+  selected: 349 assertions;
+- native parity passes on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and
+  latest-threaded;
+- the normal suite is 64 files / 1,647 assertions and passes;
+- native h2spec v2.6.0 now reports 146 tests, 145 passed, 1 skipped, 0 failed.
 
-The ALPN-selected high-level Client and Server now attach their passive native
-session before transitioning to `_HTTP2::NativeConnection`. Core 0.117 replaces
-the existing HTTP/1 provider and preserves the native input buffer. The new
-class has no ordinary `on_data` handler. The private session selector remains
-experimental; Net::HTTP2::nghttp2 is still the default.
+The former h2spec failure was the RFC 9113 section 5.1.1 case where a peer
+opens a new stream whose identifier is numerically smaller than a stream it
+opened previously. Stock nghttp2/nghttpd accepts that case even though the
+RFC requires a connection PROTOCOL_ERROR. The private binding now uses
+nghttp2's early on_begin_frame callback to detect a newly opened lower-numbered
+peer stream, calls nghttp2_session_terminate_session(PROTOCOL_ERROR), and does
+not expose that rejected stream to HTTP callbacks. t/103 contains a focused
+regression.
 
-The raw provider no longer calls mem_send/write in XS. It brackets native
-mem_recv with the executor's dynamic in_session_call guard, then invokes the
-existing executor flush after nghttp2 returns. Stream write false stops output;
-the existing transport_drain callback resumes it. There is no added XS output
-queue. Consumer host retention holds state across callback-triggered close;
-the completion callback retains access to the executor even when on_close has
-removed it from the Stream. Native sessions are explicitly closed after the
-executor guard unwinds. Body::Stream drain notifications are withheld if a
-transport drain immediately blocks again.
+The native output path was initially much slower because mem_send used
+nghttp2_session_mem_send and crossed C -> Perl -> Stream->write once per
+serialized frame. A bounded C-side batching change now uses
+nghttp2_session_send with a send callback and coalesces at most 256 KiB before
+returning to the existing executor/backpressure machinery. This is a bounded
+serialization batch, not a second unbounded transport queue.
 
-Local native regression suite t/103-109 passes (7 files, 145 tests).
-t/107 checks the native consumer class/input counter and six-stream barrier.
-t/108 exercises scalar and streaming bodies over real native-input sockets,
-repeated false writes/drains, no writes while blocked, and callback close.
-t/109 proves invalid prefaces close only their connection and a subsequent
-valid exchange still succeeds; retained native sessions are closed explicitly.
-This caught a raw-provider error-status bug: LES_CONSUMER_ERROR throws out of
-the loop. Peer input failures now use connection close, preserving the existing
-executor input policy. Skipped/suppressed XS callbacks also release their
-argument SVs rather than leaking them after teardown.
-Native h2spec passes the exact accepted gate: 146 tests, 144 passed, 1 skipped,
-1 failed (only the established stream-identifier case).
+Representative same-run H2 backend medians after that fix, 64 concurrent
+streams:
 
-A follow-up review found and fixed two lifecycle hardening gaps. The retained
-HTTP server transport-close callback now removes the attached native-session
-wrapper after closing the H2 executor, so an application retaining a closed
-Server connection does not also retain the native callback table. The private
-XS session also now rejects reentrant mem_recv()/mem_send() calls while
-libnghttp2 is already on the stack, matching the safety invariant that prompted
-the earlier Net::HTTP2::nghttp2 0.011 floor. t/94 and t/103 contain focused
-regressions for these cases.
+| Response | external 0.011 | native-copy | native raw |
+| --- | ---: | ---: | ---: |
+| 32 bytes | 10,919.8 req/s | 10,782.9 | 10,777.5 |
+| 16 KiB | 6,893.7 req/s | 7,172.5 | 7,340.8 |
 
-Validation run: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/36243908080
+Interpret these as roughly equal for tiny responses and potentially a modest
+native advantage for larger responses, not as a guaranteed speedup. The
+native-copy versus native-raw comparison also shows that direct raw input is
+not providing a large standalone throughput gain in these GET workloads.
 
-All seven Build-and-test lanes passed, including HTTP/1 and native t/103-109.
-Each lane runs 64 test files and 1,637 assertions. Resolved Perl versions:
+### Less-code comparison
 
-| CI lane | Actual Perl | Build and test |
-| --- | --- | --- |
-| 5.36 | 5.36.3 | PASS |
-| 5.38 | 5.38.5 | PASS |
-| 5.40 | 5.40.5 | PASS |
-| 5.42 | 5.42.3 | PASS |
-| 5.44 | 5.44.0 | PASS |
-| latest | 5.44.0 | PASS |
-| latest threaded | 5.44.0 threaded | PASS |
+The private option adds a substantial maintenance surface to this repository:
 
-CI run 36243908080 completed successfully after the independent review fixes.
-The latest lane's native h2spec gate, distribution integrity (including the
-packaged test suite), production HTTP/1 comparisons and benchmark smoke steps
-all passed. The reviewed CI suite is 64 files/1,637 tests on every configured
-Perl lane. The Work-window local Perl 5.38.2 threaded validation before the
-review fixes passed 64 files/1,633 tests; its native subset was 7 files/145
-tests.
-The h2spec harness now accepts --native; PR #40's gate uses it. The accepted
-146/144/1/1 baseline has not been changed.
+- xshttp2/Native.xs: about 1,332 lines;
+- _HTTP2/Native.pm: about 185 lines;
+- _HTTP2/NativeConnection.pm: about 66 lines;
+- plus backend-selection/build integration.
 
-Remaining before choosing native as the default/replacing Net::HTTP2::nghttp2:
+That is roughly 1,600 lines of production code owned here, most of it native
+lifecycle/ownership code. Net::HTTP2::nghttp2 already owns a broader binding,
+including trailers, GOAWAY submission, PING, WINDOW_UPDATE, stream state/user
+data, extended CONNECT settings, Rapid Reset controls, provider ownership,
+reentrancy handling, and Alien::nghttp2 fallback packaging.
 
-- No known blocker remains in the three requested integration tasks.
-- Run the wider H2 policy, limits, GOAWAY/cancellation and fallback coverage
-  explicitly with native selected. Existing default-backend tests remain green,
-  but that is not equivalent to native coverage of every policy combination.
-- Decide native dependency/build packaging (currently optional via pkg-config,
-  libnghttp2 >= 1.57) and removal or retention of the external backend.
-- Measure native input against the external-backend path after correctness
-  parity is settled. No native H2 speedup is claimed from this work.
-- Keep `_http2_session_class` private and retain one pair of H2 executors.
-  Switching defaults and merging PR #40 require the user's next decision.
+For a preference toward less code and less maintenance responsibility, keeping
+Net::HTTP2::nghttp2 as the binding is currently the simpler architecture.
 
-Only this HTTP repository was changed. Core 0.117 was consumed as an installed
-release dependency; no core change or renewed ALPN segfault investigation was
-needed.
+### External binding strict-stream experiment
+
+The user explicitly authorized evaluating whether the single external h2spec
+failure could be fixed in Net::HTTP2::nghttp2 instead of owning the private
+binding.
+
+No upstream repository was modified. The authenticated GitHub account has read
+but not push permission to jjn1056/Net-HTTP2-nghttp2, so the test was performed
+entirely from this HTTP experiment branch/CI.
+
+CI downloaded the exact CPAN Net::HTTP2::nghttp2 0.011 source, applied a small
+strict-stream patch to nghttp2.xs, built it, ran its own test suite, installed
+it into an isolated prefix, then ran the Linux::Event::HTTP h2spec server using
+that patched external module. The evaluation step PASSED.
+
+The patch is conceptually the same approximately-50-line check proven in the
+private binding:
+
+- remember whether the session is a server and the highest new peer stream ID;
+- register nghttp2_on_begin_frame_callback;
+- when a new HEADERS stream is lower than the previous peer stream ID, terminate
+  with NGHTTP2_PROTOCOL_ERROR;
+- suppress callbacks for that rejected stream.
+
+With that small external-binding patch, h2spec reaches the same clean result as
+the private binding: 146 tests, 145 passed, 1 skipped, 0 failed.
+
+This removes the strongest correctness reason for Linux::Event::HTTP to own its
+own libnghttp2 binding. The private branch remains valuable as a validated
+reference/escape hatch, but the external-binding option can now plausibly give
+the project both less code and zero known h2spec failures.
+
+Temporary CI patching machinery used for the evaluation has been removed again;
+it is not intended to become production code here.
+
+### Current decision point
+
+Do not merge PR #40 yet.
+
+The remaining architectural choice is now primarily ownership/maintenance, not
+correctness or throughput:
+
+1. Keep Net::HTTP2::nghttp2 as the HTTP/2 binding and propose the small
+   strict-stream fix upstream. This leaves Linux::Event::HTTP focused on HTTP
+   semantics and minimizes native code owned here.
+2. Keep the private binding. This gives full local control and direct raw-input
+   integration but commits Linux::Event::HTTP to roughly 1,600 lines of extra
+   native/binding code plus its packaging and future feature growth.
+
+Given a preference for less code, option 1 currently has the cleaner
+maintenance profile. No final selection has been merged.
+
 
 
 Repository: `haxmeister/perl-Linux-Event-HTTP`
