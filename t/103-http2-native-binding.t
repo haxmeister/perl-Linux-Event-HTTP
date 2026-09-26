@@ -282,7 +282,9 @@ $strict_server->mem_send;
 
 my $client_magic = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 my $empty_settings = h2_frame(H2_SETTINGS, 0, 0);
-my $static_request_headers = pack('C C C', 0x82, 0x86, 0x84);
+my $static_request_headers =
+    pack('C C C C C', 0x82, 0x86, 0x84, 0x01, length('native.test'))
+    . 'native.test';
 my $stream5 = h2_frame(
     H2_HEADERS,
     H2_END_STREAM | H2_END_HEADERS,
