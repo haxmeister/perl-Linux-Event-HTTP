@@ -128,6 +128,7 @@ sub _parse_proxy_url ($url, $where = 'request()') {
 sub _http2_available () {
     return 0 if !eval {
         require Net::HTTP2::nghttp2;
+        Net::HTTP2::nghttp2->VERSION('0.011');
         require Linux::Event::HTTP::_HTTP2::ClientSelector;
         1;
     };
@@ -176,7 +177,7 @@ sub new ($class, %option) {
         if !$http2 && $has_http2_max_buffered_response_bytes;
     croak 'new(): http2 currently requires the default connection_class'
         if $http2 && defined($connection_class_option);
-    croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
+    croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2 0.011 or newer'
         if $http2 && !_http2_available();
     my $connect_timeout = delete $option{connect_timeout};
     my $max_redirects = _validate_max_redirects(
@@ -1692,8 +1693,9 @@ Explicit forward-proxy routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and
 explicit HTTP version selection continue to use the existing HTTP/1 path even
 when C<http2> is true.
 
-HTTP/2 currently requires the optional L<Net::HTTP2::nghttp2> binding and the
-underlying nghttp2 library. They are not yet normal distribution prerequisites.
+HTTP/2 currently requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer
+binding and the underlying nghttp2 library. They are not yet normal distribution
+prerequisites.
 Constructing a Client with C<http2 =E<gt> 1> fails explicitly when that
 capability is unavailable.
 
