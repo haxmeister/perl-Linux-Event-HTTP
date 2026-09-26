@@ -146,6 +146,10 @@ sub request ($self, $request, %option) {
         if !blessed($request)
         || !$request->isa('Linux::Event::HTTP::Request');
 
+    my $http1_reassign = delete $option{_http1_reassign};
+    croak 'request(): _http1_reassign must be a coderef'
+        if defined($http1_reassign) && ref($http1_reassign) ne 'CODE';
+
     if ($self->{protocol} eq 'http/1.1') {
         my $tx = $self->{stream}->request($request, %option);
         $self->{transaction} = $tx;
@@ -159,8 +163,8 @@ sub request ($self, $request, %option) {
         return $tx;
     }
 
-    croak 'request(): another Transaction is already pending protocol selection'
-        if $self->transaction;
+    croak 'request(): selector cannot queue another Transaction'
+        if !$self->can_queue_transaction;
 
     croak 'request(): HTTP/1 Upgrade cannot be negotiated through an HTTP/2-capable selector'
         if exists $option{upgrade_to};
@@ -194,13 +198,15 @@ sub request ($self, $request, %option) {
         };
     }
 
-    $self->{transaction} = $tx;
-    $self->{pending} = {
-        request     => $request,
-        transaction => $tx,
-        option      => { %option },
-        body        => $pending_body,
+    my $pending = {
+        request        => $request,
+        transaction    => $tx,
+        option         => { %option },
+        body           => $pending_body,
+        http1_reassign => $http1_reassign,
     };
+    push @{$self->{pending}}, $pending;
+    $self->{pending_by_tx}{refaddr($tx)} = $pending;
     return $tx;
 }
 
@@ -267,62 +273,130 @@ sub _transport_ready ($self, $stream) {
     return;
 }
 
+sub _remove_pending ($self, $pending) {
+    my $tx = $pending->{transaction};
+    delete $self->{pending_by_tx}{refaddr($tx)};
+    @{$self->{pending}} = grep {
+        refaddr($_->{transaction}) != refaddr($tx)
+    } @{$self->{pending}};
+    return;
+}
+
+sub _submit_pending_http1_on ($self, $connection, $pending, $reassign = 0) {
+    my $tx = $pending->{transaction};
+    return 1 if $tx->is_terminal;
+
+    if ($reassign && $pending->{http1_reassign}) {
+        $pending->{http1_reassign}->($connection);
+    }
+
+    $connection->request(
+        $pending->{request},
+        %{$pending->{option}},
+        _transaction => $tx,
+    );
+    $self->_transfer_pending_body($connection, $pending);
+    $self->_remove_pending($pending);
+    return 1;
+}
+
 sub _submit_pending_http1 ($self) {
-    my $pending = $self->{pending} or return;
-    my $ok = eval {
-        $self->{stream}->request(
-            $pending->{request},
-            %{$pending->{option}},
-            _transaction => $pending->{transaction},
-        );
-        $self->_transfer_pending_body(
-            $self->{stream}, $pending,
-        );
-        1;
-    };
-    if ($ok) {
-        delete $self->{pending};
-    } else {
-        $self->_fail_pending("$@");
+    my @pending = @{$self->{pending}};
+    return if !@pending;
+
+    my $leader_used = 0;
+    for my $pending (@pending) {
+        my $tx = $pending->{transaction};
+        if ($tx->is_terminal) {
+            $self->_remove_pending($pending);
+            next;
+        }
+
+        my $connection;
+        my $reassign = 0;
+        if (!$leader_used) {
+            $connection = $self->{stream};
+            $leader_used = 1;
+            $self->{transaction} = $tx;
+        } else {
+            my $factory = $self->{http1_connection_factory};
+            if (!$factory) {
+                $self->_fail_one_pending(
+                    $pending,
+                    'HTTP/1.1 fallback requires another connection',
+                );
+                next;
+            }
+            $connection = eval { $factory->($self) };
+            if (!$connection || $@) {
+                my $error = "$@";
+                $error =~ s/\s+\z//;
+                $error ||= 'HTTP/1.1 fallback connection creation failed';
+                $self->_fail_one_pending($pending, $error);
+                next;
+            }
+            $reassign = 1;
+        }
+
+        my $ok = eval {
+            $self->_submit_pending_http1_on(
+                $connection, $pending, $reassign,
+            );
+            1;
+        };
+        if (!$ok) {
+            $self->_fail_one_pending($pending, "$@");
+            $connection->close
+                if $reassign && $connection && !$connection->is_closed;
+        }
     }
     return;
 }
 
 sub _submit_pending_h2 ($self) {
-    my $pending = $self->{pending} or return;
-    my $ok = eval {
-        $self->_prepare_h2_request($pending->{request});
-        $self->{executor}->request(
-            $pending->{request},
-            %{$pending->{option}},
-            _transaction => $pending->{transaction},
-        );
-        $self->_transfer_pending_body(
-            $self->{executor}, $pending,
-        );
-        1;
-    };
-    if ($ok) {
-        delete $self->{pending};
-    } else {
-        $self->_fail_pending("$@");
+    my @pending = @{$self->{pending}};
+    for my $pending (@pending) {
+        my $tx = $pending->{transaction};
+        if ($tx->is_terminal) {
+            $self->_remove_pending($pending);
+            next;
+        }
+
+        my $ok = eval {
+            $self->_prepare_h2_request($pending->{request});
+            $self->{executor}->request(
+                $pending->{request},
+                %{$pending->{option}},
+                _transaction => $tx,
+            );
+            $self->_transfer_pending_body(
+                $self->{executor}, $pending,
+            );
+            $self->_remove_pending($pending);
+            1;
+        };
+        $self->_fail_one_pending($pending, "$@") if !$ok;
     }
     return;
 }
 
-sub _fail_pending ($self, $error) {
+sub _fail_one_pending ($self, $pending, $error) {
     $error = 'HTTP connection failed during protocol selection'
         if !defined($error) || $error eq '';
     $error =~ s/\s+\z//;
 
-    my $pending = delete $self->{pending};
-    my $tx = $pending ? $pending->{transaction} : $self->{transaction};
-    if ($tx && !$tx->is_terminal) {
-        $tx->_fail($error);
-    }
+    $self->_remove_pending($pending);
+    my $tx = $pending->{transaction};
+    $tx->_fail($error) if !$tx->is_terminal;
 
-    my $callback = $pending ? $pending->{option}{on_error} : undef;
+    my $callback = $pending->{option}{on_error};
     $callback->($tx, $error) if $callback && $tx;
+    return;
+}
+
+sub _fail_pending ($self, $error) {
+    my @pending = @{$self->{pending}};
+    $self->_fail_one_pending($_, $error) for @pending;
     return;
 }
 
@@ -337,14 +411,10 @@ sub close ($self) {
     return $self if $self->{closed};
     $self->{closed} = 1;
 
-    if (my $pending = delete $self->{pending}) {
-        my $tx = $pending->{transaction};
-        $tx->_fail('HTTP connection closed before protocol selection')
-            if !$tx->is_terminal;
-        if (my $cb = $pending->{option}{on_error}) {
-            $cb->($tx, $tx->error);
-        }
-    }
+    my @pending = @{$self->{pending}};
+    $self->_fail_one_pending(
+        $_, 'HTTP connection closed before protocol selection',
+    ) for @pending;
 
     if (my $stream = $self->{stream}) {
         $stream->close if !$stream->is_closed;
@@ -353,25 +423,17 @@ sub close ($self) {
 }
 
 sub _cancel_http_transaction ($self, $tx) {
-    my $current = $self->{transaction};
-    croak 'cancel(): Transaction is not pending on this HTTP selector'
-        if !$current || refaddr($current) != refaddr($tx);
+    my $pending = $self->{pending_by_tx}{refaddr($tx)}
+        or croak 'cancel(): Transaction is not pending on this HTTP selector';
 
-    if ($self->{pending}) {
-        delete $self->{pending};
-        $tx->_mark_cancelled if !$tx->is_terminal;
-        return;
-    }
-
+    $self->_remove_pending($pending);
     $tx->_mark_cancelled if !$tx->is_terminal;
     return;
 }
 
 sub _write_http_request_body ($self, $tx, $bytes, $final, $operation) {
-    my $pending = $self->{pending}
+    my $pending = $self->{pending_by_tx}{refaddr($tx)}
         or croak "$operation(): Request is no longer pending protocol selection";
-    croak "$operation(): Transaction does not match pending Request"
-        if refaddr($pending->{transaction}) != refaddr($tx);
 
     my $state = $pending->{body}
         or croak "$operation(): Request does not have a streaming body";
