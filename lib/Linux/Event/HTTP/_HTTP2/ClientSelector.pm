@@ -127,9 +127,10 @@ sub _prepare_h2_request ($self, $request) {
     croak 'HTTP/2 selector cannot change a committed Request'
         if !$request->is_mutable;
 
-    my $authority = $request->header('Host');
-    $authority = $self->{authority}
-        if !defined($authority) || $authority eq '';
+    my $host = $request->header_values('Host');
+    croak 'HTTP/2 selector requires at most one Host field'
+        if @$host > 1;
+    my $authority = @$host ? $host->[0] : $self->{authority};
 
     $request->version('2') if ($request->version // '') ne '2';
     $request->scheme($self->{scheme});
