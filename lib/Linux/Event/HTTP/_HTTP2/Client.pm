@@ -68,6 +68,8 @@ sub new ($class, %option) {
         streams           => {},
         tx_stream         => {},
         in_session_call   => 0,
+        closing           => 0,
+        close_pending     => undef,
         transport_blocked => 0,
         transport_ending  => 0,
         closed            => 0,
@@ -86,22 +88,27 @@ sub new ($class, %option) {
         callbacks => {
             on_begin_headers => sub (@args) {
                 my $self = $weak or return 0;
+                return 0 if $self->{closing};
                 return $self->_on_begin_headers(@args);
             },
             on_header => sub (@args) {
                 my $self = $weak or return 0;
+                return 0 if $self->{closing};
                 return $self->_on_header(@args);
             },
             on_frame_recv => sub (@args) {
                 my $self = $weak or return 0;
+                return 0 if $self->{closing};
                 return $self->_on_frame_recv(@args);
             },
             on_data_chunk_recv => sub (@args) {
                 my $self = $weak or return 0;
+                return 0 if $self->{closing};
                 return $self->_on_data_chunk_recv(@args);
             },
             on_stream_close => sub (@args) {
                 my $self = $weak or return 0;
+                return 0 if $self->{closing};
                 return $self->_on_stream_close(@args);
             },
         },
@@ -136,7 +143,8 @@ sub stream_count ($self) {
 sub draining ($self) { !!$self->{draining} }
 
 sub can_accept_transaction ($self) {
-    return 0 if $self->{closed} || !$self->{started} || $self->{draining};
+    return 0 if $self->{closed} || $self->{closing}
+        || !$self->{started} || $self->{draining};
     return $self->stream_count < $self->{max_active_streams} ? 1 : 0;
 }
 
@@ -159,27 +167,35 @@ sub input ($self, $bytes) {
     die 'input(): nghttp2 did not consume complete input'
         if !defined($consumed) || $consumed != length($bytes);
 
+    return $consumed if $self->_finish_pending_close;
+
     $self->flush;
     return $consumed;
 }
 
 sub flush ($self) {
-    return if $self->{closed};
+    return if $self->{closed} || $self->{closing};
     return if !$self->{started};
     return if $self->{in_session_call};
     return if $self->{transport_blocked};
 
-    local $self->{in_session_call} = 1;
-    while ($self->{session}->want_write) {
-        my $bytes = $self->{session}->mem_send;
-        last if !defined($bytes) || $bytes eq '';
+    {
+        local $self->{in_session_call} = 1;
+        while ($self->{session}->want_write) {
+            my $bytes = $self->{session}->mem_send;
+            last if $self->{close_pending};
+            last if !defined($bytes) || $bytes eq '';
 
-        my $accepted = $self->{stream}->write($bytes);
-        if (!$accepted) {
-            $self->{transport_blocked} = 1;
-            last;
+            my $accepted = $self->{stream}->write($bytes);
+            if (!$accepted) {
+                $self->{transport_blocked} = 1;
+                last;
+            }
         }
     }
+
+    return if $self->_finish_pending_close;
+
     $self->_maybe_end_transport;
     return;
 }
@@ -220,7 +236,27 @@ sub transport_drain ($self) {
 
 sub close ($self, $error = 'HTTP/2 connection closed') {
     return if $self->{closed};
+
+    if ($self->{in_session_call}) {
+        $self->{closing} = 1;
+        $self->{close_pending} //= $error;
+        return;
+    }
+
+    return $self->_finish_close($error);
+}
+
+sub _finish_pending_close ($self) {
+    return 0 if !defined $self->{close_pending};
+    my $error = delete $self->{close_pending};
+    $self->_finish_close($error);
+    return 1;
+}
+
+sub _finish_close ($self, $error) {
+    return if $self->{closed};
     $self->{closed} = 1;
+    $self->{closing} = 0;
 
     for my $state (values %{$self->{streams}}) {
         my $tx = $state->{transaction} or next;

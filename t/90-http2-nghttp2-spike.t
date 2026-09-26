@@ -88,7 +88,8 @@ sub make_server_session ($stream, $state) {
                             return ('later', 1);
                         },
                     );
-                    flush_session($stream, $session);
+                    # mem_recv() will return to the Stream callback, which
+                    # performs the flush after nghttp2 leaves this callback.
 
                     my $timer;
                     $timer = Linux::Event::Kernel::Timer->new(
