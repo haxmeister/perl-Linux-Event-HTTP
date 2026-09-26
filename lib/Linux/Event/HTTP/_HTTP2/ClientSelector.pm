@@ -407,6 +407,12 @@ sub _transport_error ($self, $error) {
     return;
 }
 
+sub end ($self) {
+    my $stream = $self->{stream} or return $self;
+    $stream->end if !$stream->is_closed;
+    return $self;
+}
+
 sub close ($self) {
     return $self if $self->{closed};
     $self->{closed} = 1;
