@@ -21,15 +21,15 @@ Draft PR: #39.
 
 Current stabilization code head before this handoff update:
 
-`f9ab6b3d266543a0459353a15657e211466a1e4a`
-"Avoid reentrant client transport end from nghttp2 callback"
+`272115a44fe69b49b83596ba4f0962e1954d8c36`
+"Gracefully retire surplus reusable connections"
 
 The high-level HTTP/2 Server/Client work, multiplexing, streaming uploads,
 decoded header-list limits, aggregate buffered-response limits, and ALPN
 selector transition are already implemented on this branch. The current work
 was a correctness/conformance hardening pass.
 
-The hardening pass found and fixed four HTTP-side defects:
+The hardening pass found and fixed six HTTP-side defects:
 
 1. `Linux::Event::HTTP::_HTTP2::Server` handled GOAWAY but omitted the
    `H2_GOAWAY => 7` constant. That compile error made every HTTP/2-enabled
@@ -67,6 +67,47 @@ The hardening pass found and fixed four HTTP-side defects:
    `f9ab6b3d266543a0459353a15657e211466a1e4a` contain the implementation,
    focused regression, and reentrancy tightening.
 
+5. Pre-ALPN client bursts previously opened one negotiating TLS connection per
+   operation because a selector could hold only one provisional Transaction.
+   The Client now keeps an origin-scoped negotiating-selector pool. One selector
+   may hold up to 100 provisional Transactions while ALPN is unresolved. If H2
+   wins, all queued Transactions are submitted onto the selected multiplexed
+   connection while preserving their original Request/Transaction identity and
+   streaming-body controllers. If HTTP/1.1 wins, the first Transaction remains
+   on the negotiated connection and the remainder are reassigned onto separate
+   HTTP/1.1 connections, preserving fallback concurrency rather than serializing
+   them. The main implementation commits are
+   `7e839265cad0b74140048a4fed835059f2e815cc`,
+   `10eda72217e41350351dcdd9fdd880bdb317b63a`,
+   `d817e787ec2202604d1e675464f433c7dceee756`, and
+   `74d77163f4a5c907dfe5b4e0c6cb0a7872c4b1e1`.
+
+6. The new fallback-concurrency test exposed an older TLS lifecycle problem:
+   when more than one reusable same-origin HTTP/1 connection completed, the
+   Client kept one idle connection and discarded the surplus with immediate
+   `close()`. Over TLS this can produce "peer closed without close_notify".
+   Surplus reusable connections now retire with `end()` when available.
+   ClientSelector exposes a private delegating `end()` for the same purpose.
+   Commits `0ed883c2e57555fb4fe5018ef3ab1d199607094c` and
+   `272115a44fe69b49b83596ba4f0962e1954d8c36` contain that fix.
+
+Focused integration coverage:
+
+`t/100-http2-prealpn-fanout.t`
+
+starts six H2-capable operations and four HTTP/1.1-fallback operations before
+either TLS handshake completes. It proves:
+
+- each client initially creates only one negotiating TLS connection;
+- the six H2 operations complete through one selected H2 connection;
+- the four HTTP/1.1 fallback operations fan out onto four concurrent
+  connections after ALPN resolves;
+- every Request retains provisional HTTP/1.1 identity before ALPN;
+- H2 Requests become version 2 after selection while fallback Requests remain
+  version 1.1;
+- every target is delivered exactly once;
+- surplus fallback TLS connections retire without a missing-close_notify error.
+
 h2spec v2.6.0 now reaches the full 146-test run with:
 
 - 144 passed;
@@ -100,13 +141,18 @@ Validation:
   latest, and latest-threaded. The latest lane also passed the h2spec
   conformance gate, same-run production comparisons, benchmark smoke tests,
   and distribution integrity.
+- CI run `36216660868` validates the pre-ALPN selector queue, HTTP/1.1
+  fallback fan-out, and graceful surplus-connection retirement. Build-and-test
+  passed on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and latest-threaded.
+  The latest lane reported 55 files / 1,444 tests, Result PASS, passed the
+  h2spec conformance gate, production comparison/smoke work, and distribution
+  integrity.
+
+The earlier pre-ALPN connection fan-out issue is now resolved. Do not revert to
+one negotiating TLS connection per simultaneous operation.
 
 The next useful HTTP/2 work should begin from this state rather than revisiting
-the earlier ALPN/core-segfault investigation. The remaining known client-pool
-optimization is that operations started before the first connection finishes
-ALPN can still create multiple negotiating TLS connections for one origin.
-That should be addressed deliberately because HTTP/1.1 fallback cannot
-multiplex those pending operations the way HTTP/2 can.
+the earlier ALPN/core-segfault investigation.
 
 ### Post-0.002 main state
 
