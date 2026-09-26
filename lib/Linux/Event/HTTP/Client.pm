@@ -152,6 +152,12 @@ sub new ($class, %option) {
         $has_http2_max_header_list_size
             ? delete($option{http2_max_header_list_size})
             : 65_536;
+    my $has_http2_max_buffered_response_bytes =
+        exists $option{http2_max_buffered_response_bytes};
+    my $http2_max_buffered_response_bytes =
+        $has_http2_max_buffered_response_bytes
+            ? delete($option{http2_max_buffered_response_bytes})
+            : 67_108_864;
     croak 'new(): http2 must be zero or one'
         if !defined($http2) || ref($http2)
         || ("$http2" ne '0' && "$http2" ne '1');
@@ -162,6 +168,12 @@ sub new ($class, %option) {
         || $http2_max_header_list_size < 1;
     croak 'new(): http2_max_header_list_size requires http2 => 1'
         if !$http2 && $has_http2_max_header_list_size;
+    croak 'new(): http2_max_buffered_response_bytes must be a positive integer'
+        if ref($http2_max_buffered_response_bytes)
+        || "$http2_max_buffered_response_bytes" !~ /\A[0-9]+\z/
+        || $http2_max_buffered_response_bytes < 1;
+    croak 'new(): http2_max_buffered_response_bytes requires http2 => 1'
+        if !$http2 && $has_http2_max_buffered_response_bytes;
     croak 'new(): http2 currently requires the default connection_class'
         if $http2 && defined($connection_class_option);
     croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
@@ -217,6 +229,8 @@ sub new ($class, %option) {
         proxy_auth       => $proxy_auth,
         http2            => $http2,
         http2_max_header_list_size => 0 + $http2_max_header_list_size,
+        http2_max_buffered_response_bytes =>
+            0 + $http2_max_buffered_response_bytes,
         idle             => {},
         h2_pool          => {},
         connections      => {},
@@ -235,6 +249,9 @@ sub proxy_auth       ($self) { $self->{proxy_auth} }
 sub http2            ($self) { !!$self->{http2} }
 sub http2_max_header_list_size ($self) {
     return $self->{http2_max_header_list_size};
+}
+sub http2_max_buffered_response_bytes ($self) {
+    return $self->{http2_max_buffered_response_bytes};
 }
 sub is_closed        ($self) { !!$self->{closed} }
 
@@ -378,6 +395,8 @@ sub _new_connection ($self, $destination, $allow_http2 = 0) {
             scheme    => $destination->{scheme},
             authority => $destination->{host_header},
             max_header_list_size => $self->{http2_max_header_list_size},
+            max_buffered_response_bytes =>
+                $self->{http2_max_buffered_response_bytes},
             on_selected => sub ($selected, $protocol) {
                 my $client = $weak_self or return;
                 $client->_register_h2_connection($origin, $selected)
