@@ -801,7 +801,7 @@ Implementation:
 
 - the selector creates the ordinary Transaction and Body::Stream immediately;
 - pre-selection body writes go into a selector-owned ordered queue;
-- selector backpressure begins at 65,536 queued bytes;
+- cooperative selector backpressure begins at 65,536 queued bytes;
 - Content-Length is enforced while bytes are still pre-selection;
 - when ALPN resolves, the selected HTTP/1 or H2 executor adopts the same
   Transaction and existing Body::Stream rather than creating another producer;
