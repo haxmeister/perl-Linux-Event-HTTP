@@ -337,4 +337,81 @@ for my $stream_id (sort { $a <=> $b } keys %{$client_state->{path}}) {
 is($server_executor->stream_count, 0,
     'executor releases all stream state after completion');
 
+
+{
+    package T::HTTP2EndStream;
+    sub is_closed ($self) { 0 }
+    sub end ($self) {
+        ++$self->{end_count};
+        return $self;
+    }
+
+    package T::HTTP2EndSession;
+    sub want_read ($self)  { !!$self->{want_read} }
+    sub want_write ($self) { !!$self->{want_write} }
+
+    package main;
+
+    my $peer_stream = bless { end_count => 0 }, 'T::HTTP2EndStream';
+    my $peer_session = bless {
+        want_read  => 1,
+        want_write => 0,
+    }, 'T::HTTP2EndSession';
+    my $peer_executor = bless {
+        stream            => $peer_stream,
+        session           => $peer_session,
+        streams           => {},
+        closed            => 0,
+        transport_blocked => 0,
+        transport_ending  => 0,
+        peer_goaway       => 0,
+    }, 'Linux::Event::HTTP::_HTTP2::Server';
+
+    is($peer_executor->_on_frame_recv({ type => 7 }), 0,
+        'peer GOAWAY frame is accepted');
+    $peer_executor->_maybe_end_transport;
+    is($peer_stream->{end_count}, 1,
+        'peer GOAWAY gracefully ends transport after active streams drain');
+    ok($peer_executor->{transport_ending},
+        'peer GOAWAY marks graceful transport ending');
+
+    my $fatal_stream = bless { end_count => 0 }, 'T::HTTP2EndStream';
+    my $fatal_session = bless {
+        want_read  => 0,
+        want_write => 0,
+    }, 'T::HTTP2EndSession';
+    my $fatal_executor = bless {
+        stream            => $fatal_stream,
+        session           => $fatal_session,
+        streams           => {},
+        closed            => 0,
+        transport_blocked => 0,
+        transport_ending  => 0,
+        peer_goaway       => 0,
+    }, 'Linux::Event::HTTP::_HTTP2::Server';
+
+    $fatal_executor->_maybe_end_transport;
+    is($fatal_stream->{end_count}, 1,
+        'completed nghttp2 session gracefully ends transport');
+
+    my $live_stream = bless { end_count => 0 }, 'T::HTTP2EndStream';
+    my $live_session = bless {
+        want_read  => 1,
+        want_write => 0,
+    }, 'T::HTTP2EndSession';
+    my $live_executor = bless {
+        stream            => $live_stream,
+        session           => $live_session,
+        streams           => {},
+        closed            => 0,
+        transport_blocked => 0,
+        transport_ending  => 0,
+        peer_goaway       => 0,
+    }, 'Linux::Event::HTTP::_HTTP2::Server';
+
+    $live_executor->_maybe_end_transport;
+    is($live_stream->{end_count}, 0,
+        'live nghttp2 session keeps transport open');
+}
+
 done_testing;
