@@ -775,6 +775,67 @@ Remaining client-pool work:
 - transparent GOAWAY replay is not yet implemented;
 - cross-origin H2 connection coalescing remains deferred.
 
+### High-level HTTP/2 streaming Request bodies
+
+High-level streaming uploads now participate in HTTP/2 ALPN selection rather
+than being forced to HTTP/1.
+
+The public behavior is intentionally unchanged:
+
+    my $op = $client->post(
+        $url,
+        stream_body => {
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
+        },
+    );
+
+    my $body = $op->request_body;
+    $body->write($bytes);
+    $body->complete;
+
+The producer is available immediately, including before TLS handshake/ALPN
+completion.
+
+Implementation:
+
+- the selector creates the ordinary Transaction and Body::Stream immediately;
+- pre-selection body writes go into a selector-owned ordered queue;
+- selector backpressure begins at 65,536 queued bytes;
+- Content-Length is enforced while bytes are still pre-selection;
+- when ALPN resolves, the selected HTTP/1 or H2 executor adopts the same
+  Transaction and existing Body::Stream rather than creating another producer;
+- queued bytes are transferred once into the selected protocol's ordinary body
+  output path;
+- later writes go directly to that protocol executor;
+- an HTTP/1.1 fallback with unknown body length adds normal chunked framing;
+- H2 does not add Transfer-Encoding;
+- on_drain/on_cancel remain attached to the same producer object.
+
+Focused validation:
+
+`t/97-http2-high-level-streaming-upload.t`
+
+covers:
+
+- a 100,000-byte write made before ALPN;
+- pre-selection false/backpressure return;
+- H2 selection and body transfer;
+- on_drain continuation adding the final 4 bytes;
+- exact 100,004-byte H2 request body;
+- Content-Length preservation;
+- no H2 Transfer-Encoding;
+- Request identity/version/authority preservation;
+- no producer cancellation after successful completion;
+- HTTP/1.1 ALPN fallback using the same pre-selection producer;
+- automatic chunked HTTP/1.1 framing for unknown length;
+- immediate pre-ALPN Content-Length mismatch rejection.
+
+CI run `36211493852` passed Build-and-test with t/97 on Perl 5.36, 5.38,
+5.40, 5.42, 5.44, latest, and latest-threaded. A completed 5.42 lane reported
+52 files / 1,338 tests, Result PASS. Latest also passed Build-and-test and then
+continued through the longer comparison/dist steps.
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
