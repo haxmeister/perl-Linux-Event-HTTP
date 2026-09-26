@@ -29,7 +29,7 @@ use Linux::Event::Loop;
 my $backend = 'both';
 my $requests = 20_000;
 my $warmup = 2_000;
-my $concurrency = 100;
+my $concurrency = 64;
 my $response_bytes = 32;
 my $repeats = 3;
 
