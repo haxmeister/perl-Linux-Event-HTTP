@@ -1349,403 +1349,420 @@ __END__
 
 =head1 NAME
 
-Linux::Event::HTTP::Client - asynchronous HTTP client
+Linux::Event::HTTP::Client - high-level HTTP/1.x and HTTP/2 client
 
 =head1 SYNOPSIS
 
-    use HTTP::CookieJar;
-    use Uniform::HTTP::Auth;
+    use v5.36;
+    use Linux::Event::Loop;
+    use Linux::Event::HTTP::Client;
 
-    my $jar = HTTP::CookieJar->new;
-    my $auth = Uniform::HTTP::Auth->new(
-        credentials => sub ($context) {
-            return lookup_credentials($context);
-        },
-    );
+    my $loop = Linux::Event::Loop->new;
 
     my $client = Linux::Event::HTTP::Client->new(
-        loop => $loop,
-        max_redirects => 5,
-        max_auth_retries => 3,
-        proxy => 'http://proxy.example:3128',
-        cookie_jar => $jar,
-        auth => $auth,
-        proxy_auth => $auth,
+        loop  => $loop,
+        http2 => 1,
     );
 
     my $operation = $client->get(
-        'https://example.com/start',
-        on_redirect => sub ($op, $tx, $res, $next_url) {
-            say "redirecting to $next_url";
-        },
+        'https://example.com/',
+
+        buffer_body => 1_048_576,
+
         on_complete => sub ($tx) {
             say $tx->response->status;
+            say $tx->response->body;
+
+            $client->close;
+            $loop->stop;
         },
+
         on_error => sub ($tx, $error) {
             warn $error;
+            $client->close;
+            $loop->stop;
         },
     );
 
+    $loop->run;
+
 =head1 DESCRIPTION
 
-C<Linux::Event::HTTP::Client> is the high-level outbound HTTP entry point. It
-owns URL parsing, destination selection, redirect and authentication retry
-policy, connection creation, HTTPS transport policy, explicit forward-proxy
-routing, optional cookie-jar integration, and a small bounded reuse policy.
+C<Linux::Event::HTTP::Client> is the ordinary outbound HTTP entry point.
 
-Authentication mechanics are delegated to L<Uniform::HTTP::Auth>. The Client
-only receives 401/407 responses, supplies the exact Request object and
-protection-space origin, decides whether a Request is replayable, and performs
-the retry as another Transaction.
+It owns URL handling, connection selection and reuse, redirects, optional cookie
+and authentication policy, explicit proxy routing, TLS policy, and HTTP/2
+selection.
 
-Client methods return L<Linux::Event::HTTP::Client::Operation>. An operation
-normally contains one L<Linux::Event::HTTP::Transaction>, but redirects and
-automatic authentication retries create additional Transactions because a
-Transaction always represents exactly one Request/Response exchange.
+Client methods return a L<Linux::Event::HTTP::Client::Operation>. An Operation
+normally contains one Transaction. Redirects and automatic authentication
+retries create additional Transactions because one
+L<Linux::Event::HTTP::Transaction> always means exactly one Request/Response
+exchange.
 
-Outgoing Request bodies may be complete scalar bodies or explicit streaming
-producers owned by Transaction. Incoming Response handling remains
-incremental-first. C<on_body> consumes body chunks. Without C<on_body>, body
-bytes are drained and discarded. Explicit C<buffer_body =E<gt> $max_bytes>
-requests bounded whole-body buffering; there is no implicit unbounded buffering.
+=head1 CONSTRUCTOR
+
+    my $client = Linux::Event::HTTP::Client->new(%options);
+
+Common options include:
+
+=over 4
+
+=item * C<loop>
+
+The L<Linux::Event::Loop>.
+
+=item * C<http2>
+
+Enables HTTP/2 negotiation for direct HTTPS requests. HTTP/2 requires
+L<Net::HTTP2::nghttp2> 0.011 or newer.
+
+=item * C<tls>
+
+Linux::Event TLS options for HTTPS connections.
+
+=item * C<max_redirects>
+
+Default redirect limit. Default: 5.
+
+=item * C<max_auth_retries>
+
+Default automatic 401/407 authentication retry limit. Default: 3.
+
+=item * C<cookie_jar>
+
+An application-owned L<HTTP::CookieJar>.
+
+=item * C<auth>
+
+A L<Uniform::HTTP::Auth> manager for target-server authentication.
+
+=item * C<proxy_auth>
+
+A L<Uniform::HTTP::Auth> manager for proxy authentication.
+
+=item * C<proxy>
+
+Default explicit forward-proxy URL.
+
+=item * C<http2_max_header_list_size>
+
+Maximum decoded HTTP/2 response header-list size. Default: 65,536 bytes.
+
+=item * C<http2_max_buffered_response_bytes>
+
+Aggregate per-HTTP/2-connection budget for active buffered responses.
+Default: 67,108,864 bytes (64 MiB).
+
+=back
+
+=head1 REQUESTS
+
+The general form is:
+
+    my $operation = $client->request(
+        'POST',
+        'https://example.com/items',
+        body => $bytes,
+
+        on_response => sub ($tx, $res) { ... },
+        on_body     => sub ($tx, $res, $bytes) { ... },
+        on_complete => sub ($tx) { ... },
+        on_error    => sub ($tx, $error) { ... },
+    );
+
+Only absolute C<http> and C<https> target URLs are accepted.
+
+Convenience methods C<get>, C<head>, C<post>, C<put>, and C<delete> call
+C<request> with the corresponding method.
+
+=head1 CALLBACKS
+
+C<on_response> runs when the final response head is available.
+
+C<on_body> receives decoded response-body bytes incrementally.
+
+C<on_complete> runs after the complete final response boundary.
+
+C<on_error> reports terminal operation failure.
+
+C<on_redirect> runs when an actual redirect is followed.
+
+Low-level informational responses may be exposed through the appropriate
+connection callback path; redirect and authentication challenge bodies are
+consumed internally when the Client is going to continue the Operation.
+
+=head1 RESPONSE BODIES
+
+Incoming response bodies are streaming-first.
+
+Use C<on_body> for incremental consumption:
+
+    on_body => sub ($tx, $res, $bytes) {
+        process_bytes($bytes);
+    }
+
+If C<on_body> is absent, body bytes are drained rather than accumulated.
+
+To request whole-body buffering, provide an explicit limit:
+
+    buffer_body => 4 * 1024 * 1024
+
+After successful completion:
+
+    my $bytes = $tx->response->body;
+
+There is no implicit unbounded response buffer.
+
+=head1 REQUEST BODIES
+
+For a complete body already in memory:
+
+    $client->post(
+        $url,
+        body => $bytes,
+        ...
+    );
+
+For incremental production:
+
+    my $operation = $client->post(
+        $url,
+
+        stream_body => {
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
+        },
+
+        ...
+    );
+
+    my $body = $operation->request_body;
+    $body->write($chunk);
+    $body->complete;
+
+A streaming producer is available immediately, including while HTTPS
+TLS/ALPN selection is still in progress.
+
+A supplied Content-Length is enforced. Unknown-length HTTP/1.1 streaming uses
+chunked framing automatically. HTTP/2 uses its native DATA framing and does not
+add Transfer-Encoding.
+
+=head1 HTTP/2
+
+Enable HTTP/2 with:
+
+    my $client = Linux::Event::HTTP::Client->new(
+        loop  => $loop,
+        http2 => 1,
+    );
+
+For direct HTTPS requests the Client advertises C<h2> before C<http/1.1>. If H2
+is selected, the same high-level Operation, Transaction, Request, and callback
+model is used.
+
+Selected HTTP/2 connections are pooled per origin and may carry concurrent
+streams. The current local active-stream admission cap is 100 per connection;
+nghttp2 also enforces peer SETTINGS.
+
+A connection that receives GOAWAY is marked draining and receives no new
+Operations. Existing streams are allowed to finish. Transparent replay based on
+GOAWAY is not attempted without reliable last-stream-id information.
+
+Current HTTP/2 boundaries:
+
+=over 4
+
+=item * Direct HTTPS + ALPN is the production HTTP/2 path.
+
+=item * Cleartext h2c is not provided.
+
+=item * Explicit forward proxies use the HTTP/1 path.
+
+=item * HTTP/1 Upgrade and CONNECT handoff use the HTTP/1 path.
+
+=item * Explicit HTTP version selection uses the HTTP/1 path.
+
+=item * HTTP/2 currently requires the default Client connection class.
+
+=back
+
+=head1 REDIRECTS
+
+The Client follows 301, 302, 303, 307, and 308 by default.
+
+C<max_redirects> defaults to 5. Set it to 0 to disable automatic redirect
+following.
+
+Every followed redirect creates another Transaction in the Operation.
+
+301 and 302 may convert POST to GET. 303 uses GET except for HEAD. 307 and 308
+preserve method and body.
+
+Complete scalar bodies can be replayed where required. Streaming body producers
+are not automatically replayed.
+
+Sensitive caller-supplied origin credentials are not propagated across origins.
+
+=head1 COOKIES
+
+Cookie policy is provided by an injected L<HTTP::CookieJar>:
+
+    my $client = Linux::Event::HTTP::Client->new(
+        loop       => $loop,
+        cookie_jar => $jar,
+    );
+
+The jar is application-owned. Linux::Event::HTTP does not create an implicit
+global cookie store.
+
+Target URL identity remains separate from proxy route identity.
+
+=head1 AUTHENTICATION
+
+HTTP authentication mechanics are delegated to L<Uniform::HTTP::Auth>.
+
+Use C<auth> for target-server 401 challenges and C<proxy_auth> for proxy 407
+challenges.
+
+Automatic authentication retry creates another Transaction in the same
+Operation. The default retry limit is 3.
+
+Streaming Request producers are not automatically replayed after a challenge.
+
+=head1 FORWARD PROXIES
+
+A default explicit proxy may be supplied to the Client:
+
+    proxy => 'http://proxy.example:3128'
+
+It may also be overridden per request.
+
+The target URL remains the Operation identity while the proxy URL selects the
+route connection. Target cookies and target authentication remain keyed to the
+target; proxy authentication remains keyed to the proxy.
+
+For an HTTPS proxy endpoint, TLS is established to the proxy itself. An HTTPS
+target sent through ordinary forward-proxy mode is not silently converted into
+a CONNECT tunnel.
+
+=head1 CLIENT UPGRADE
+
+An ordinary HTTP/1.1 request can opt into protocol Upgrade with:
+
+    upgrade_to => 'MyProtocolConnection'
+
+The Request must advertise the Upgrade normally. On a validated 101 response,
+the HTTP Transaction completes and the same live Linux::Event stream transitions
+to the requested class.
+
+Already-read post-HTTP bytes are preserved for the new protocol.
+
+Upgrade is an HTTP/1 transport handoff and therefore uses the HTTP/1 path even
+when this Client has C<http2 =E<gt> 1>.
+
+=head1 CONNECT TUNNELS
+
+Use C<connect_tunnel> when a real HTTP/1.1 CONNECT tunnel is required:
+
+    $client->connect_tunnel(
+        $proxy_url,
+        $target_authority,
+        tunnel_to => 'MyTunnelConnection',
+        ...
+    );
+
+A successful 2xx CONNECT response completes the HTTP Transaction at the
+response-head boundary and transitions the same live Linux::Event stream to the
+requested tunnel class.
+
+Non-2xx responses remain ordinary HTTP responses.
+
+=head1 CONNECTION REUSE
+
+HTTP/1 connections are reused when response framing and persistence rules leave
+the connection safe for another exchange.
+
+Selected HTTP/2 connections remain in a per-origin pool while streams are
+active and may carry concurrent Operations.
+
+Forward-proxy HTTP/1 connections are pooled by route origin rather than target
+origin.
 
 =head1 METHODS
 
 =head2 request
 
-    my $operation = $client->request(
-        'POST',
-        'https://example.com/api/items',
-        body => $bytes,
-        max_redirects => 5,
-        max_auth_retries => 3,
-        on_response => sub ($tx, $res) { ... },
-        on_complete => sub ($tx) { ... },
-        on_error => sub ($tx, $error) { ... },
-    );
-
-Builds the canonical Request for each exchange and starts the operation
-immediately. Only absolute C<http> and C<https> target URLs are accepted.
-
-Without a selected proxy, the Client obtains or creates a connection for the
-target URL origin and sends the path/query in origin-form. With a selected
-proxy, it connects to that route and sends the target URL in HTTP/1 absolute-form.
-Host remains the target Host. Target identity and route identity remain separate.
-
-Callbacks C<on_response>, C<on_body>, and C<on_complete> describe the final
-response. Intermediate redirect and authentication-challenge response bodies are
-consumed according to normal HTTP framing but are not delivered through
-C<on_body>. C<on_redirect> runs only for actual redirects, not auth retries.
-
-=head2 authentication
-
-    my $auth = Uniform::HTTP::Auth->new(
-        credentials => sub ($context) {
-            return $store->lookup(
-                $context->{origin},
-                $context->{realm},
-                $context->{scheme},
-            );
-        },
-    );
-
-    my $client = Linux::Event::HTTP::Client->new(
-        loop => $loop,
-        auth => $auth,
-        proxy_auth => $auth,
-    );
-
-C<auth> handles target-server 401 challenges from C<WWW-Authenticate>.
-C<proxy_auth> handles proxy 407 challenges from C<Proxy-Authenticate>. They may
-be different Uniform::HTTP::Auth objects or the same callback-based object.
-Both options can be overridden per ordinary request with another object or
-explicitly disabled for that request with undef.
-
-The Client passes the normalized target or proxy origin and the actual
-L<Linux::Event::HTTP::Request> to C<Uniform::HTTP::Auth 0.02>. Request implements
-the Uniform message contract directly, so authentication reads its exact method,
-request-target, and buffered scalar body without consuming an incremental body
-producer. The returned value is installed as C<Authorization> or
-C<Proxy-Authorization> on a new Transaction.
-
-Authentication responses are drained to their normal HTTP message boundary
-before retry. A retry may reuse the persistent connection when framing and
-connection state permit it, or establish another connection when necessary.
-A proxy-authenticated request can subsequently receive a target 401; the target
-authentication retry preserves the proxy field for that same request-target.
-
-Generated authentication fields are attempt-local. They are not copied across
-redirects because Digest authentication incorporates request-target state and
-Uniform::HTTP::Auth 0.02 does not provide a preemptive-auth cache. A redirected
-target or proxy can challenge again normally.
-
-Streaming Request producers are not replayed automatically. If a satisfiable
-401/407 challenge is received for a streaming Request, the operation terminates
-with an error rather than guessing how to rewind application state.
-
-C<max_auth_retries> defaults to 3 and is an operation-wide bound separate from
-C<max_redirects>. Zero disables automatic challenge retry and exposes 401/407 as
-ordinary final responses. When the limit is reached, the next challenge is also
-exposed as the final response rather than retried again.
-
-When C<auth> is configured, caller-supplied C<Authorization> is rejected for
-that request. Likewise C<proxy_auth> owns C<Proxy-Authorization>. Disable the
-corresponding manager for a request if manually constructing that field.
-
-The C<auth>, C<proxy_auth>, and C<max_auth_retries> accessors return the Client
-defaults.
-
-=head2 cookie_jar
-
-C<cookie_jar> is an optional injected L<HTTP::CookieJar>. The Client does not
-create a jar implicitly. Before each ordinary Request exchange the Client asks
-the jar for C<cookie_header($target_url)> and feeds every Response Set-Cookie
-field back through C<add($target_url,$value)> before redirect/authentication
-policy or application callbacks run.
-
-Cookie identity is always the target URL. A selected proxy never becomes the
-cookie origin. When C<cookie_jar> is configured, caller-supplied Cookie fields
-are rejected so cookie selection has one owner. The C<cookie_jar> accessor
-returns the configured jar object or undef.
-
-=head2 connect_tunnel
-
-C<connect_tunnel($proxy_url, $target_authority, ...)> establishes one explicit
-HTTP/1.1 CONNECT tunnel through the named proxy endpoint. The Client-level
-default proxy and cookie jar are not consulted for tunnel routing or cookies.
-The Client-level C<proxy_auth> is consulted by default for 407 challenges and
-can be overridden or disabled with the method's C<proxy_auth> option.
-
-A successful 2xx response transitions the same live Linux::Event stream to the
-required C<tunnel_to> class. Non-2xx responses remain ordinary HTTP. A
-satisfiable 407 can be drained and retried as another CONNECT Transaction before
-that final outcome.
-
-=head2 redirect policy
-
-C<max_redirects> is a non-negative integer and defaults to 5. It can be set on
-the Client or overridden per request. Zero disables automatic redirect
-following. Automatic redirects recognize 301, 302, 303, 307, and 308 when
-exactly one Location field is present.
-
-301 and 302 change POST to GET and discard the body. 303 uses GET, or HEAD when
-the original method was HEAD, and discards the body. 307 and 308 preserve the
-method and body. Complete scalar bodies can be replayed for method-preserving
-redirects; streaming bodies are not replayed automatically.
-
-Authorization and caller-managed Cookie fields are stripped on cross-origin
-redirects. With C<cookie_jar>, Cookie is regenerated independently for every
-hop from the new target URL. Uniform-managed Authorization and
-Proxy-Authorization fields are attempt-local and are regenerated only after a
-new challenge.
-
-=head2 request bodies
-
-C<body> supplies a complete scalar Request body. C<stream_body =E<gt> { ... }>
-selects incremental body production instead; the two are mutually exclusive.
-The producer belongs to the current Transaction and is available through the
-returned operation.
-
-A supplied Content-Length is enforced exactly; otherwise HTTP/1.1 uses chunked
-transfer coding automatically. HTTP/1.0 streaming requires Content-Length.
-
-=head2 client Upgrade
-
-C<upgrade_to =E<gt> $class> requests a live HTTP/1.1 protocol handoff through
-the low-level Client::Connection. On a validated 101 response, the HTTP
-Transaction completes and the same live stream transitions to C<$class>.
-Authentication challenges may precede the successful 101 when the Request is
-otherwise replayable.
-
-=head2 buffer_body
-
-C<buffer_body =E<gt> $max_bytes> requests bounded whole-response buffering and
-cannot be combined with C<on_body>. The limit applies after HTTP transfer
-framing has been removed and also applies while redirect or authentication
-challenge bodies are consumed.
+Starts one high-level HTTP Operation and returns it immediately.
 
 =head2 get, head, post, put, delete
 
-Convenience forms that call C<request> with the corresponding HTTP method.
+Convenience request methods.
+
+=head2 connect_tunnel
+
+Establishes an explicit HTTP/1.1 CONNECT tunnel.
 
 =head2 loop
 
-Returns the Linux::Event Loop.
-
-=head2 connection_class
-
-Returns the configured Client::Connection class.
+Returns the Loop.
 
 =head2 http2
 
-Returns true when the Client was constructed with C<http2 =E<gt> 1>.
+True when HTTP/2 support is enabled.
 
 =head2 http2_max_header_list_size
 
-Returns the decoded HTTP/2 response header-list limit. The default is 65,536
-bytes.
+Returns the HTTP/2 decoded response header-list limit.
 
 =head2 http2_max_buffered_response_bytes
 
-Returns the aggregate per-H2-connection budget for simultaneously buffered
-response bodies. The default is 67,108,864 bytes (64 MiB).
+Returns the aggregate per-H2-connection buffered-response budget.
 
 =head2 max_redirects
 
-Returns the Client default redirect limit.
+Returns the default redirect limit.
 
 =head2 max_auth_retries
 
-Returns the Client default automatic authentication retry limit.
+Returns the default automatic authentication retry limit.
 
-=head2 proxy
+=head2 cookie_jar
 
-Returns the configured Client default forward-proxy URL, or undef when there is
-no default proxy. An individual operation may override or bypass the default.
+Returns the configured cookie jar or undef.
 
 =head2 auth
 
-Returns the configured default target L<Uniform::HTTP::Auth> object or undef.
+Returns the configured target authentication manager or undef.
 
 =head2 proxy_auth
 
-Returns the configured default proxy L<Uniform::HTTP::Auth> object or undef.
+Returns the configured proxy authentication manager or undef.
+
+=head2 proxy
+
+Returns the configured default forward-proxy URL or undef.
+
+=head2 connection_class
+
+Returns the configured HTTP/1 Client::Connection class.
 
 =head2 is_closed
 
-True after C<close>.
+True after the Client has been closed.
 
 =head2 close
 
-Closes all reachable idle or active client connections and prevents new
-requests. Returns the Client.
-
-=head1 CONNECTION REUSE
-
-For HTTP/1, at most one idle connection is retained per route origin. For direct
-requests, the route origin is the target origin. For a request using a proxy
-route, the route origin is the proxy endpoint, so sequential requests for
-different target origins can reuse the same persistent proxy connection. Cookie
-and target-auth selection do not use route origin; proxy authentication does.
-
-When several HTTP/1 connections for one route become idle, one is retained and
-surplus reusable transports are ended gracefully.
-
-HTTP/2 uses a separate per-origin pool. A selected H2 connection remains
-available while streams are active and can accept concurrent Transactions up to
-the local admission limit. A GOAWAY connection is marked draining, accepts no
-new work, and retires after its active streams finish.
-
-A connection that successfully leaves HTTP through Upgrade or CONNECT is never
-returned to the HTTP idle pool. A non-2xx CONNECT response remains HTTP and may
-leave a reusable proxy connection when its normal response framing permits it.
-
-=head1 HTTPS AND HTTP/2
-
-HTTPS uses Linux::Event TLS transport.
-
-Without C<http2>, the Client advertises only C<http/1.1> and retains the
-existing HTTP/1 behavior.
-
-Enable HTTP/2 negotiation for direct HTTPS requests with:
-
-    my $client = Linux::Event::HTTP::Client->new(
-        loop  => $loop,
-        http2 => 1,
-        tls   => {
-            verify => 1,
-        },
-    );
-
-The Client advertises C<h2> before C<http/1.1>. If the peer selects C<h2>, the
-same live TLS Stream is transitioned from the HTTP/1 native-consumer connection
-to the private HTTP/2 executor before any HTTP/2 preface or SETTINGS bytes are
-sent. If the peer selects C<http/1.1>, the existing HTTP/1 connection remains
-in use.
-
-The operation and Transaction are created immediately, before TLS negotiation
-finishes. If H2 is selected, that same mutable Request object is committed as
-HTTP/2: its version becomes C<2>, its scheme and authority metadata are filled,
-and the HTTP/1 Host field is consumed into authority rather than exposed as an
-ordinary HTTP/2 field. Object identity is preserved.
-
-An already-selected H2 connection commits later Requests as HTTP/2 immediately.
-
-High-level HTTP/2 support applies to direct HTTPS requests with scalar,
-bodyless, or streaming Request bodies.
-
-Operations started for the same origin before the first TLS/ALPN decision share
-a bounded negotiating selector. Up to 100 provisional Transactions can wait on
-one selector. If ALPN selects H2, those Transactions are submitted onto the one
-multiplexed connection. If ALPN selects HTTP/1.1, the first Transaction stays on
-the negotiated connection and the remainder are fanned out onto separate
-HTTP/1.1 connections so fallback concurrency is preserved.
-
-A streaming producer is available immediately, even before TLS/ALPN completes.
-Bytes written before protocol selection are held in a per-Transaction selector
-queue with a 64 KiB cooperative high-water mark. After ALPN selects H2 or
-HTTP/1.1, the same Transaction and Body::Stream producer are adopted by the
-selected protocol and the queued bytes are transferred in order. Content-Length
-is enforced before selection when present. Unknown-length HTTP/1.1 fallback
-gains normal chunked framing; H2 does not synthesize Transfer-Encoding.
-
-Explicit forward-proxy routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and
-explicit HTTP version selection continue to use the existing HTTP/1 path even
-when C<http2> is true.
-
-HTTP/2 requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer binding
-and the underlying nghttp2 library. Distribution metadata records this as the
-optional C<http2> feature rather than requiring it for HTTP/1-only installs.
-Constructing a Client with C<http2 =E<gt> 1> fails explicitly when that
-capability is unavailable.
-
-Redirect, cookie, and target-authentication policy remains owned by the
-high-level Client. Redirect and authentication retries create normal additional
-Transactions and may reuse the selected H2 connection; the HTTP/2 executor does
-not duplicate those policies.
-
-Selected H2 connections remain available to the Client pool while streams are
-active, so later Operations to the same origin can use concurrent HTTP/2
-streams on one TLS connection. The current local admission cap is 100 active
-streams per connection; nghttp2 continues to enforce the peer's actual
-SETTINGS_MAX_CONCURRENT_STREAMS behavior.
-
-A connection that has received GOAWAY is marked draining and receives no new
-Operations. Existing streams are allowed to finish. Transparent retry of
-streams affected by GOAWAY is not yet part of the high-level policy.
-
-Decoded HTTP/2 response header lists default to a 65,536-byte limit, using the
-HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per field.
-Override it with C<http2_max_header_list_size>. The value is advertised through
-SETTINGS_MAX_HEADER_LIST_SIZE and independently enforced after HPACK decoding.
-An oversized header block fails only its stream.
-
-Concurrent H2 C<buffer_body> responses also share a connection-wide aggregate
-memory budget. The default is 67,108,864 bytes (64 MiB), configurable with
-C<http2_max_buffered_response_bytes>. This limit is independent from each
-operation's own C<buffer_body> ceiling. Crossing the aggregate limit fails only
-the stream whose next body chunk would exceed the connection budget; unrelated
-streams continue. Completed or failed streams immediately release their
-connection-level buffer accounting.
-
-Operations submitted before any connection to the origin has completed ALPN
-selection may still create more than one initial TLS connection. Once an H2
-connection is selected, it enters the multiplex-capable pool.
-
-C<http2 =E<gt> 1> currently requires the default C<connection_class> and an
-installed C<Net::HTTP2::nghttp2> implementation.
-
-For an C<https> forward-proxy endpoint, TLS is established to the proxy and the
-target URI is sent in HTTP/1 absolute-form. Cookie and target-auth origin
-identity remain the target URL; proxy-auth origin identity remains the proxy
-endpoint.
+Closes Client-owned idle and active connections according to Client shutdown
+semantics.
 
 =head1 SEE ALSO
 
-L<Uniform::HTTP::Auth>, L<HTTP::CookieJar>,
+L<Linux::Event::HTTP>, L<Linux::Event::HTTP::Server>,
 L<Linux::Event::HTTP::Client::Operation>,
-L<Linux::Event::HTTP::Client::Connection>, L<Linux::Event::HTTP::Request>,
-L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Transaction>,
-L<Linux::Event::HTTP::Body::Stream>.
+L<Linux::Event::HTTP::Client::Connection>,
+L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Response>,
+L<Linux::Event::HTTP::Transaction>, L<Linux::Event::HTTP::Body::Stream>,
+L<Uniform::HTTP::Auth>, L<HTTP::CookieJar>.
 
 =cut

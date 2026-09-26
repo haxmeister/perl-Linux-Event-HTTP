@@ -229,7 +229,7 @@ __END__
 
 =head1 NAME
 
-Linux::Event::HTTP::Server - HTTP server endpoint
+Linux::Event::HTTP::Server - HTTP/1.x and HTTP/2 server endpoint
 
 =head1 SYNOPSIS
 
@@ -243,6 +243,7 @@ Linux::Event::HTTP::Server - HTTP server endpoint
         loop => $loop,
         host => '127.0.0.1',
         port => 8080,
+
         on_request => sub ($conn, $req, $res) {
             $res->header('Content-Type', 'text/plain');
             $res->body("hello\n");
@@ -251,74 +252,144 @@ Linux::Event::HTTP::Server - HTTP server endpoint
 
     $loop->run;
 
-=head1 DESCRIPTION
+For HTTPS with HTTP/2 negotiation:
 
-C<Linux::Event::HTTP::Server> is the ordinary entry point for an HTTP server.
-It listens using Linux::Event and invokes C<on_request> whenever a validated
-request head is available.
+    my $server = Linux::Event::HTTP::Server->new(
+        loop  => $loop,
+        port  => 8443,
+        http2 => 1,
 
-The callback receives:
+        tls => {
+            cert_file => '/path/server-cert.pem',
+            key_file  => '/path/server-key.pem',
+        },
 
-=over 4
-
-=item * C<$conn> - the persistent HTTP connection
-
-=item * C<$req> - the current L<Linux::Event::HTTP::Request>
-
-=item * C<$res> - the L<Linux::Event::HTTP::Response> for that request
-
-=back
-
-Request and Response are HTTP message objects. The one-request/one-response
-exchange is represented by L<Linux::Event::HTTP::Transaction> and is available
-as C<< $conn->transaction >> while active. Response does not retain a hidden
-Connection or peer-Request back-reference.
-
-A complete scalar response body is configured on the Response:
-
-    $res->body("hello\n");
-
-For an incremental outgoing body, use the active Transaction:
-
-    on_request => sub ($conn, $req, $res) {
-        $res->header('Content-Type', 'text/plain');
-        my $body = $conn->transaction->response_body;
-        $body->write("one\n");
-        $body->complete("two\n");
-    },
-
-Completing an HTTP response does not normally close the connection. HTTP
-keep-alive may reuse the same connection for later Transactions.
-
-=head1 DEFERRED RESPONSES
-
-Inside an HTTP callback, C<< $res->body(...) >> is committed after callback
-return when protocol state permits. This allows metadata to be configured in
-any natural order before output begins.
-
-If another event completes the Response later, retain the Transaction and send
-the complete scalar message explicitly:
-
-    my $tx = $conn->transaction;
-
-    Linux::Event::Kernel::Timer->new(
-        loop => $conn->loop,
-        after => 0.1,
-        on_timer => sub ($timer) {
-            $tx->response->body("later\n");
-            $tx->send_response;
+        on_request => sub ($conn, $req, $res) {
+            $res->body("HTTP " . $req->version . "\n");
         },
     );
 
-The explicit C<send_response> call is intentional. Response remains a
-transport-independent message and setting C<body> later does not secretly write
-to a socket.
+=head1 DESCRIPTION
+
+C<Linux::Event::HTTP::Server> is the ordinary server entry point.
+
+The same C<on_request> callback model is used for HTTP/1 and HTTP/2. The
+callback receives:
+
+    ($conn, $req, $res)
+
+where C<$req> is the Request message, C<$res> is the Response message, and
+C<$conn> is the live HTTP connection.
+
+The active L<Linux::Event::HTTP::Transaction> is available through:
+
+    my $tx = $conn->transaction;
+
+Use the Transaction only when exchange lifecycle operations are needed, such as
+streaming output, delayed output, Upgrade, or CONNECT handoff.
+
+=head1 CONSTRUCTOR
+
+    my $server = Linux::Event::HTTP::Server->new(%options);
+
+Common options are:
+
+=over 4
+
+=item * C<loop>
+
+The L<Linux::Event::Loop>.
+
+=item * C<host>, C<port>, C<path>
+
+Listener address options passed to Linux::Event.
+
+=item * C<on_request>
+
+Required unless the configured connection class provides an C<on_request>
+method.
+
+=item * C<on_body>
+
+Receives request-body chunks:
+
+    on_body => sub ($conn, $req, $res, $bytes) { ... }
+
+If omitted, request-body bytes are drained instead of accumulated.
+
+=item * C<on_request_end>
+
+Runs after the complete request body boundary is reached.
+
+=item * C<tls>
+
+Enables Linux::Event TLS transport.
+
+=item * C<http2>
+
+When true, enables HTTP/2 negotiation for TLS connections. HTTP/2 requires
+L<Net::HTTP2::nghttp2> 0.011 or newer.
+
+=item * C<http2_max_header_list_size>
+
+Maximum decoded HTTP/2 request/trailer header-list size. Default: 65,536 bytes.
+
+=item * C<tuning>
+
+Linux::Event Stream tuning for accepted connections.
+
+=item * C<data>
+
+Application data available through C<< $server->data >> and connection state.
+
+=item * C<connection_class>
+
+Advanced HTTP/1 connection subclass. The default is
+L<Linux::Event::HTTP::Server::Connection>. HTTP/2 currently requires the
+default connection class.
+
+=back
+
+Listener and accepted-connection lifecycle callbacks supported by the
+constructor include C<on_ready>, C<on_transport_ready>, C<on_drain>, C<on_eof>,
+C<on_error>, C<on_close>, and C<on_listener_error>.
+
+=head1 RESPONSES
+
+For a complete response already in memory:
+
+    on_request => sub ($conn, $req, $res) {
+        $res->status(200);
+        $res->header('Content-Type', 'text/plain');
+        $res->body("hello\n");
+    }
+
+A scalar body configured during an HTTP callback is committed after that
+callback returns.
+
+Completing a response does not normally close the connection. HTTP persistence
+is handled by the selected protocol.
+
+=head1 STREAMING RESPONSES
+
+For incremental output, obtain a body producer from the Transaction:
+
+    on_request => sub ($conn, $req, $res) {
+        my $body = $conn->transaction->response_body(
+            on_drain  => sub ($body) { ... },
+            on_cancel => sub ($body) { ... },
+        );
+
+        $body->write($chunk);
+        $body->complete($final_chunk);
+    };
+
+C<write> follows Linux::Event backpressure semantics. A false return means the
+bytes were accepted but the producer should pause until C<on_drain> runs.
 
 =head1 REQUEST BODIES
 
-Request bodies are incremental-first. Add C<on_body> when body bytes are needed,
-and C<on_request_end> when work should happen after the complete request input
-has arrived:
+Request bodies are streaming-first:
 
     my $server = Linux::Event::HTTP::Server->new(
         loop => $loop,
@@ -337,182 +408,109 @@ has arrived:
         },
     );
 
-If C<on_body> is absent, the server drains request-body bytes without building a
-whole-body scalar. C<Request-E<gt>is_complete> becomes true at the actual
-request-body boundary.
+If C<on_body> is omitted, body bytes are drained rather than stored in the
+Request.
 
-=head1 UPGRADE
+=head1 DELAYED RESPONSES
 
-HTTP Upgrade is an exchange operation owned by Transaction. Configure the
-Response switching metadata and ask the active Transaction to hand off the live
-transport:
+A Response may be completed by another event later. Retain the Transaction and
+send the finished scalar response explicitly:
+
+    my $tx = $conn->transaction;
+
+    Linux::Event::Kernel::Timer->new(
+        loop  => $conn->loop,
+        after => 0.1,
+
+        on_timer => sub ($timer) {
+            $tx->response->body("later\n");
+            $tx->send_response;
+        },
+    );
+
+C<send_response> is explicit because Response is a message object, not a hidden
+transport handle.
+
+=head1 TLS AND HTTP/2
+
+TLS is enabled with the C<tls> constructor option.
+
+HTTP/2 is enabled with:
+
+    http2 => 1
+
+When enabled, the Server advertises C<h2> before C<http/1.1>. ALPN selects the
+protocol while applications continue using the same C<on_request> callback and
+Request/Response classes.
+
+The current production HTTP/2 server path is TLS + ALPN. Cleartext h2c is not
+provided.
+
+C<http2 =E<gt> 1> owns the TLS ALPN list and currently requires the default
+connection class.
+
+=head1 UPGRADE AND CONNECT
+
+HTTP/1.1 protocol handoff belongs to Transaction.
+
+Upgrade:
 
     $res->header('Upgrade', 'my-protocol');
     $conn->transaction->upgrade('MyProtocolConnection');
 
-The server validates the HTTP/1.1 Upgrade, queues the 101 response, completes
-the HTTP Transaction, and then uses Linux::Event C<transition_to()> on the same
-stream object. Response itself has no C<upgrade> method.
+CONNECT:
 
-=head1 CONNECTION SUBCLASSES
-
-Most applications do not need to subclass the HTTP connection. Use
-C<connection_class> when reusable transport defaults, stream tuning, socket
-policy, or callback methods belong on a class:
-
-    package MyHTTP;
-    use parent 'Linux::Event::HTTP::Server::Connection';
-
-    sub stream_tuning ($class) {
-        return read_budget_bytes => 262_144;
+    if ($req->method eq 'CONNECT') {
+        $conn->transaction->tunnel('MyTunnelConnection');
     }
 
-    sub on_request ($self, $req, $res) {
-        $res->body("hello\n");
-    }
+Both operations transition the same live Linux::Event stream after the HTTP
+exchange reaches the correct boundary. Already-read post-HTTP bytes are
+preserved.
 
-    package main;
+These are HTTP/1 transport-handoff operations; they do not describe HTTP/2
+stream-level tunnels.
 
-    my $server = Linux::Event::HTTP::Server->new(
-        loop             => $loop,
-        port             => 8080,
-        connection_class => 'MyHTTP',
-    );
+=head1 MANAGED PRE-FORK
 
-C<connection_class> defaults to
-L<Linux::Event::HTTP::Server::Connection>.
-
-=head1 MANAGED PRE-FORK SERVERS
-
-Linux::Event 0.117 provides a Loop-aware C<fork> operation. A plain HTTP server
-can participate without a separate worker API because C<listener> exposes the
-underlying L<Linux::Event::IO::Sock::Listener>:
+For plain HTTP, the underlying Listener can be intentionally shared with
+L<Linux::Event> managed fork support:
 
     my $pid = $loop->fork(
         share => [ $server->listener ],
     );
 
-The Listener remains active in both processes. Each process has its own rebuilt
-Loop reactor and may accept connections from the intentionally shared listening
-socket.
-
-Call C<< $loop->fork(...) >> only while the Loop is quiescent, as required by
-Linux::Event. Worker creation, supervision, restart policy, privilege changes,
-and process shutdown remain application concerns rather than HTTP protocol
-features.
-
-This shared-Listener pattern is covered for plain HTTP. Do not assume the same
-deployment recipe for a TLS Listener until the TLS case has been validated
-separately.
-
-=head1 TUNING AND CONNECTION CALLBACKS
-
-Supply deployment-specific Stream tuning directly to the Server. These values
-override C<stream_tuning()> defaults on the configured Connection class:
-
-    my $server = Linux::Event::HTTP::Server->new(
-        loop => $loop,
-        port => 8080,
-        tuning => {
-            read_size         => 131_072,
-            read_budget_bytes => 524_288,
-            idle_timeout      => 60,
-        },
-        on_request => sub ($conn, $req, $res) {
-            $res->body("hello\n");
-        },
-    );
-
-Accepted-connection lifecycle callbacks are C<on_ready>,
-C<on_transport_ready>, C<on_drain>, C<on_eof>, C<on_error>, and C<on_close>.
-C<on_listener_error> is the distinct callback for listening and acceptance
-failures. The advanced C<on_accept($listener, $conn)> callback receives the
-underlying Listener and each newly accepted HTTP Connection.
-
-=head1 TLS
-
-HTTPS uses the same Server API. Activate Linux::Event TLS transport policy with
-the Server C<tls> option:
-
-    my $server = Linux::Event::HTTP::Server->new(
-        loop => $loop,
-        port => 8443,
-        tls => {
-            cert_file => '/etc/myapp/server-cert.pem',
-            key_file  => '/etc/myapp/server-key.pem',
-        },
-        on_request => sub ($conn, $req, $res) {
-            $res->body("secure\n");
-        },
-    );
-
-Without C<http2>, HTTPS retains the existing HTTP/1 behavior.
-
-Enable HTTP/2 negotiation explicitly with:
-
-    my $server = Linux::Event::HTTP::Server->new(
-        loop  => $loop,
-        port  => 8443,
-        http2 => 1,
-        tls => {
-            cert_file => '/etc/myapp/server-cert.pem',
-            key_file  => '/etc/myapp/server-key.pem',
-        },
-        on_request => sub ($conn, $req, $res) {
-            $res->body("same callback API\n");
-        },
-    );
-
-The Server then advertises C<h2> before C<http/1.1>. When C<h2> is selected,
-the live TLS connection is changed to the private HTTP/2 executor before any
-HTTP/2 preface or SETTINGS bytes are emitted. If C<http/1.1> is selected, the
-existing HTTP/1 connection remains unchanged.
-
-C<http2 =E<gt> 1> currently requires the default connection class and owns the
-TLS ALPN list. A custom C<connection_class> remains HTTP/1-only for now rather
-than having its application-defined class identity silently replaced during an
-HTTP/2 transition.
-
-HTTP/2 requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer binding
-and the underlying nghttp2 library. Distribution metadata records this as the
-optional C<http2> feature rather than requiring it for HTTP/1-only installs.
-Constructing a Server with C<http2 =E<gt> 1> fails explicitly when that
-capability is unavailable.
-
-Decoded HTTP/2 request and trailer header lists default to a 65,536-byte limit,
-using the HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per
-field. Override it with C<http2_max_header_list_size>. The same value is
-advertised to the peer through SETTINGS_MAX_HEADER_LIST_SIZE and enforced again
-after HPACK decoding.
-
-A Connection subclass may define C<tls_defaults()> for reusable HTTP/1 ALPN and
-timeout defaults. The Server C<tls> option is still required to activate TLS,
-so the same Connection class may be used for plain HTTP and HTTPS listeners.
+Worker creation and supervision remain application policy. This documented
+sharing pattern is for plain HTTP; do not assume the same recipe for TLS
+Listeners without separate validation.
 
 =head1 METHODS
 
 =head2 listener
 
-Returns the underlying L<Linux::Event::IO::Sock::Listener> for advanced use.
+Returns the underlying L<Linux::Event::IO::Sock::Listener>.
+
+=head2 loop
+
+Returns the Loop.
 
 =head2 connection_class
 
-Returns the configured HTTP Connection class name.
+Returns the configured HTTP/1 connection class.
 
 =head2 http2
 
-Returns true when this Server was constructed with C<http2 =E<gt> 1>.
+True when HTTP/2 support was enabled for this Server.
 
 =head2 http2_max_header_list_size
 
-Returns the decoded HTTP/2 request/trailer header-list limit. The default is
-65,536 bytes.
+Returns the configured HTTP/2 decoded header-list limit.
 
 =head2 data
 
-Returns the application data supplied to the Server.
+Returns the Server application data.
 
-=head2 loop, fh, fd, host, port, path, family, family_number, is_tcp, is_unix, state
+=head2 fh, fd, host, port, path, family, family_number, is_tcp, is_unix, state
 
 Delegate to the underlying Listener.
 
@@ -526,13 +524,14 @@ Resumes acceptance and returns the Server.
 
 =head2 close
 
-Closes the listening endpoint and returns the Server. Existing accepted HTTP
-connections keep their independent lifecycles.
+Closes the listening endpoint and returns the Server. Existing accepted
+connections keep their own lifecycles.
 
 =head1 SEE ALSO
 
-L<Linux::Event::HTTP::Server::Connection>, L<Linux::Event::HTTP::Transaction>,
-L<Linux::Event::HTTP::Request>, L<Linux::Event::HTTP::Response>,
-L<Linux::Event::HTTP::Body::Stream>, L<Linux::Event::TLS>.
+L<Linux::Event::HTTP>, L<Linux::Event::HTTP::Client>,
+L<Linux::Event::HTTP::Server::Connection>,
+L<Linux::Event::HTTP::Transaction>, L<Linux::Event::HTTP::Request>,
+L<Linux::Event::HTTP::Response>, L<Linux::Event::HTTP::Body::Stream>.
 
 =cut

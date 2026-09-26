@@ -49,6 +49,10 @@ Revision history for Linux-Event-HTTP
     - Expand CI across Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and
       latest-threaded, and add a separate HTTP/1-only lane proving the optional
       HTTP/2 binding is not installed by normal prerequisites.
+    - Simplify the release documentation around the shared HTTP/1.x and HTTP/2
+      public API, move implementation history out of the user path, and make the
+      supported protocol versions explicit in README, POD, and distribution
+      metadata.
 
 0.002  2026-09-20
 

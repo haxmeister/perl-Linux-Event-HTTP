@@ -33,7 +33,7 @@ my %provides = map {
 WriteMakefile(
     NAME             => 'Linux::Event::HTTP',
     VERSION_FROM     => 'lib/Linux/Event/HTTP.pm',
-    ABSTRACT         => 'Native high-performance HTTP protocol support for Linux::Event',
+    ABSTRACT         => 'Native HTTP/1.x and HTTP/2 support for Linux::Event',
     AUTHOR           => 'Joshua S. Day <hax@cpan.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036000',
