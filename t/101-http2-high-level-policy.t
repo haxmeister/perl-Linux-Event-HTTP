@@ -9,15 +9,25 @@ use HTTP::CookieJar;
 use Scalar::Util qw(refaddr);
 use Uniform::HTTP::Auth;
 
+our $H2_SESSION_CLASS;
 BEGIN {
-    eval {
-        require Net::HTTP2::nghttp2;
-        Net::HTTP2::nghttp2->VERSION('0.011');
-        1;
-    } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
+    if ($ENV{LEHTTP_H2_NATIVE_TEST}) {
+        eval {
+            require Linux::Event::HTTP::_HTTP2::Native;
+            Linux::Event::HTTP::_HTTP2::Native->available;
+            1;
+        } or plan skip_all => 'native libnghttp2 bridge is not built';
+        $H2_SESSION_CLASS = 'Linux::Event::HTTP::_HTTP2::Native';
+    } else {
+        eval {
+            require Net::HTTP2::nghttp2;
+            Net::HTTP2::nghttp2->VERSION('0.011');
+            1;
+        } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
 
-    Net::HTTP2::nghttp2->available
-        or plan skip_all => 'nghttp2 library is not available';
+        Net::HTTP2::nghttp2->available
+            or plan skip_all => 'nghttp2 library is not available';
+    }
 }
 
 use Linux::Event::HTTP::Client;
@@ -73,6 +83,8 @@ my $server = Linux::Event::HTTP::Server->new(
     host  => '127.0.0.1',
     port  => 0,
     http2 => 1,
+    (defined($H2_SESSION_CLASS)
+        ? (_http2_session_class => $H2_SESSION_CLASS) : ()),
     tls   => {
         cert_file => $cert,
         key_file  => $key,
@@ -134,6 +146,8 @@ my $auth = Uniform::HTTP::Auth->new(
 my $client = Linux::Event::HTTP::Client->new(
     loop       => $loop,
     http2      => 1,
+    (defined($H2_SESSION_CLASS)
+        ? (_http2_session_class => $H2_SESSION_CLASS) : ()),
     cookie_jar => $jar,
     auth       => $auth,
     tls        => {
