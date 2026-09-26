@@ -17,6 +17,7 @@ use constant {
     H2_END_STREAM => 0x1,
     H2_INTERNAL_ERROR => 2,
     H2_CANCEL     => 8,
+    H2_ENHANCE_YOUR_CALM => 11,
 };
 
 my $BODY_HIGH_WATER = 65_536;
@@ -30,6 +31,8 @@ sub new ($class, %option) {
         ? delete($option{autostart}) : 1;
     my $max_active_streams = exists($option{max_active_streams})
         ? delete($option{max_active_streams}) : 100;
+    my $max_header_list_size = exists($option{max_header_list_size})
+        ? delete($option{max_header_list_size}) : 65_536;
     die 'new(): autostart must be zero or one'
         if !defined($autostart) || ref($autostart)
         || "$autostart" !~ /\A[01]\z/;
@@ -37,6 +40,10 @@ sub new ($class, %option) {
         if !defined($max_active_streams) || ref($max_active_streams)
         || "$max_active_streams" !~ /\A[0-9]+\z/
         || $max_active_streams < 1;
+    die 'new(): max_header_list_size must be a positive integer'
+        if !defined($max_header_list_size) || ref($max_header_list_size)
+        || "$max_header_list_size" !~ /\A[0-9]+\z/
+        || $max_header_list_size < 1;
     die 'new(): unknown options: ' . join(', ', sort keys %option)
         if %option;
 
@@ -56,6 +63,7 @@ sub new ($class, %option) {
         started           => 0,
         draining          => 0,
         max_active_streams => 0 + $max_active_streams,
+        max_header_list_size => 0 + $max_header_list_size,
     }, $class;
 
     my $weak = $self;
@@ -97,6 +105,7 @@ sub start ($self) {
     $self->{started} = 1;
     $self->{session}->send_connection_preface(
         max_concurrent_streams => 100,
+        max_header_list_size   => $self->{max_header_list_size},
     );
     $self->flush;
     return $self;
@@ -343,11 +352,28 @@ sub _request_data_provider ($stream_id, $max_length, $provider) {
 sub _on_begin_headers ($self, $stream_id, $frame_type, $flags) {
     my $state = $self->{streams}{$stream_id} or return 0;
     $state->{header_block} = [];
+    $state->{header_list_size} = 0;
+    $state->{header_limit_exceeded} = 0;
     return 0;
 }
 
 sub _on_header ($self, $stream_id, $name, $value, $flags) {
     my $state = $self->{streams}{$stream_id} or return 0;
+    return 0 if $state->{header_limit_exceeded};
+
+    my $size = $state->{header_list_size}
+        + length($name) + length($value) + 32;
+    if ($size > $self->{max_header_list_size}) {
+        $state->{header_limit_exceeded} = 1;
+        $self->_stream_failure(
+            $stream_id,
+            'HTTP/2 response header list exceeds configured limit',
+            H2_ENHANCE_YOUR_CALM,
+        );
+        return 0;
+    }
+    $state->{header_list_size} = $size;
+
     push @{$state->{header_block}}, [ $name, $value ];
     return 0;
 }
@@ -368,6 +394,7 @@ sub _on_frame_recv ($self, $frame) {
     my $stream_id = $frame->{stream_id} // 0;
     return 0 if !$stream_id;
     my $state = $self->{streams}{$stream_id} or return 0;
+    return 0 if $state->{header_limit_exceeded};
     my $tx = $state->{transaction};
 
     if (($frame->{type} // -1) == H2_HEADERS) {
