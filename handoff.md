@@ -623,6 +623,21 @@ its HTTP/1-native-consumer -> HTTP/2-raw transition.**
 
 This is an HTTP executor-lifecycle requirement, not a Linux::Event core bug.
 
+Clean validation run `36208252365` removed all phase instrumentation and used
+the actual private HTTP/2 connection classes. Results:
+
+- Perl 5.36: PASS;
+- latest Perl: PASS;
+- latest threaded Perl: PASS;
+- Build and test: PASS, including the cleaned t/94 selector;
+- same-run production native HTTP comparisons: PASS;
+- end-to-end benchmark smoke: PASS;
+- client receive-path benchmark smoke: PASS;
+- distribution integrity / disttest: PASS.
+
+The selector fix is therefore validated independently of the temporary
+diagnostic subclasses and warning markers.
+
 Linux::Event 0.117 feature adoption in HTTP is also now underway/completed on
 this branch:
 
