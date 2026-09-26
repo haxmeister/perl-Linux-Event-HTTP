@@ -233,6 +233,7 @@ sub new ($class, %option) {
             0 + $http2_max_buffered_response_bytes,
         idle             => {},
         h2_pool          => {},
+        h2_negotiating   => {},
         connections      => {},
         closed           => 0,
     }, $class;
@@ -291,6 +292,60 @@ sub _track_connection ($self, $connection) {
     $self->{connections}{$id} = $connection;
     weaken($self->{connections}{$id});
     return $connection;
+}
+
+sub _register_negotiating_connection ($self, $origin, $connection) {
+    return if $self->{closed} || !$connection || $connection->is_closed;
+    return if !$connection->can('_http2_capable')
+        || !$connection->_http2_capable;
+
+    my $protocol = $connection->protocol // '';
+    return if $protocol ne 'negotiating' && $protocol ne 'selecting-h2';
+
+    my $pool = $self->{h2_negotiating}{$origin} //= [];
+    my $id = refaddr($connection);
+    return $connection if grep { refaddr($_) == $id } @$pool;
+    push @$pool, $connection;
+    return $connection;
+}
+
+sub _remove_negotiating_connection ($self, $origin, $connection) {
+    my $pool = $self->{h2_negotiating}{$origin} or return;
+    my $id = refaddr($connection);
+    my @keep = grep {
+        $_ && refaddr($_) != $id && !$_->is_closed
+    } @$pool;
+
+    if (@keep) {
+        $self->{h2_negotiating}{$origin} = \@keep;
+    } else {
+        delete $self->{h2_negotiating}{$origin};
+    }
+    return;
+}
+
+sub _take_negotiating_connection ($self, $origin) {
+    my $pool = $self->{h2_negotiating}{$origin} or return undef;
+    my @keep;
+    my $selected;
+
+    for my $connection (@$pool) {
+        next if !$connection || $connection->is_closed;
+        my $protocol = $connection->protocol // '';
+        next if $protocol ne 'negotiating' && $protocol ne 'selecting-h2';
+
+        push @keep, $connection;
+        $selected //= $connection
+            if $connection->can_queue_transaction;
+    }
+
+    if (@keep) {
+        $self->{h2_negotiating}{$origin} = \@keep;
+    } else {
+        delete $self->{h2_negotiating}{$origin};
+    }
+
+    return $selected;
 }
 
 sub _register_h2_connection ($self, $origin, $connection) {
@@ -397,12 +452,21 @@ sub _new_connection ($self, $destination, $allow_http2 = 0) {
             max_header_list_size => $self->{http2_max_header_list_size},
             max_buffered_response_bytes =>
                 $self->{http2_max_buffered_response_bytes},
+            http1_connection_factory => sub ($selected) {
+                my $client = $weak_self
+                    or die 'HTTP Client disappeared during ALPN selection';
+                return $client->_new_connection($destination, 0);
+            },
             on_selected => sub ($selected, $protocol) {
                 my $client = $weak_self or return;
+                $client->_remove_negotiating_connection(
+                    $origin, $selected,
+                );
                 $client->_register_h2_connection($origin, $selected)
                     if $protocol eq 'h2';
             },
         );
+        $self->_register_negotiating_connection($origin, $connection);
     } else {
         $connection = $self->{connection_class}->connect(%connect);
     }
@@ -413,6 +477,10 @@ sub _connection_for ($self, $destination, $allow_http2 = 0) {
     if ($allow_http2) {
         my $h2 = $self->_take_h2_connection($destination->{origin});
         return $h2 if $h2;
+
+        my $negotiating =
+            $self->_take_negotiating_connection($destination->{origin});
+        return $negotiating if $negotiating;
     }
 
     return $self->_take_idle_connection(
@@ -1241,9 +1309,11 @@ sub close ($self) {
 
     my %closed;
     my @h2 = map { @$_ } values %{$self->{h2_pool}};
+    my @negotiating = map { @$_ } values %{$self->{h2_negotiating}};
     for my $connection (
         values %{$self->{idle}},
         @h2,
+        @negotiating,
         values %{$self->{connections}},
     ) {
         next if !$connection;
@@ -1254,6 +1324,7 @@ sub close ($self) {
 
     $self->{idle} = {};
     $self->{h2_pool} = {};
+    $self->{h2_negotiating} = {};
     $self->{connections} = {};
     return $self;
 }
