@@ -1693,9 +1693,9 @@ Explicit forward-proxy routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and
 explicit HTTP version selection continue to use the existing HTTP/1 path even
 when C<http2> is true.
 
-HTTP/2 currently requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer
-binding and the underlying nghttp2 library. They are not yet normal distribution
-prerequisites.
+HTTP/2 requires the optional L<Net::HTTP2::nghttp2> 0.011 or newer binding
+and the underlying nghttp2 library. Distribution metadata records this as the
+optional C<http2> feature rather than requiring it for HTTP/1-only installs.
 Constructing a Client with C<http2 =E<gt> 1> fails explicitly when that
 capability is unavailable.
 
