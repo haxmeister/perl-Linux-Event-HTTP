@@ -20,6 +20,18 @@ jobs:
           - perl: '5.36'
             multi_thread: false
             label: '5.36'
+          - perl: '5.38'
+            multi_thread: false
+            label: '5.38'
+          - perl: '5.40'
+            multi_thread: false
+            label: '5.40'
+          - perl: '5.42'
+            multi_thread: false
+            label: '5.42'
+          - perl: '5.44'
+            multi_thread: false
+            label: '5.44'
           - perl: '5'
             multi_thread: false
             label: 'latest'
@@ -52,7 +64,7 @@ jobs:
             cpanm --notest https://github.com/haxmeister/perl-Uniform-HTTP/archive/b2b243957a8f82dfef6081431d7e5e6f84dc1b08.tar.gz
 
       - name: Install HTTP/2 spike dependency
-        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike' && matrix.perl == '5' && matrix.multi_thread == false
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/http2-nghttp2-spike'
         run: |
           sudo apt-get install --yes libnghttp2-dev
           cpanm --notest 'Net::HTTP2::nghttp2@0.008'
