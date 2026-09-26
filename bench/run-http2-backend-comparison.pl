@@ -226,7 +226,6 @@ sub run_once ($which) {
         loop => $loop,
         host => '127.0.0.1',
         port => $listener->port,
-        ($native ? (class => 'Bench::H2RawSource') : ()),
         on_ready => sub ($stream) {
             $client_stream = $stream;
             $client_executor = Linux::Event::HTTP::_HTTP2::Client->new(
@@ -265,7 +264,10 @@ sub run_once ($which) {
         },
     );
 
-    my $connecting = Linux::Event::IO::Sock::Stream->connect(%client_option);
+    my $stream_class = $native
+        ? 'Bench::H2RawSource'
+        : 'Linux::Event::IO::Sock::Stream';
+    my $connecting = $stream_class->connect(%client_option);
     $loop->run;
 
     $finish->();
