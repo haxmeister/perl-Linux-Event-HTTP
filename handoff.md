@@ -833,8 +833,15 @@ covers:
 
 CI run `36211493852` passed Build-and-test with t/97 on Perl 5.36, 5.38,
 5.40, 5.42, 5.44, latest, and latest-threaded. A completed 5.42 lane reported
-52 files / 1,338 tests, Result PASS. Latest also passed Build-and-test and then
-continued through the longer comparison/dist steps.
+52 files / 1,338 tests, Result PASS.
+
+The latest non-threaded lane also completed the full regression gate:
+
+- Build and test: PASS;
+- same-run production native HTTP comparisons: PASS;
+- end-to-end benchmark smoke: PASS;
+- client receive-path benchmark smoke: PASS;
+- distribution integrity / disttest: PASS.
 
 ### HTTP/2 distribution decision
 
