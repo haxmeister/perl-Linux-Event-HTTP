@@ -54,6 +54,18 @@ WriteMakefile(
         'meta-spec' => {
             version => 2,
         },
+        optional_features => {
+            http2 => {
+                description => 'HTTP/2 support via Net::HTTP2::nghttp2',
+                prereqs => {
+                    runtime => {
+                        requires => {
+                            'Net::HTTP2::nghttp2' => '0.011',
+                        },
+                    },
+                },
+            },
+        },
         no_index => {
             package => [qw(
                 Linux::Event::HTTP::_ClientAuth
