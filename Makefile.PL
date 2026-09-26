@@ -7,6 +7,14 @@ if ($^O ne 'linux') {
     exit 0;
 }
 
+my @build_dirs = qw(xshttp1);
+if (system("pkg-config --exists 'libnghttp2 >= 1.57.0' >/dev/null 2>&1") == 0) {
+    push @build_dirs, 'xshttp2';
+    print "native HTTP/2 bridge: libnghttp2 >= 1.57.0 found\n";
+} else {
+    print "native HTTP/2 bridge: libnghttp2 >= 1.57.0 not found; skipping XS backend\n";
+}
+
 my @public_modules = qw(
     Linux::Event::HTTP
     Linux::Event::HTTP::Body::Stream
@@ -37,7 +45,7 @@ WriteMakefile(
     AUTHOR           => 'Joshua S. Day <hax@cpan.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036000',
-    DIR              => [qw(xshttp1)],
+    DIR              => \@build_dirs,
     CONFIGURE_REQUIRES => {
         'ExtUtils::MakeMaker' => 0,
     },
@@ -62,6 +70,7 @@ WriteMakefile(
                 Linux::Event::HTTP::_HTTP1
                 Linux::Event::HTTP::_HTTP1::Chunked
                 Linux::Event::HTTP::_HTTP2
+                Linux::Event::HTTP::_HTTP2::Native
                 Linux::Event::HTTP::_HTTP2::Client
                 Linux::Event::HTTP::_HTTP2::ClientConnection
                 Linux::Event::HTTP::_HTTP2::ClientSelector
