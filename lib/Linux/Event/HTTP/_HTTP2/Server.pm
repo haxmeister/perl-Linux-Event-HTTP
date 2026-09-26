@@ -12,6 +12,7 @@ our $VERSION = '0.002';
 use constant {
     H2_DATA       => 0,
     H2_HEADERS    => 1,
+    H2_GOAWAY     => 7,
     H2_END_STREAM => 0x1,
     H2_INTERNAL_ERROR => 2,
     H2_CANCEL     => 8,
