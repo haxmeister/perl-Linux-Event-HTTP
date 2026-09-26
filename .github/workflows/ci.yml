@@ -101,13 +101,13 @@ jobs:
           perl -Mblib bench/run-http2-backend-comparison.pl \
             --requests=15000 \
             --warmup=2000 \
-            --concurrency=100 \
+            --concurrency=64 \
             --response-bytes=32 \
             --repeats=3
           perl -Mblib bench/run-http2-backend-comparison.pl \
             --requests=5000 \
             --warmup=500 \
-            --concurrency=100 \
+            --concurrency=64 \
             --response-bytes=16384 \
             --repeats=3
 
