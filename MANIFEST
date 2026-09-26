@@ -117,6 +117,7 @@ t/101-http2-high-level-policy.t
 t/102-http2-cancellation-isolation.t
 t/103-http2-native-binding.t
 t/104-http2-native-raw-input.t
+t/105-http2-native-providers.t
 tools/http2-h2spec-server.pl
 xshttp2/Makefile.PL
 xshttp2/Native.xs
