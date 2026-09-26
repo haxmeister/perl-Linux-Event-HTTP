@@ -538,104 +538,125 @@ The next implementation step is a private HTTP/2 executor around one nghttp2
 Session and a stream-id-to-Transaction map. It should consume the mapper rather
 than duplicating message semantics in callbacks.
 
-### Linux::Event 0.117 transition finding and feature review
+### Linux::Event 0.117 review and HTTP/2 selector diagnosis
 
-The HTTP/2 experiment is now tested against the released Linux::Event 0.117
-tag, not the earlier pinned 0.116 commit.
+The HTTP/2 experiment now targets the released Linux::Event 0.117 baseline.
 
-CI run `36201072448` confirms:
+A Linux::Event core investigation attempted to reproduce the earlier selector
+SIGSEGV without HTTP code. Core could not reproduce a transition failure.
 
-- Linux::Event 0.117 installs successfully;
-- HTTP/1 tests remain green through the ordinary production suite;
-- HTTP/2 message mapping, ALPN, private server executor, and private client
-  executor tests `t/90` through `t/93` pass;
-- `t/94-http2-selector-transition-spike.t` still exits with SIGSEGV before
-  producing TAP.
+The core investigation covered the exact intended transition shape:
 
-The remaining HTTP/2 selector blocker is therefore a current-core transition
-bug, not an obsolete 0.116 limitation.
+- TLS Stream with an active external/native raw consumer;
+- ALPN selecting h2;
+- pause_read;
+- Loop->defer;
+- native-consumer -> ordinary raw transition_to();
+- object/fd/TLS identity preservation;
+- preserved decrypted plaintext;
+- later duplex TLS I/O after transition;
+- native-consumer destruction exactly once.
 
-The missing Linux::Event transition cross-product is precise:
+That regression passes the full Linux::Event functional matrix. The retained
+core investigation branch head reported back to HTTP is:
 
-- plain native-consumer -> ordinary raw transition is covered in Linux::Event;
-- TLS ordinary-stream -> ordinary-stream transition with preserved decrypted
-  tail is covered in Linux::Event;
-- TLS native-consumer -> ordinary raw transition is not covered;
-- the HTTP/2 selector exercises exactly TLS native-consumer -> ordinary raw and
-  segfaults on Linux::Event 0.117 even after reads are paused and the transition
-  is deferred with Loop->defer() outside TLS on_ready dispatch.
+`e1cc1010a0134e77f874b9c0a6fe62831bf4c82b`
 
-Do not work around this by changing Linux::Event from the HTTP repository. The
-next core action should be a reduced Linux::Event regression reproducing TLS
-native-consumer -> ordinary raw transition.
+and contains only the focused regression, MANIFEST entry, and handoff
+documentation. No production core source change was required.
 
-Linux::Event 0.117 feature review for HTTP:
+The HTTP-side diagnosis then found the actual ordering problem.
 
-1. Loop->defer(): KEEP / ADOPT.
-   HTTP currently uses zero-delay Kernel::Timer objects solely to escape the
-   current callback stack in four production handoff paths:
-   server Upgrade, server CONNECT, client Upgrade, and client CONNECT.
-   Loop->defer() is the exact semantic primitive for that work and should
-   replace those timer allocations once Linux::Event >= 0.117 becomes the HTTP
-   prerequisite. The HTTP/2 ALPN selector should use the same mechanism after
-   the transition bug is fixed.
+The original selector constructed the HTTP/2 executor before transition_to().
+The executor constructor was active: it created the nghttp2 Session, called
+send_connection_preface(), called mem_send(), and immediately wrote the
+preface/SETTINGS bytes through the Stream while the Stream was still the
+HTTP/1 native-consumer connection class.
 
-2. Loop->fork(): USEFUL TO USERS, NOT YET AN INTERNAL SERVER FEATURE.
-   HTTP::Server already exposes ->listener, and Linux::Event Listener supports
-   managed-fork share/move. A plain HTTP pre-fork example can therefore likely
-   use:
-       $loop->fork(share => [ $server->listener ])
-   without a new HTTP API. Validate this in HTTP, and validate HTTPS/TLS
-   Listener sharing separately, before documenting a supported HTTP pre-fork
-   recipe. Do not make Server automatically fork workers.
+The old effective order was:
 
-3. Kernel::Inotify: NO DIRECT HTTP-LAYER INTEGRATION.
-   It could help an application watch certificates, static files, or config,
-   but those are deployment/application policies. HTTP should not acquire
-   filesystem-watch responsibilities merely because core now provides them.
+    TLS ALPN selects h2
+    pause_read
+    Loop->defer
+    construct H2 executor
+    send/flush H2 preface and SETTINGS on HTTP/1 connection
+    transition_to H2 raw connection
+    resume_read
 
-4. TTY borrowed-handle ownership: NO HTTP IMPACT.
+That ordering produced the SIGSEGV seen in the earlier t/94 runs.
 
-5. inherited-Loop misuse detection after ordinary CORE::fork(): INDIRECT SAFETY
-   BENEFIT ONLY. HTTP needs no wrapper around it.
+The selector was instrumented around executor construction, transition,
+executor start/flush, resume_read, target on_data, and executor input. The H2
+executor was then made capable of passive construction with `autostart => 0`.
 
-6. public POD rewrite: use 0.117 documentation as the current core contract,
-   especially Loop->defer(), managed fork, Listener recipes, and transition
-   semantics.
+The corrected order is:
 
-HTTP-side 0.117 adoption now completed on this branch:
+    TLS ALPN selects h2
+    pause_read
+    Loop->defer
+    construct passive H2 executor
+    attach executor to the connection
+    transition_to H2 raw connection
+    start H2 executor
+    send/flush H2 preface and SETTINGS
+    resume_read
+    process H2 input
 
-- the distribution prerequisite is Linux::Event >= 0.117;
-- server Upgrade, server CONNECT, client Upgrade, and client CONNECT now use
-  Loop->defer() rather than zero-delay Kernel::Timer objects;
-- real-duration timers remain timers;
-- focused existing Upgrade/CONNECT tests pass with the defer implementation;
-- t/43-managed-fork-server.t validates a plain HTTP server using
-  Loop->fork(share => [ $server->listener ]);
-- Server POD documents managed pre-fork Listener sharing while keeping worker
-  management outside the HTTP protocol API;
-- TLS/HTTPS managed-fork Listener sharing remains intentionally unclaimed until
-  separately validated.
+Diagnostic run `36208108220` proves this removes the crash:
 
-Validation run 36203949038 reached all of these tests successfully:
+- client executor construction completes;
+- client transition_to() completes;
+- client executor start/preface flush completes;
+- server executor construction completes;
+- server transition_to() completes;
+- server executor start/preface flush completes;
+- both sides resume reads;
+- both H2 raw target on_data callbacks run;
+- repeated server/client executor input() calls return normally;
+- the complete t/94 selector test passes inside the Build-and-test step,
+  including the HTTP/1.1 ALPN fallback connection.
 
-- t/42-upgrade.t PASS;
-- t/43-managed-fork-server.t PASS;
-- t/67-client-upgrade.t PASS;
-- t/69-client-connect.t PASS;
-- t/72-server-connect.t PASS;
-- t/90 through t/93 HTTP/2 tests PASS.
+Therefore the HTTP/2 selector rule is now explicit:
 
-The same run still fails only at the known current-core blocker:
+**No HTTP/2 protocol bytes may be written until the live Stream has completed
+its HTTP/1-native-consumer -> HTTP/2-raw transition.**
 
-- t/94-http2-selector-transition-spike.t exits with SIGSEGV while exercising
-  TLS native-consumer -> ordinary raw transition on Linux::Event 0.117.
+This is an HTTP executor-lifecycle requirement, not a Linux::Event core bug.
 
-Next after the core transition fix:
+Linux::Event 0.117 feature adoption in HTTP is also now underway/completed on
+this branch:
 
-- continue the HTTP/2 high-level ALPN selector using Loop->defer();
-- separately validate managed-fork TLS/HTTPS Listener sharing before documenting
-  it as supported.
+1. Loop->defer()
+   - distribution prerequisite raised to Linux::Event >= 0.117;
+   - server Upgrade uses Loop->defer();
+   - server CONNECT uses Loop->defer();
+   - client Upgrade uses Loop->defer();
+   - client CONNECT uses Loop->defer();
+   - real-duration timers remain Kernel::Timer objects;
+   - existing focused Upgrade/CONNECT tests pass.
+
+2. Loop->fork()
+   - t/43-managed-fork-server.t validates plain HTTP Listener sharing through:
+         $loop->fork(share => [ $server->listener ])
+   - Server POD documents this as a deployment pattern;
+   - worker creation/supervision remains application policy;
+   - TLS/HTTPS managed-fork Listener sharing remains unclaimed until separately
+     validated.
+
+3. Kernel::Inotify
+   - no HTTP protocol integration planned; file/config/certificate watching is
+     application/deployment policy.
+
+4. TTY ownership changes
+   - no HTTP impact.
+
+5. ordinary-fork misuse detection
+   - indirect safety improvement only; no HTTP wrapper required.
+
+The next HTTP/2 work is to keep the now-validated selector ordering, complete a
+clean final branch gate without the temporary phase diagnostics, and then wire
+the private HTTP/2 executors behind the high-level Server/Client ALPN selection
+path.
 
 ### HTTP/2 distribution decision
 
