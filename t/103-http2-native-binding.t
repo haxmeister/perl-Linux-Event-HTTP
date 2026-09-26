@@ -61,8 +61,8 @@ my $listener = Linux::Event::IO::Sock::Listener->new(
                         my $path = $server_request{$stream_id}{':path'} // '';
                         $session->submit_response(
                             $stream_id,
-                            [
-                                [ ':status', '200' ],
+                            status  => 200,
+                            headers => [
                                 [ 'x-native-path', $path ],
                             ],
                         );
@@ -73,7 +73,7 @@ my $listener = Linux::Event::IO::Sock::Listener->new(
                 },
             );
             $server_session{$stream->fd} = $session;
-            $session->start(100);
+            $session->send_connection_preface(max_concurrent_streams => 100);
             flush_session($stream, $session);
         },
         on_data => sub ($stream, $bytes) {
@@ -122,13 +122,15 @@ my $client = Linux::Event::IO::Sock::Stream->connect(
 
         for my $number (1 .. $expected) {
             my $path = "/native/$number";
-            my $stream_id = $client_session->submit_request([
-                [ ':method', 'GET' ],
-                [ ':scheme', 'http' ],
-                [ ':authority', 'native.test' ],
-                [ ':path', $path ],
-                [ 'x-request-number', "$number" ],
-            ]);
+            my $stream_id = $client_session->submit_request(
+                method    => 'GET',
+                scheme    => 'http',
+                authority => 'native.test',
+                path      => $path,
+                headers   => [
+                    [ 'x-request-number', "$number" ],
+                ],
+            );
             $path_by_id{$stream_id} = $path;
         }
 
