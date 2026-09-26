@@ -430,10 +430,17 @@ negotiating selector. An H2 result collapses them onto one multiplexed
 connection; an HTTP/1.1 result fans them back out so fallback requests are not
 forced through one serialized connection.
 
-HTTP/2 support currently requires the optional `Net::HTTP2::nghttp2` 0.011
-or newer binding and libnghttp2. The distribution does not yet make that binding a normal
-Makefile.PL prerequisite; asking for `http2 => 1` without the capability
-installed produces an explicit constructor error.
+HTTP/2 support requires the optional `Net::HTTP2::nghttp2` 0.011 or
+newer binding and libnghttp2. The CPAN metadata records this as the optional
+`http2` feature rather than forcing the binding onto HTTP/1-only installs.
+Install it explicitly when HTTP/2 is wanted:
+
+```sh
+cpanm 'Net::HTTP2::nghttp2@0.011'
+```
+
+Asking for `http2 => 1` without the capability installed produces an explicit
+constructor error.
 
 An HTTPS proxy endpoint uses TLS to the proxy itself. Cookie and
 target-authentication origin identity remain the target URL; proxy
