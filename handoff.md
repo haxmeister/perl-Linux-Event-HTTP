@@ -21,15 +21,15 @@ Draft PR: #39.
 
 Current stabilization code head before this handoff update:
 
-`036a43c70232ffce3dda0d6156044f5653ccd560`
-"Gate HTTP/2 conformance against known nghttp2 baseline"
+`f9ab6b3d266543a0459353a15657e211466a1e4a`
+"Avoid reentrant client transport end from nghttp2 callback"
 
 The high-level HTTP/2 Server/Client work, multiplexing, streaming uploads,
 decoded header-list limits, aggregate buffered-response limits, and ALPN
 selector transition are already implemented on this branch. The current work
 was a correctness/conformance hardening pass.
 
-The hardening pass found and fixed three HTTP-side defects:
+The hardening pass found and fixed four HTTP-side defects:
 
 1. `Linux::Event::HTTP::_HTTP2::Server` handled GOAWAY but omitted the
    `H2_GOAWAY => 7` constant. That compile error made every HTTP/2-enabled
@@ -54,6 +54,18 @@ The hardening pass found and fixed three HTTP-side defects:
    `7fa30b5e1d905468248d6ad3828486dba934319e` and
    `defeead0cc362d8259b2184ce3d801f688af589c` contain the implementation and
    focused regression coverage.
+
+4. The HTTP/2 Client correctly stopped assigning new work after peer GOAWAY,
+   but a draining connection could remain open after its final active stream
+   disappeared until some later request happened to revisit the pool. The
+   Client executor now retires that transport with `Stream->end` after the
+   drain completes, while leaving ordinary reusable H2 connections open.
+   Transport shutdown is initiated from the post-nghttp2 flush path rather
+   than reentrantly from inside the nghttp2 stream-close callback. Commits
+   `d1c0a6b291b2164d655aae144a6413e45d51a2c6`,
+   `fc282b7a0943bd7b9a1b17a11a387070885da9a6`, and
+   `f9ab6b3d266543a0459353a15657e211466a1e4a` contain the implementation,
+   focused regression, and reentrancy tightening.
 
 h2spec v2.6.0 now reaches the full 146-test run with:
 
@@ -80,13 +92,21 @@ Validation:
   including Build-and-test on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and
   latest-threaded, the h2spec run, benchmark smoke/comparisons, and distribution
   integrity.
-- CI run `36215274760` validates the added regressions and conformance gate.
-  Build-and-test is green on every explicit Perl lane and latest-threaded; the
-  latest-Perl h2spec gate is green. Its longer benchmark/dist tail may still be
-  running when this handoff commit is created.
+- CI run `36215274760` validates the added server regressions and conformance
+  gate. It fully passed Build-and-test on every configured Perl lane, the
+  latest-Perl h2spec gate, benchmark/smoke work, and distribution integrity.
+- CI run `36215569666` validates the client GOAWAY retirement change and its
+  focused regression. It fully passed on Perl 5.36, 5.38, 5.40, 5.42, 5.44,
+  latest, and latest-threaded. The latest lane also passed the h2spec
+  conformance gate, same-run production comparisons, benchmark smoke tests,
+  and distribution integrity.
 
 The next useful HTTP/2 work should begin from this state rather than revisiting
-the earlier ALPN/core-segfault investigation.
+the earlier ALPN/core-segfault investigation. The remaining known client-pool
+optimization is that operations started before the first connection finishes
+ALPN can still create multiple negotiating TLS connections for one origin.
+That should be addressed deliberately because HTTP/1.1 fallback cannot
+multiplex those pending operations the way HTTP/2 can.
 
 ### Post-0.002 main state
 
