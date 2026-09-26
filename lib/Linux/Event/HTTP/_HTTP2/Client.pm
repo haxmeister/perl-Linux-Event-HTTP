@@ -57,6 +57,7 @@ sub new ($class, %option) {
         if %option;
 
     require Net::HTTP2::nghttp2;
+    Net::HTTP2::nghttp2->VERSION('0.011');
     require Net::HTTP2::nghttp2::Session;
     die 'new(): nghttp2 library is unavailable'
         if !Net::HTTP2::nghttp2->available;
