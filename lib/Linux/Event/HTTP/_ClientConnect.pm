@@ -7,7 +7,6 @@ use Carp qw(croak);
 use Scalar::Util qw(refaddr);
 
 use Linux::Event::IO::Sock::Stream ();
-use Linux::Event::Kernel::Timer;
 
 our $VERSION = '0.002';
 
@@ -125,25 +124,20 @@ sub schedule ($class, $conn, $transaction, $response, $target) {
         resume_read => $resume_read,
     };
 
-    Linux::Event::Kernel::Timer->new(
-        loop     => $conn->loop,
-        after    => 0,
-        data     => {
-            connection  => $conn,
-            transaction => $transaction,
-            target      => $target,
-        },
-        on_timer => \&_handoff,
-    );
+    my $state = {
+        connection  => $conn,
+        transaction => $transaction,
+        target      => $target,
+    };
+    $conn->loop->defer(sub { _handoff($state) });
 
     return $transaction;
 }
 
-sub _handoff ($timer) {
-    my $timer_state = $timer->data;
-    my $conn = $timer_state->{connection};
-    my $transaction = $timer_state->{transaction};
-    my $target = $timer_state->{target};
+sub _handoff ($state) {
+    my $conn = $state->{connection};
+    my $transaction = $state->{transaction};
+    my $target = $state->{target};
 
     return if !$conn || $conn->is_closed;
     return if !$transaction || $transaction->is_terminal;
