@@ -377,9 +377,22 @@ ok($h1_request->{tx_match},
 
 
 {
+    package T::RetainedH2CloseExecutor;
+    sub close ($self) {
+        ++$self->{close_count};
+        return;
+    }
+
+    package main;
+
     my $user_close_count = 0;
+    my $executor = bless {
+        close_count => 0,
+    }, 'T::RetainedH2CloseExecutor';
     my $transitioned = bless {
-        _http_user_on_close => sub { ++$user_close_count },
+        _http2_executor       => $executor,
+        _http2_native_session => bless({}, 'T::RetainedNativeSession'),
+        _http_user_on_close   => sub { ++$user_close_count },
     }, 'Linux::Event::HTTP::_HTTP2::ServerConnection';
 
     my $ok = eval {
@@ -390,6 +403,10 @@ ok($h1_request->{tx_match},
     };
     ok($ok,
         'retained server close callback survives H2 class transition');
+    is($executor->{close_count}, 1,
+        'retained server close callback closes the H2 executor');
+    ok(!exists($transitioned->{_http2_native_session}),
+        'retained server close callback releases native H2 session');
     is($user_close_count, 1,
         'retained server close callback still dispatches user on_close');
 }
