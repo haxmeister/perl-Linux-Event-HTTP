@@ -93,7 +93,8 @@ sub new ($class, %option) {
 
     my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
     croak 'new(): http2 must be zero or one'
-        if !defined($http2) || ref($http2) || "$http2" !~ /A[01]z/;
+        if !defined($http2) || ref($http2)
+        || ("$http2" ne '0' && "$http2" ne '1');
     $http2 = $http2 ? 1 : 0;
 
     my %callbacks;
