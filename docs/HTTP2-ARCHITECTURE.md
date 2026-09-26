@@ -263,6 +263,12 @@ connection is selected may still create several negotiating TLS connections.
 Avoiding that would require a separate pre-selection operation queue that can
 fan out differently depending on whether ALPN resolves to H2 or HTTP/1.1.
 
+Streaming Request bodies do use a per-operation pre-selection body queue so the
+public producer remains immediately writable. This queue is not an operation
+scheduler: it only holds body bytes for that already-created Transaction until
+the connection selects H2 or HTTP/1.1. The selected protocol then adopts the
+same Body::Stream and drains the queued bytes into its ordinary body path.
+
 Connection coalescing across origins remains deferred.
 
 GOAWAY retry policy also remains deferred. New work is kept off a draining
