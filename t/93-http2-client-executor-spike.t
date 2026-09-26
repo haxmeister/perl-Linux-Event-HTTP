@@ -7,6 +7,7 @@ use Test::More;
 BEGIN {
     eval {
         require Net::HTTP2::nghttp2;
+        Net::HTTP2::nghttp2->VERSION('0.011');
         require Net::HTTP2::nghttp2::Session;
         1;
     } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
