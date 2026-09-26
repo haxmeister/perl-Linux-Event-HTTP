@@ -11,6 +11,83 @@ Canonical branch: `main`
 Project boundary: modify only Linux::Event::HTTP unless the user explicitly
 authorizes another repository in the current chat.
 
+### Active HTTP/2 stabilization state
+
+Active branch:
+
+`experiment/http2-nghttp2-spike`
+
+Draft PR: #39.
+
+Current stabilization code head before this handoff update:
+
+`036a43c70232ffce3dda0d6156044f5653ccd560`
+"Gate HTTP/2 conformance against known nghttp2 baseline"
+
+The high-level HTTP/2 Server/Client work, multiplexing, streaming uploads,
+decoded header-list limits, aggregate buffered-response limits, and ALPN
+selector transition are already implemented on this branch. The current work
+was a correctness/conformance hardening pass.
+
+The hardening pass found and fixed three HTTP-side defects:
+
+1. `Linux::Event::HTTP::_HTTP2::Server` handled GOAWAY but omitted the
+   `H2_GOAWAY => 7` constant. That compile error made every HTTP/2-enabled
+   high-level test report a misleading "Net::HTTP2::nghttp2 unavailable"
+   failure. Commit `2bfcacb9720c89fc89691ae0893dedc0d908a3be` fixes it.
+
+2. The Server::Connection transport-close callback is cached before
+   `transition_to()`. After the object becomes
+   `_HTTP2::ServerConnection`, calling `$self->_clear_transaction` from that
+   retained callback incorrectly assumes the object still inherits the HTTP/1
+   class. Commit `34880db818cb1ac1f7e7a940b34433e43089d95e` makes the callback
+   invoke its owning HTTP/1 cleanup subroutine directly. Commit
+   `1bc53334d2885fe4655dbef29b9fe70794f4c47f` adds a focused regression.
+
+3. HTTP/2 server shutdown used immediate `Stream->close` after peer GOAWAY.
+   With unread peer bytes this produced an abortive TCP reset. Merely leaving
+   the transport open instead produced a timeout because nghttp2 had already
+   finished the session. The final behavior uses `Stream->end`: queued HTTP/2
+   output is allowed to finish, then the writable side shuts down gracefully.
+   The same lifecycle rule is used when nghttp2 reports that it wants neither
+   read nor write after a connection-level protocol error. Commits
+   `7fa30b5e1d905468248d6ad3828486dba934319e` and
+   `defeead0cc362d8259b2184ce3d801f688af589c` contain the implementation and
+   focused regression coverage.
+
+h2spec v2.6.0 now reaches the full 146-test run with:
+
+- 144 passed;
+- 1 skipped;
+- 1 failed.
+
+The sole remaining failure is:
+
+`5.1.1 - Sends stream identifier that is numerically smaller than previous`
+
+Stock nghttpd/libnghttp2 is independently documented with this same h2spec
+failure. Do not add application-level response reordering merely to hide that
+underlying nghttp2/h2spec baseline behavior.
+
+CI now treats h2spec as a gate rather than a non-blocking diagnostic. A clean
+run is accepted, and the pinned v2.6.0 run is also accepted when it has exactly
+the known 144-pass / 1-skip / 1-fail baseline and that one failure is the
+stream-identifier case above. Any additional h2spec failure fails CI.
+
+Validation:
+
+- CI run `36215138738` fully passed after the graceful HTTP/2 shutdown fix,
+  including Build-and-test on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest, and
+  latest-threaded, the h2spec run, benchmark smoke/comparisons, and distribution
+  integrity.
+- CI run `36215274760` validates the added regressions and conformance gate.
+  Build-and-test is green on every explicit Perl lane and latest-threaded; the
+  latest-Perl h2spec gate is green. Its longer benchmark/dist tail may still be
+  running when this handoff commit is created.
+
+The next useful HTTP/2 work should begin from this state rather than revisiting
+the earlier ALPN/core-segfault investigation.
+
 ### Post-0.002 main state
 
 The native client response-head work from PR #38 is now merged to `main`.
