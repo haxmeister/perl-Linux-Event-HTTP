@@ -1,7 +1,7 @@
 # Linux::Event::HTTP HTTP/2 architecture
 
-Status: implementation hardening
-Date: 2026-09-25
+Status: production candidate
+Date: 2026-09-26
 
 ## Purpose
 
@@ -87,15 +87,18 @@ The intended internal split is conceptually:
             |
             +-- HTTP/2 executor
 
-Exact private package names are not yet frozen. A likely internal namespace is:
+The implemented private HTTP/2 namespace is:
 
     Linux::Event::HTTP::_HTTP2
     Linux::Event::HTTP::_HTTP2::Client
     Linux::Event::HTTP::_HTTP2::Server
-    Linux::Event::HTTP::_HTTP2::Stream
+    Linux::Event::HTTP::_HTTP2::ClientConnection
+    Linux::Event::HTTP::_HTTP2::ServerConnection
+    Linux::Event::HTTP::_HTTP2::ClientSelector
+    Linux::Event::HTTP::_HTTP2::ClientSelectorConnection
 
-These are protocol implementation objects, not replacement public message
-classes.
+These are protocol implementation and selection objects, not replacement public
+message classes.
 
 ## Protocol engine recommendation
 
@@ -127,13 +130,16 @@ but it should not be the default architectural choice. Its current public
 documentation still describes a beta RFC 7540 implementation and marks portions
 of its implementation incomplete.
 
-The integration spike has proved that Net::HTTP2::nghttp2 exposes the control
-needed by Linux::Event::HTTP. HTTP/2 now requires version 0.011 or newer because
+The integration work has proved that Net::HTTP2::nghttp2 exposes the control
+needed by Linux::Event::HTTP. HTTP/2 requires version 0.011 or newer because
 0.011 fixes provider/session lifetime hazards during callback-driven stream
 teardown and explicitly rejects reentrant mem_send()/mem_recv(). Its build path
-requires nghttp2 >= 1.57. The current HTTP/2 branch still loads the binding as
-an optional runtime capability rather than a required Makefile.PL prerequisite;
-the packaging decision remains separate from the protocol-engine decision.
+requires nghttp2 >= 1.57.
+
+The binding remains optional for HTTP/1-only installations. Distribution
+metadata records an optional `http2` feature requiring
+`Net::HTTP2::nghttp2 >= 0.011`, while requesting `http2 => 1` at runtime
+without that capability produces an explicit constructor error.
 
 nghttp2 >= 1.57 also provides the HTTP/2 Rapid Reset RST_STREAM rate limiter.
 The binding leaves nghttp2's default limiter active when no custom burst/rate is
