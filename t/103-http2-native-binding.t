@@ -36,6 +36,7 @@ my %server_session;
 my %server_request;
 my $server_closed = 0;
 my $expected = 8;
+my ($reentrant_send_error, $reentrant_recv_error, $reentrant_checked);
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
     loop => $loop,
@@ -59,6 +60,21 @@ my $listener = Linux::Event::IO::Sock::Listener->new(
 
                         my $stream_id = $frame->{stream_id};
                         my $path = $server_request{$stream_id}{':path'} // '';
+
+                        if (!$reentrant_checked++) {
+                            my $send_ok = eval {
+                                $session->mem_send;
+                                1;
+                            };
+                            $reentrant_send_error = "$@" if !$send_ok;
+
+                            my $recv_ok = eval {
+                                $session->mem_recv('');
+                                1;
+                            };
+                            $reentrant_recv_error = "$@" if !$recv_ok;
+                        }
+
                         $session->submit_response(
                             $stream_id,
                             status  => 200,
@@ -159,6 +175,10 @@ is(scalar(keys %closed), $expected,
     'all native HTTP/2 client streams closed');
 is($server_closed, $expected,
     'native server observed every stream close');
+like($reentrant_send_error // '', qr/reentrant nghttp2 session call/,
+    'native mem_send rejects reentrant use from an nghttp2 callback');
+like($reentrant_recv_error // '', qr/reentrant nghttp2 session call/,
+    'native mem_recv rejects reentrant use from an nghttp2 callback');
 
 for my $stream_id (sort { $a <=> $b } keys %path_by_id) {
     my $path = $path_by_id{$stream_id};
