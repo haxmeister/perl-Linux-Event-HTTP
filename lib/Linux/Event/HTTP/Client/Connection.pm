@@ -16,7 +16,7 @@ use Linux::Event::HTTP::Request;
 use Linux::Event::HTTP::Response;
 use Linux::Event::HTTP::Transaction;
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 Linux::Event::Framer->declare_native_consumer(
     __PACKAGE__,

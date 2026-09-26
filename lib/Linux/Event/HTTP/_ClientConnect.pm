@@ -8,7 +8,7 @@ use Scalar::Util qw(refaddr);
 
 use Linux::Event::IO::Sock::Stream ();
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 sub _load_target ($target) {
     croak 'request(): tunnel_to must be a package name'

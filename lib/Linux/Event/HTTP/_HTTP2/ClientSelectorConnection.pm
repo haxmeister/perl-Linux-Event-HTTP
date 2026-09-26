@@ -5,7 +5,7 @@ use warnings;
 
 use parent 'Linux::Event::HTTP::Client::Connection';
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 sub _selector ($self) {
     return $self->{_http2_selector};

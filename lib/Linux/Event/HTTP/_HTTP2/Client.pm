@@ -8,7 +8,7 @@ use Scalar::Util qw(blessed refaddr weaken);
 use Linux::Event::HTTP::_HTTP2;
 use Linux::Event::HTTP::Transaction;
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 use constant {
     H2_DATA       => 0,

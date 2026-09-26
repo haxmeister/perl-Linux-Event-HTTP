@@ -5,7 +5,7 @@ use warnings;
 
 use Scalar::Util qw(blessed);
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 my %TERMINAL = map { $_ => 1 } qw(complete cancelled error);
 

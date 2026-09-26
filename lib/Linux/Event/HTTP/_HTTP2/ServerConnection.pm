@@ -5,7 +5,7 @@ use warnings;
 
 use parent 'Linux::Event::IO::Sock::Stream';
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 sub on_data ($self, $bytes) {
     my $executor = $self->{_http2_executor}

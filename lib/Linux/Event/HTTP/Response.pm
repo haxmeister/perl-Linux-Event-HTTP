@@ -8,7 +8,7 @@ use utf8 ();
 
 use Linux::Event::HTTP::_HTTP1 ();
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 my $EMPTY_HEADERS = [];
 
