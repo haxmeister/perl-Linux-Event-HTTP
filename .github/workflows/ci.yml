@@ -95,6 +95,22 @@ jobs:
             t/101-http2-high-level-policy.t \
             t/102-http2-cancellation-isolation.t
 
+      - name: HTTP/2 backend comparison
+        if: github.event_name == 'pull_request' && github.head_ref == 'experiment/native-nghttp2-binding' && matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          perl -Mblib bench/run-http2-backend-comparison.pl \
+            --requests=15000 \
+            --warmup=2000 \
+            --concurrency=100 \
+            --response-bytes=32 \
+            --repeats=3
+          perl -Mblib bench/run-http2-backend-comparison.pl \
+            --requests=5000 \
+            --warmup=500 \
+            --concurrency=100 \
+            --response-bytes=16384 \
+            --repeats=3
+
       - name: HTTP/2 h2spec conformance gate
         if: github.event_name == 'pull_request' && (github.head_ref == 'experiment/http2-nghttp2-spike' || github.head_ref == 'experiment/native-nghttp2-binding') && matrix.perl == '5' && matrix.multi_thread == false
         env:
