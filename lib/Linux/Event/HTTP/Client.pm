@@ -1532,10 +1532,20 @@ ordinary HTTP/2 field. Object identity is preserved.
 
 An already-selected H2 connection commits later Requests as HTTP/2 immediately.
 
-Initial high-level HTTP/2 support applies to direct HTTPS requests with scalar
-or bodyless Request bodies. Streaming Request bodies, explicit forward-proxy
-routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and explicit HTTP version
-selection continue to use the existing HTTP/1 path even when C<http2> is true.
+High-level HTTP/2 support applies to direct HTTPS requests with scalar,
+bodyless, or streaming Request bodies.
+
+A streaming producer is available immediately, even before TLS/ALPN completes.
+Bytes written before protocol selection are held in a bounded selector queue
+with cooperative backpressure. After ALPN selects H2 or HTTP/1.1, the same
+Transaction and Body::Stream producer are adopted by the selected protocol and
+the queued bytes are transferred in order. Content-Length is enforced before
+selection when present. Unknown-length HTTP/1.1 fallback gains normal chunked
+framing; H2 does not synthesize Transfer-Encoding.
+
+Explicit forward-proxy routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and
+explicit HTTP version selection continue to use the existing HTTP/1 path even
+when C<http2> is true.
 
 Selected H2 connections remain available to the Client pool while streams are
 active, so later Operations to the same origin can use concurrent HTTP/2
