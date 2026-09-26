@@ -18,10 +18,7 @@ sub on_data ($self, $bytes) {
     if (!$ok) {
         my $error = "$@";
         $error =~ s/\s+\z//;
-        $executor->close(
-            $error ne '' ? "HTTP/2 protocol input failed: $error"
-                         : 'HTTP/2 protocol input failed',
-        ) if $executor->can('close');
+        $executor->close if $executor->can('close');
         delete $self->{_http2_executor};
         $self->close if !$self->is_closed;
     }
