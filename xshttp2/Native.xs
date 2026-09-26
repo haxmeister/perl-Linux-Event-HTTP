@@ -8,14 +8,92 @@
 #include <stdint.h>
 #include <string.h>
 
-typedef struct leh2_state_s {
+typedef struct leh2_state_s leh2_state_t;
+typedef struct leh2_provider_s leh2_provider_t;
+
+struct leh2_provider_s {
+    leh2_state_t *state;
+    int32_t stream_id;
+    SV *body;
+    STRLEN offset;
+    SV *callback;
+    SV *callback_data;
+    unsigned int deferred;
+    leh2_provider_t *next;
+};
+
+struct leh2_state_s {
     nghttp2_session *session;
     HV *callbacks;
     SV *callback_error;
     unsigned int in_nghttp2;
     unsigned int close_pending;
     unsigned int closed;
-} leh2_state_t;
+    leh2_provider_t *providers;
+};
+
+
+static void
+leh2_provider_free(leh2_provider_t *provider)
+{
+    if (!provider)
+        return;
+    if (provider->body)
+        SvREFCNT_dec(provider->body);
+    if (provider->callback)
+        SvREFCNT_dec(provider->callback);
+    if (provider->callback_data)
+        SvREFCNT_dec(provider->callback_data);
+    Safefree(provider);
+}
+
+static leh2_provider_t *
+leh2_provider_find(leh2_state_t *state, int32_t stream_id)
+{
+    leh2_provider_t *provider;
+
+    for (provider = state->providers; provider; provider = provider->next) {
+        if (provider->stream_id == stream_id)
+            return provider;
+    }
+    return NULL;
+}
+
+static void
+leh2_provider_add(leh2_state_t *state, leh2_provider_t *provider)
+{
+    provider->next = state->providers;
+    state->providers = provider;
+}
+
+static void
+leh2_provider_remove(leh2_state_t *state, int32_t stream_id)
+{
+    leh2_provider_t **slot = &state->providers;
+
+    while (*slot) {
+        leh2_provider_t *provider = *slot;
+        if (provider->stream_id == stream_id) {
+            *slot = provider->next;
+            leh2_provider_free(provider);
+            return;
+        }
+        slot = &provider->next;
+    }
+}
+
+static void
+leh2_provider_remove_all(leh2_state_t *state)
+{
+    leh2_provider_t *provider = state->providers;
+
+    state->providers = NULL;
+    while (provider) {
+        leh2_provider_t *next = provider->next;
+        leh2_provider_free(provider);
+        provider = next;
+    }
+}
 
 static leh2_state_t *
 leh2_state_from_sv(SV *self)
@@ -44,6 +122,7 @@ leh2_finish_close(leh2_state_t *state)
         nghttp2_session_del(state->session);
         state->session = NULL;
     }
+    leh2_provider_remove_all(state);
     state->closed = 1;
     state->close_pending = 0;
 }
