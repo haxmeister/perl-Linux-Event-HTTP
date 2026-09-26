@@ -66,58 +66,6 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
 
 
 {
-    package T::HTTP2DebugServerExecutor;
-    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::Server';
-
-    sub input ($self, $bytes) {
-        warn "T94 SERVER J before executor input\n";
-        my $consumed = $self->SUPER::input($bytes);
-        warn "T94 SERVER K after executor input\n";
-        return $consumed;
-    }
-}
-
-{
-    package T::HTTP2DebugClientExecutor;
-    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::Client';
-
-    sub input ($self, $bytes) {
-        warn "T94 CLIENT J before executor input\n";
-        my $consumed = $self->SUPER::input($bytes);
-        warn "T94 CLIENT K after executor input\n";
-        return $consumed;
-    }
-}
-
-{
-    package T::HTTP2ServerTarget;
-    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::ServerConnection';
-
-    sub on_data ($conn, $bytes) {
-        warn "T94 SERVER G first/raw H2 on_data\n"
-            if !$conn->{_t94_seen_h2_data}++;
-        my $result = $conn->SUPER::on_data($bytes);
-        warn "T94 SERVER L after target on_data
-";
-        return $result;
-    }
-}
-
-{
-    package T::HTTP2ClientTarget;
-    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::ClientConnection';
-
-    sub on_data ($conn, $bytes) {
-        warn "T94 CLIENT G first/raw H2 on_data\n"
-            if !$conn->{_t94_seen_h2_data}++;
-        my $result = $conn->SUPER::on_data($bytes);
-        warn "T94 CLIENT L after target on_data
-";
-        return $result;
-    }
-}
-
-{
     package T::HTTP2SelectorSource;
     use parent 'Linux::Event::HTTP::Server::Connection';
 
@@ -134,8 +82,7 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
         if (($conn->selected_alpn // '') eq 'h2') {
             $conn->pause_read;
             $conn->loop->defer(sub {
-                warn "T94 SERVER A before executor construction\n";
-                my $executor = T::HTTP2DebugServerExecutor->new(
+                my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
                     stream         => $conn,
                     connection     => $conn,
                     autostart      => 0,
@@ -143,25 +90,19 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
                     on_body        => $conn->{_http_on_body},
                     on_request_end => $conn->{_http_on_request_end},
                 );
-                warn "T94 SERVER B after passive executor construction\n";
                 $conn->{_http2_executor} = $executor;
 
-                warn "T94 SERVER D immediately before transition_to\n";
                 $conn->transition_to(
-                    'T::HTTP2ServerTarget',
+                    'Linux::Event::HTTP::_HTTP2::ServerConnection',
                 );
-                warn "T94 SERVER E immediately after transition_to\n";
 
                 $entry->{after_class} = ref($conn);
                 $entry->{after_id} = Scalar::Util::refaddr($conn);
                 $entry->{after_transport} = $conn->transport_name;
                 push @{$state->{server_ready}}, $entry;
 
-                warn "T94 SERVER H before executor start/preface flush\n";
                 $executor->start;
-                warn "T94 SERVER I after executor start/preface flush\n";
 
-                warn "T94 SERVER F immediately before resume_read\n";
                 $conn->resume_read if $conn->is_read_paused;
             });
             return;
@@ -292,27 +233,21 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
 
         $conn->pause_read;
         $conn->loop->defer(sub {
-            warn "T94 CLIENT A before executor construction\n";
-            $h2_executor = T::HTTP2DebugClientExecutor->new(
+            $h2_executor = Linux::Event::HTTP::_HTTP2::Client->new(
                 stream    => $conn,
                 autostart => 0,
             );
-            warn "T94 CLIENT B after passive executor construction\n";
             $conn->{_http2_executor} = $h2_executor;
 
-            warn "T94 CLIENT D immediately before transition_to\n";
             $conn->transition_to(
-                'T::HTTP2ClientTarget',
+                'Linux::Event::HTTP::_HTTP2::ClientConnection',
             );
-            warn "T94 CLIENT E immediately after transition_to\n";
 
             $state->{h2_client_after_class} = ref($conn);
             $state->{h2_client_after_id} = refaddr($conn);
             $state->{h2_client_transport} = $conn->transport_name;
 
-            warn "T94 CLIENT H before executor start/preface flush\n";
             $h2_executor->start;
-            warn "T94 CLIENT I after executor start/preface flush\n";
 
             my $request = Linux::Event::HTTP::Request->new(
                 method    => 'GET',
@@ -346,8 +281,6 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
                     $loop->stop;
                 },
             );
-            warn "T94 CLIENT F immediately before resume_read
-";
             $conn->resume_read if $conn->is_read_paused;
         });
     },
@@ -362,7 +295,7 @@ is($state->{h2_client_alpn}, 'h2', 'client TLS selects h2');
 is($state->{h2_client_before_class}, 'Linux::Event::HTTP::Client::Connection',
     'h2 client begins as existing native HTTP/1 connection class');
 is($state->{h2_client_after_class},
-    'T::HTTP2ClientTarget',
+    'Linux::Event::HTTP::_HTTP2::ClientConnection',
     'h2 client transitions to private raw HTTP/2 connection');
 is($state->{h2_client_before_id}, $state->{h2_client_after_id},
     'client transition retains object identity');
@@ -397,7 +330,7 @@ my ($h1_ready) = grep { ($_->{alpn} // '') eq 'http/1.1' }
 is($h2_ready->{before_class}, 'T::HTTP2SelectorSource',
     'server H2 socket begins as configured native HTTP/1 subclass');
 is($h2_ready->{after_class},
-    'T::HTTP2ServerTarget',
+    'Linux::Event::HTTP::_HTTP2::ServerConnection',
     'server H2 socket transitions to private raw HTTP/2 connection');
 is($h2_ready->{before_id}, $h2_ready->{after_id},
     'server transition retains object identity');
@@ -417,7 +350,7 @@ my ($h2_request) = grep { $_->{version} eq '2' }
 my ($h1_request) = grep { $_->{version} eq '1.1' }
     @{$state->{server_request}};
 
-is($h2_request->{class}, 'T::HTTP2ServerTarget',
+is($h2_request->{class}, 'Linux::Event::HTTP::_HTTP2::ServerConnection',
     'H2 callback receives the live transitioned connection object');
 is($h2_request->{alpn}, 'h2', 'H2 callback can inspect negotiated ALPN');
 is($h2_request->{target}, '/selected', 'H2 callback sees mapped Request target');
