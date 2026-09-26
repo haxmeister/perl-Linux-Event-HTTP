@@ -284,6 +284,7 @@ sub _http_transport_drain ($self) {
 sub _http_transport_close ($self) {
     if (my $executor = delete $self->{_http2_executor}) {
         $executor->close;
+        delete $self->{_http2_native_session};
     } else {
         if (my $transaction = $self->{_http_active_transaction}) {
             $transaction->_mark_cancelled if !$transaction->is_terminal;
