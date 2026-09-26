@@ -91,8 +91,8 @@ my $listener = Linux::Event::IO::Sock::Listener->new(
                         my $path = $server_request{$stream_id}{':path'} // '';
                         $session->submit_response(
                             $stream_id,
-                            [
-                                [ ':status', '200' ],
+                            status  => 200,
+                            headers => [
                                 [ 'x-native-path', $path ],
                             ],
                         );
@@ -104,7 +104,7 @@ my $listener = Linux::Event::IO::Sock::Listener->new(
             );
 
             $stream->{_http2_native_session} = $session;
-            $session->start(100);
+            $session->send_connection_preface(max_concurrent_streams => 100);
             flush_session($stream, $session);
             $stream->transition_to('T::NativeH2RawStream');
         },
@@ -140,17 +140,19 @@ $client_stream = T::NativeH1Source->connect(
         );
 
         $stream->{_http2_native_session} = $session;
-        $session->start(100);
+        $session->send_connection_preface(max_concurrent_streams => 100);
 
         for my $number (1 .. $expected) {
             my $path = "/raw-native/$number";
-            my $stream_id = $session->submit_request([
-                [ ':method', 'GET' ],
-                [ ':scheme', 'http' ],
-                [ ':authority', 'native.test' ],
-                [ ':path', $path ],
-                [ 'x-request-number', "$number" ],
-            ]);
+            my $stream_id = $session->submit_request(
+                method    => 'GET',
+                scheme    => 'http',
+                authority => 'native.test',
+                path      => $path,
+                headers   => [
+                    [ 'x-request-number', "$number" ],
+                ],
+            );
             $path_by_id{$stream_id} = $path;
         }
 
