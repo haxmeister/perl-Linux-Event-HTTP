@@ -93,8 +93,10 @@ sub new ($class, %option) {
     );
 
     my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $has_http2_max_header_list_size =
+        exists $option{http2_max_header_list_size};
     my $http2_max_header_list_size =
-        exists($option{http2_max_header_list_size})
+        $has_http2_max_header_list_size
             ? delete($option{http2_max_header_list_size})
             : 65_536;
     croak 'new(): http2 must be zero or one'
@@ -106,7 +108,7 @@ sub new ($class, %option) {
         || "$http2_max_header_list_size" !~ /\A[0-9]+\z/
         || $http2_max_header_list_size < 1;
     croak 'new(): http2_max_header_list_size requires http2 => 1'
-        if !$http2 && $http2_max_header_list_size != 65_536;
+        if !$http2 && $has_http2_max_header_list_size;
 
     my %callbacks;
     for my $name (qw(on_request on_body on_request_end)) {
