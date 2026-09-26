@@ -42,8 +42,12 @@ GetOptions(
     'repeats=i'        => \$repeats,
 ) or die "invalid benchmark options\n";
 
-die "--backend must be external, native, or both\n"
-    if $backend ne 'external' && $backend ne 'native' && $backend ne 'both';
+die "--backend must be external, native-copy, native, both, or all\n"
+    if $backend ne 'external'
+    && $backend ne 'native-copy'
+    && $backend ne 'native'
+    && $backend ne 'both'
+    && $backend ne 'all';
 die "--requests must be positive\n" if $requests < 1;
 die "--warmup must be zero or positive\n" if $warmup < 0;
 die "--concurrency must be between 1 and 100\n"
@@ -59,7 +63,7 @@ sub median (@values) {
 }
 
 sub session_class ($which) {
-    if ($which eq 'native') {
+    if ($which eq 'native' || $which eq 'native-copy') {
         require Linux::Event::HTTP::_HTTP2::Native;
         require Linux::Event::HTTP::_HTTP2::NativeConnection;
         Linux::Event::HTTP::_HTTP2::Native->available
@@ -77,7 +81,7 @@ sub session_class ($which) {
 
 sub run_once ($which) {
     my $session_class = session_class($which);
-    my $native = $which eq 'native' ? 1 : 0;
+    my $native_raw = $which eq 'native' ? 1 : 0;
     my $loop = Linux::Event::Loop->new;
     my $body = 'x' x $response_bytes;
 
@@ -126,7 +130,7 @@ sub run_once ($which) {
         );
 
         $server_executor{refaddr($stream)} = $executor;
-        if ($native) {
+        if ($native_raw) {
             $stream->{_http2_executor} = $executor;
             $stream->{_http2_native_session} = $executor->session;
             $stream->transition_to(
@@ -137,9 +141,9 @@ sub run_once ($which) {
     };
 
     my %server_stream = (
-        ($native ? (class => 'Bench::H2RawSource') : ()),
+        ($native_raw ? (class => 'Bench::H2RawSource') : ()),
         on_ready => $server_ready,
-        (!$native ? (
+        (!$native_raw ? (
             on_data => sub ($stream, $bytes) {
                 my $executor = $server_executor{refaddr($stream)}
                     or die "server executor is unavailable\n";
@@ -234,7 +238,7 @@ sub run_once ($which) {
                 _session_class => $session_class,
             );
 
-            if ($native) {
+            if ($native_raw) {
                 $stream->{_http2_executor} = $client_executor;
                 $stream->{_http2_native_session} = $client_executor->session;
                 $stream->transition_to(
@@ -245,7 +249,7 @@ sub run_once ($which) {
             $client_executor->start;
             $submit_more->();
         },
-        (!$native ? (
+        (!$native_raw ? (
             on_data => sub ($stream, $bytes) {
                 my $consumed = $client_executor->input($bytes);
                 die "client executor left input unconsumed\n"
@@ -264,7 +268,7 @@ sub run_once ($which) {
         },
     );
 
-    my $stream_class = $native
+    my $stream_class = $native_raw
         ? 'Bench::H2RawSource'
         : 'Linux::Event::IO::Sock::Stream';
     my $connecting = $stream_class->connect(%client_option);
@@ -282,7 +286,9 @@ sub run_once ($which) {
 
 my @backends = $backend eq 'both'
     ? qw(external native)
-    : ($backend);
+    : $backend eq 'all'
+        ? qw(external native-copy native)
+        : ($backend);
 
 say "HTTP/2 backend comparison";
 say "requests=$requests warmup=$warmup concurrency=$concurrency "
@@ -300,7 +306,15 @@ for my $which (@backends) {
     printf "%-8s median: %.1f req/s\n", $which, $result{$which};
 }
 
+if (exists($result{external}) && exists($result{'native-copy'})) {
+    my $change = 100 * ($result{'native-copy'} / $result{external} - 1);
+    printf "native-copy vs external: %+.1f%%\n", $change;
+}
 if (exists($result{external}) && exists($result{native})) {
     my $change = 100 * ($result{native} / $result{external} - 1);
-    printf "native vs external: %+.1f%%\n", $change;
+    printf "native-raw vs external: %+.1f%%\n", $change;
+}
+if (exists($result{'native-copy'}) && exists($result{native})) {
+    my $change = 100 * ($result{native} / $result{'native-copy'} - 1);
+    printf "native-raw vs native-copy: %+.1f%%\n", $change;
 }
