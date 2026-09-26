@@ -1538,9 +1538,19 @@ or bodyless Request bodies. Streaming Request bodies, explicit forward-proxy
 routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and explicit HTTP version
 selection continue to use the existing HTTP/1 path even when C<http2> is true.
 
-The private HTTP/2 executor already supports concurrent streams. The current
-high-level Client pool still reuses selected H2 connections sequentially;
-capacity-aware multiplexing is a separate pool-level step.
+Selected H2 connections remain available to the Client pool while streams are
+active, so later Operations to the same origin can use concurrent HTTP/2
+streams on one TLS connection. The current local admission cap is 100 active
+streams per connection; nghttp2 continues to enforce the peer's actual
+SETTINGS_MAX_CONCURRENT_STREAMS behavior.
+
+A connection that has received GOAWAY is marked draining and receives no new
+Operations. Existing streams are allowed to finish. Transparent retry of
+streams affected by GOAWAY is not yet part of the high-level policy.
+
+Operations submitted before any connection to the origin has completed ALPN
+selection may still create more than one initial TLS connection. Once an H2
+connection is selected, it enters the multiplex-capable pool.
 
 C<http2 =E<gt> 1> currently requires the default C<connection_class> and an
 installed C<Net::HTTP2::nghttp2> implementation.
