@@ -5,15 +5,25 @@ use warnings;
 use Test::More;
 use Scalar::Util qw(refaddr);
 
+our $H2_SESSION_CLASS;
 BEGIN {
-    eval {
-        require Net::HTTP2::nghttp2;
-        Net::HTTP2::nghttp2->VERSION('0.011');
-        1;
-    } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
+    if ($ENV{LEHTTP_H2_NATIVE_TEST}) {
+        eval {
+            require Linux::Event::HTTP::_HTTP2::Native;
+            Linux::Event::HTTP::_HTTP2::Native->available;
+            1;
+        } or plan skip_all => 'native libnghttp2 bridge is not built';
+        $H2_SESSION_CLASS = 'Linux::Event::HTTP::_HTTP2::Native';
+    } else {
+        eval {
+            require Net::HTTP2::nghttp2;
+            Net::HTTP2::nghttp2->VERSION('0.011');
+            1;
+        } or plan skip_all => 'Net::HTTP2::nghttp2 is not installed';
 
-    Net::HTTP2::nghttp2->available
-        or plan skip_all => 'nghttp2 library is not available';
+        Net::HTTP2::nghttp2->available
+            or plan skip_all => 'nghttp2 library is not available';
+    }
 }
 
 use Linux::Event::HTTP::Client;
@@ -59,6 +69,8 @@ my @error;
 my $stream = T::HTTP2AggregateBufferStream->new;
 my $client = Linux::Event::HTTP::_HTTP2::Client->new(
     stream                      => $stream,
+    (defined($H2_SESSION_CLASS)
+        ? (_session_class => $H2_SESSION_CLASS) : ()),
     max_buffered_response_bytes => 10,
 );
 
@@ -174,6 +186,8 @@ is($client->{buffered_response_bytes}, 0,
     my $ok = eval {
         Linux::Event::HTTP::_HTTP2::Client->new(
             stream => T::HTTP2AggregateBufferStream->new,
+            (defined($H2_SESSION_CLASS)
+                ? (_session_class => $H2_SESSION_CLASS) : ()),
             max_buffered_response_bytes => 0,
         );
         1;
