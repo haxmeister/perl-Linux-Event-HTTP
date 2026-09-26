@@ -165,17 +165,7 @@ sub input ($self, $bytes) {
         if !defined($consumed) || $consumed != length($bytes);
 
     $self->flush;
-    $self->_maybe_close_after_peer_goaway;
     return $consumed;
-}
-
-sub _maybe_close_after_peer_goaway ($self) {
-    return if !$self->{peer_goaway};
-    return if $self->{closed};
-    return if $self->stream_count;
-    my $stream = $self->{stream} or return;
-    $stream->close if !$stream->is_closed;
-    return;
 }
 
 sub flush ($self) {
@@ -195,7 +185,6 @@ sub flush ($self) {
             last;
         }
     }
-    $self->_maybe_close_after_peer_goaway;
     return;
 }
 
@@ -281,6 +270,9 @@ sub _on_header ($self, $stream_id, $name, $value, $flags) {
 
 sub _on_frame_recv ($self, $frame) {
     if (($frame->{type} // -1) == H2_GOAWAY) {
+        # GOAWAY is a peer drain signal, not a reason to abort the transport.
+        # Keep reading until the peer closes so unread TLS/TCP bytes cannot
+        # turn an otherwise graceful shutdown into an RST.
         $self->{peer_goaway} = 1;
         return 0;
     }
