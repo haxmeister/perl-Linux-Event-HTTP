@@ -696,6 +696,85 @@ clean final branch gate without the temporary phase diagnostics, and then wire
 the private HTTP/2 executors behind the high-level Server/Client ALPN selection
 path.
 
+### High-level HTTP/2 Server, Client, and multiplexing
+
+The private HTTP/2 executors are now wired behind opt-in high-level APIs on
+`experiment/http2-nghttp2-spike`.
+
+High-level Server:
+
+    Linux::Event::HTTP::Server->new(
+        http2 => 1,
+        tls   => { ... },
+        ...
+    )
+
+- advertises h2 before http/1.1;
+- transitions to the private H2 ServerConnection only after ALPN selects h2;
+- constructs the executor passively, transitions first, then starts H2;
+- preserves the ordinary on_request/on_body/on_request_end callback shape;
+- HTTP/1.1 ALPN fallback stays on the existing Server::Connection;
+- currently requires the default connection_class.
+
+High-level Client:
+
+    Linux::Event::HTTP::Client->new(
+        http2 => 1,
+        tls   => { ... },
+    )
+
+- advertises h2 before http/1.1 for direct HTTPS operations;
+- preserves immediate Operation/Transaction/Request identity while initial ALPN
+  is unresolved;
+- if H2 wins, the same mutable Request becomes version 2 and gains
+  scheme/authority metadata before commit;
+- maps a caller Host field into :authority and removes Host from the normal H2
+  field list;
+- falls back cleanly to the existing HTTP/1.1 connection when h2 is not
+  selected;
+- selected H2 connections are pooled per origin and can accept concurrent
+  streams while earlier Transactions are still active;
+- local admission is capped at 100 active submitted streams per H2 connection;
+- nghttp2 enforces peer SETTINGS_MAX_CONCURRENT_STREAMS;
+- GOAWAY marks a connection draining so the pool stops assigning new work.
+
+Current high-level HTTP/2 exclusions intentionally fall back to HTTP/1:
+
+- streaming Request bodies before ALPN selection;
+- forward proxy routes;
+- Upgrade;
+- CONNECT tunnel handoff;
+- explicit HTTP version selection.
+
+Multiplex validation:
+
+`t/96-http2-high-level-multiplex.t`
+
+establishes one H2 TLS connection and, while the first stream is still active,
+launches six more high-level Operations. The server delays all six responses.
+The test requires:
+
+- one server TLS connection for all requests;
+- at least six simultaneously active H2 streams;
+- independent status/body completion for every Operation.
+
+CI run `36210309139` passed Build-and-test, including t/96, on:
+
+- Perl 5.36;
+- Perl 5.38;
+- Perl 5.40;
+- Perl 5.42;
+- Perl 5.44;
+- latest Perl;
+- latest threaded Perl.
+
+Remaining client-pool work:
+
+- Operations created before any connection has completed ALPN may still create
+  multiple negotiating TLS connections;
+- transparent GOAWAY replay is not yet implemented;
+- cross-origin H2 connection coalescing remains deferred.
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
