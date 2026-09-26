@@ -23,6 +23,7 @@ sub new ($class, %option) {
     my $on_selected = delete $option{on_selected};
     my $http1_connection_factory =
         delete $option{http1_connection_factory};
+    my $session_class = delete $option{_session_class};
     my $max_header_list_size =
         delete($option{max_header_list_size}) // 65_536;
     my $max_buffered_response_bytes =
@@ -68,6 +69,7 @@ sub new ($class, %option) {
         closed      => 0,
         on_selected => $on_selected,
         http1_connection_factory => $http1_connection_factory,
+        session_class => $session_class,
         max_header_list_size => 0 + $max_header_list_size,
         max_buffered_response_bytes => 0 + $max_buffered_response_bytes,
     }, $class;
@@ -256,6 +258,8 @@ sub _transport_ready ($self, $stream) {
             max_header_list_size => $self->{max_header_list_size},
             max_buffered_response_bytes =>
                 $self->{max_buffered_response_bytes},
+            (defined($self->{session_class})
+                ? (_session_class => $self->{session_class}) : ()),
         );
         $self->{executor} = $executor;
         $stream->{_http2_executor} = $executor;
