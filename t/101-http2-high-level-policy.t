@@ -214,7 +214,7 @@ is_deeply(
 );
 is_deeply(
     [ map { $_->{authority} } @{$state->{requests}} ],
-    [ (('localhost:' . $server->port) x 3) ],
+    [ map { 'localhost:' . $server->port } 1 .. 3 ],
     'every policy hop preserves H2 authority',
 );
 
