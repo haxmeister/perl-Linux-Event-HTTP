@@ -333,3 +333,22 @@ HTTP/2 release validation should continue to cover:
 
 Performance work should use multiplexed realistic workloads rather than
 optimizing only for a one-stream echo case.
+
+## Current h2spec baseline
+
+Release validation uses h2spec v2.6.0.
+
+The accepted current baseline is:
+
+```text
+144 passed
+1 skipped
+1 failed
+146 total
+```
+
+The known failure is RFC 9113 section 5.1.1's lower new stream-identifier case.
+
+This baseline should not regress silently. A release that changes it should
+record whether the difference comes from Linux::Event::HTTP integration,
+Net::HTTP2::nghttp2, libnghttp2, or the test environment.
