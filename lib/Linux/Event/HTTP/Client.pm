@@ -1500,6 +1500,11 @@ Returns true when the Client was constructed with C<http2 =E<gt> 1>.
 Returns the decoded HTTP/2 response header-list limit. The default is 65,536
 bytes.
 
+=head2 http2_max_buffered_response_bytes
+
+Returns the aggregate per-H2-connection budget for simultaneously buffered
+response bodies. The default is 67,108,864 bytes (64 MiB).
+
 =head2 max_redirects
 
 Returns the Client default redirect limit.
@@ -1603,6 +1608,14 @@ HTTP/2 accounting rule of name bytes + value bytes + 32 bytes per field.
 Override it with C<http2_max_header_list_size>. The value is advertised through
 SETTINGS_MAX_HEADER_LIST_SIZE and independently enforced after HPACK decoding.
 An oversized header block fails only its stream.
+
+Concurrent H2 C<buffer_body> responses also share a connection-wide aggregate
+memory budget. The default is 67,108,864 bytes (64 MiB), configurable with
+C<http2_max_buffered_response_bytes>. This limit is independent from each
+operation's own C<buffer_body> ceiling. Crossing the aggregate limit fails only
+the stream whose next body chunk would exceed the connection budget; unrelated
+streams continue. Completed or failed streams immediately release their
+connection-level buffer accounting.
 
 Operations submitted before any connection to the origin has completed ALPN
 selection may still create more than one initial TLS connection. Once an H2
