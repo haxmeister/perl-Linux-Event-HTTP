@@ -205,6 +205,7 @@ sub new ($class, %option) {
         proxy_auth       => $proxy_auth,
         http2            => $http2,
         idle             => {},
+        h2_pool          => {},
         connections      => {},
         closed           => 0,
     }, $class;
@@ -259,15 +260,70 @@ sub _track_connection ($self, $connection) {
     return $connection;
 }
 
+sub _register_h2_connection ($self, $origin, $connection) {
+    return if $self->{closed} || !$connection || $connection->is_closed;
+    return if !$connection->can('_http2_capable')
+        || !$connection->_http2_capable;
+    return if ($connection->protocol // '') ne 'h2';
+
+    my $pool = $self->{h2_pool}{$origin} //= [];
+    my $id = refaddr($connection);
+    return $connection if grep { refaddr($_) == $id } @$pool;
+    push @$pool, $connection;
+    return $connection;
+}
+
+sub _take_h2_connection ($self, $origin) {
+    my $pool = $self->{h2_pool}{$origin} or return undef;
+    my @keep;
+    my $selected;
+
+    for my $connection (@$pool) {
+        next if !$connection || $connection->is_closed;
+
+        if (($connection->protocol // '') ne 'h2') {
+            next;
+        }
+
+        if (!$connection->can_accept_transaction) {
+            if ($connection->active_streams == 0) {
+                $connection->close;
+                next;
+            }
+            push @keep, $connection;
+            next;
+        }
+
+        push @keep, $connection;
+        $selected //= $connection;
+    }
+
+    if (@keep) {
+        $self->{h2_pool}{$origin} = \@keep;
+    } else {
+        delete $self->{h2_pool}{$origin};
+    }
+
+    return $selected;
+}
+
 sub _take_idle_connection ($self, $origin, $allow_http2 = 0) {
     my $connection = delete $self->{idle}{$origin};
     return undef if !$connection;
     return undef if $connection->is_closed;
     return undef if defined $connection->transaction;
 
-    my $is_http2_capable = $connection->can('_http2_capable')
+    my $is_selector = $connection->can('_http2_capable')
         && $connection->_http2_capable ? 1 : 0;
-    if ($is_http2_capable != ($allow_http2 ? 1 : 0)) {
+
+    if ($is_selector && ($connection->protocol // '') eq 'h2') {
+        $self->_register_h2_connection($origin, $connection);
+        return $allow_http2
+            ? $self->_take_h2_connection($origin)
+            : undef;
+    }
+
+    if ($allow_http2 && !$is_selector) {
         $connection->close;
         return undef;
     }
@@ -298,10 +354,18 @@ sub _new_connection ($self, $destination, $allow_http2 = 0) {
     my $connection;
     if ($allow_http2 && $destination->{scheme} eq 'https') {
         require Linux::Event::HTTP::_HTTP2::ClientSelector;
+        my $weak_self = $self;
+        weaken($weak_self);
+        my $origin = $destination->{origin};
         $connection = Linux::Event::HTTP::_HTTP2::ClientSelector->new(
             %connect,
             scheme    => $destination->{scheme},
             authority => $destination->{host_header},
+            on_selected => sub ($selected, $protocol) {
+                my $client = $weak_self or return;
+                $client->_register_h2_connection($origin, $selected)
+                    if $protocol eq 'h2';
+            },
         );
     } else {
         $connection = $self->{connection_class}->connect(%connect);
@@ -310,6 +374,11 @@ sub _new_connection ($self, $destination, $allow_http2 = 0) {
 }
 
 sub _connection_for ($self, $destination, $allow_http2 = 0) {
+    if ($allow_http2) {
+        my $h2 = $self->_take_h2_connection($destination->{origin});
+        return $h2 if $h2;
+    }
+
     return $self->_take_idle_connection(
         $destination->{origin}, $allow_http2,
     ) // $self->_new_connection($destination, $allow_http2);
@@ -318,6 +387,15 @@ sub _connection_for ($self, $destination, $allow_http2 = 0) {
 sub _release_connection ($self, $origin, $connection) {
     return if $self->{closed};
     return if !$connection || $connection->is_closed;
+
+    if ($connection->can('_http2_capable')
+        && $connection->_http2_capable
+        && ($connection->protocol // '') eq 'h2') {
+        $self->_register_h2_connection($origin, $connection);
+        $self->_take_h2_connection($origin);
+        return;
+    }
+
     return if defined $connection->transaction;
 
     if (my $idle = $self->{idle}{$origin}) {
@@ -1127,7 +1205,12 @@ sub close ($self) {
     $self->{closed} = 1;
 
     my %closed;
-    for my $connection (values %{$self->{idle}}, values %{$self->{connections}}) {
+    my @h2 = map { @$_ } values %{$self->{h2_pool}};
+    for my $connection (
+        values %{$self->{idle}},
+        @h2,
+        values %{$self->{connections}},
+    ) {
         next if !$connection;
         my $id = refaddr($connection);
         next if $closed{$id}++;
@@ -1135,6 +1218,7 @@ sub close ($self) {
     }
 
     $self->{idle} = {};
+    $self->{h2_pool} = {};
     $self->{connections} = {};
     return $self;
 }
