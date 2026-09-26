@@ -266,12 +266,184 @@ leh2_on_stream_close(nghttp2_session *session, int32_t stream_id,
 {
     leh2_state_t *state = (leh2_state_t *)user_data;
     SV *args[2];
+    int rv;
     dTHX;
 
     (void)session;
     args[0] = newSViv(stream_id);
     args[1] = newSVuv(error_code);
-    return leh2_call(aTHX_ state, "on_stream_close", 2, args);
+    rv = leh2_call(aTHX_ state, "on_stream_close", 2, args);
+    leh2_provider_remove(state, stream_id);
+    return rv;
+}
+
+static ssize_t
+leh2_data_read(nghttp2_session *session, int32_t stream_id,
+    uint8_t *buf, size_t length, uint32_t *data_flags,
+    nghttp2_data_source *source, void *user_data)
+{
+    leh2_provider_t *provider = (leh2_provider_t *)source->ptr;
+    leh2_state_t *state = (leh2_state_t *)user_data;
+    dTHX;
+
+    (void)session;
+    (void)stream_id;
+
+    if (!provider || provider->state != state)
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    if (state->closed || state->close_pending)
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+
+    if (provider->body) {
+        STRLEN body_len;
+        const char *body = SvPVbyte(provider->body, body_len);
+        STRLEN remaining = body_len - provider->offset;
+        size_t take = remaining < (STRLEN)length
+            ? (size_t)remaining : length;
+
+        if (take) {
+            Copy(body + provider->offset, buf, take, uint8_t);
+            provider->offset += (STRLEN)take;
+        }
+        if (provider->offset == body_len)
+            *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        provider->deferred = 0;
+        return (ssize_t)take;
+    }
+
+    if (provider->callback) {
+        int count;
+        int eof = 0;
+        SV *data_sv = NULL;
+        STRLEN data_len = 0;
+        const char *data = NULL;
+        dSP;
+
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+        mPUSHi(provider->stream_id);
+        mPUSHu((UV)length);
+        if (provider->callback_data)
+            XPUSHs(provider->callback_data);
+        PUTBACK;
+
+        count = call_sv(provider->callback, G_ARRAY | G_EVAL);
+        SPAGAIN;
+
+        if (SvTRUE(ERRSV)) {
+            leh2_store_callback_error(aTHX_ state);
+            PUTBACK;
+            FREETMPS;
+            LEAVE;
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+
+        if (count == 0) {
+            PUTBACK;
+            FREETMPS;
+            LEAVE;
+            provider->deferred = 1;
+            return NGHTTP2_ERR_DEFERRED;
+        }
+
+        if (count >= 2) {
+            SV *eof_sv = POPs;
+            eof = SvTRUE(eof_sv) ? 1 : 0;
+            --count;
+        }
+
+        data_sv = POPs;
+        if (!SvOK(data_sv)) {
+            while (--count > 0)
+                (void)POPs;
+            PUTBACK;
+            FREETMPS;
+            LEAVE;
+            provider->deferred = 1;
+            return NGHTTP2_ERR_DEFERRED;
+        }
+
+        if (SvROK(data_sv)) {
+            while (--count > 0)
+                (void)POPs;
+            PUTBACK;
+            FREETMPS;
+            LEAVE;
+            state->callback_error = newSVpvs(
+                "HTTP/2 data provider returned a reference"
+            );
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+
+        data = SvPVbyte(data_sv, data_len);
+        if ((size_t)data_len > length) {
+            while (--count > 0)
+                (void)POPs;
+            PUTBACK;
+            FREETMPS;
+            LEAVE;
+            state->callback_error = newSVpvs(
+                "HTTP/2 data provider exceeded requested length"
+            );
+            return NGHTTP2_ERR_CALLBACK_FAILURE;
+        }
+
+        if (data_len)
+            Copy(data, buf, data_len, uint8_t);
+        while (--count > 0)
+            (void)POPs;
+
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+
+        if (!data_len && !eof) {
+            provider->deferred = 1;
+            return NGHTTP2_ERR_DEFERRED;
+        }
+
+        if (eof)
+            *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        provider->deferred = 0;
+        return (ssize_t)data_len;
+    }
+
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+}
+
+static leh2_provider_t *
+leh2_provider_new(pTHX_ leh2_state_t *state, SV *body,
+    SV *callback, SV *callback_data)
+{
+    leh2_provider_t *provider;
+
+    Newxz(provider, 1, leh2_provider_t);
+    provider->state = state;
+
+    if (body && SvOK(body)) {
+        STRLEN len;
+        (void)SvPVbyte(body, len);
+        if (len)
+            provider->body = newSVsv(body);
+    }
+
+    if (callback && SvOK(callback)) {
+        if (!SvROK(callback) || SvTYPE(SvRV(callback)) != SVt_PVCV) {
+            leh2_provider_free(provider);
+            croak("data callback must be a coderef");
+        }
+        provider->callback = SvREFCNT_inc(callback);
+        if (callback_data && SvOK(callback_data))
+            provider->callback_data = SvREFCNT_inc(callback_data);
+    }
+
+    if (!provider->body && !provider->callback) {
+        leh2_provider_free(provider);
+        return NULL;
+    }
+
+    return provider;
 }
 
 static nghttp2_nv *
