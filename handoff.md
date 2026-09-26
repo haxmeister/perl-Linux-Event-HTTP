@@ -19,6 +19,26 @@ Active branch:
 
 Draft PR: #39.
 
+### HTTP/2 backend decision (2026-09-26)
+
+Use the released `Net::HTTP2::nghttp2 0.011` binding as the production HTTP/2
+backend. Do not merge the private native binding experiment into the release
+path.
+
+The private binding experiment proved that a wrapper-level strict stream-ID
+check can make h2spec report zero failures, but deeper validation showed that
+such a check can misclassify a legitimate late-HEADERS race after a locally
+serialized RST_STREAM. libnghttp2 deliberately keeps conservative behavior for
+that ambiguity. The remaining h2spec stream-ID failure is therefore accepted as
+the underlying libnghttp2 policy rather than overridden in Linux::Event::HTTP.
+
+No upstream pull request to Net::HTTP2::nghttp2 is planned for this behavior.
+Continue development and release work against the current CPAN 0.011 binding.
+
+HTTP/2 remains optional for HTTP/1-only installations. `Makefile.PL` now
+records an optional `http2` feature requiring `Net::HTTP2::nghttp2 >= 0.011`,
+and the README documents explicit installation of that binding.
+
 Current stabilization code head before this handoff update:
 
 `a37583a5f4176ef46b9913dc8aa1c1ee1660557c`
