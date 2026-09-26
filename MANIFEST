@@ -110,3 +110,4 @@ t/95-http2-high-level-client.t
 t/96-http2-high-level-multiplex.t
 t/97-http2-high-level-streaming-upload.t
 t/98-http2-header-list-limit.t
+t/99-http2-aggregate-buffer-limit.t
