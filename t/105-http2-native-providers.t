@@ -191,7 +191,7 @@ $static_server = Linux::Event::HTTP::_HTTP2::Native->new_server(
                 && $frame->{type} != H2_HEADERS;
             $static_server->submit_response(
                 $frame->{stream_id},
-                status => 204,
+                status => 200,
                 body   => 'static-response',
             );
             return 0;
