@@ -99,12 +99,14 @@ jobs:
         if: github.event_name == 'pull_request' && github.head_ref == 'experiment/native-nghttp2-binding' && matrix.perl == '5' && matrix.multi_thread == false
         run: |
           perl -Mblib bench/run-http2-backend-comparison.pl \
+            --backend=all \
             --requests=15000 \
             --warmup=2000 \
             --concurrency=64 \
             --response-bytes=32 \
             --repeats=3
           perl -Mblib bench/run-http2-backend-comparison.pl \
+            --backend=all \
             --requests=5000 \
             --warmup=500 \
             --concurrency=64 \
