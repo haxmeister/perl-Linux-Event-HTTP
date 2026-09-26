@@ -43,6 +43,8 @@ lib/Linux/Event/HTTP/_HTTP1.pm
 lib/Linux/Event/HTTP/_HTTP2.pm
 lib/Linux/Event/HTTP/_HTTP2/Client.pm
 lib/Linux/Event/HTTP/_HTTP2/ClientConnection.pm
+lib/Linux/Event/HTTP/_HTTP2/ClientSelector.pm
+lib/Linux/Event/HTTP/_HTTP2/ClientSelectorConnection.pm
 lib/Linux/Event/HTTP/_HTTP2/Server.pm
 lib/Linux/Event/HTTP/_HTTP2/ServerConnection.pm
 lib/Linux/Event/HTTP/_ServerConnect.pm
