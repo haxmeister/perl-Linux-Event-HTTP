@@ -67,7 +67,7 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
 
 {
     package T::HTTP2ServerTarget;
-    use parent 'T::HTTP2ServerTarget';
+    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::ServerConnection';
 
     sub on_data ($conn, $bytes) {
         warn "T94 SERVER G first/raw H2 on_data\n"
@@ -78,7 +78,7 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
 
 {
     package T::HTTP2ClientTarget;
-    use parent 'T::HTTP2ClientTarget';
+    use parent -norequire, 'Linux::Event::HTTP::_HTTP2::ClientConnection';
 
     sub on_data ($conn, $bytes) {
         warn "T94 CLIENT G first/raw H2 on_data\n"
