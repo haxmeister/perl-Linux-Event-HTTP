@@ -1621,11 +1621,19 @@ requests. Returns the Client.
 
 =head1 CONNECTION REUSE
 
-At most one idle connection is retained per route origin. For direct requests,
-the route origin is the target origin. For a request using a proxy route, the
-route origin is the proxy endpoint, so sequential requests for different target
-origins can reuse the same persistent proxy connection. Cookie and target-auth
-selection do not use route origin; proxy authentication does.
+For HTTP/1, at most one idle connection is retained per route origin. For direct
+requests, the route origin is the target origin. For a request using a proxy
+route, the route origin is the proxy endpoint, so sequential requests for
+different target origins can reuse the same persistent proxy connection. Cookie
+and target-auth selection do not use route origin; proxy authentication does.
+
+When several HTTP/1 connections for one route become idle, one is retained and
+surplus reusable transports are ended gracefully.
+
+HTTP/2 uses a separate per-origin pool. A selected H2 connection remains
+available while streams are active and can accept concurrent Transactions up to
+the local admission limit. A GOAWAY connection is marked draining, accepts no
+new work, and retires after its active streams finish.
 
 A connection that successfully leaves HTTP through Upgrade or CONNECT is never
 returned to the HTTP idle pool. A non-2xx CONNECT response remains HTTP and may
@@ -1665,17 +1673,34 @@ An already-selected H2 connection commits later Requests as HTTP/2 immediately.
 High-level HTTP/2 support applies to direct HTTPS requests with scalar,
 bodyless, or streaming Request bodies.
 
+Operations started for the same origin before the first TLS/ALPN decision share
+a bounded negotiating selector. Up to 100 provisional Transactions can wait on
+one selector. If ALPN selects H2, those Transactions are submitted onto the one
+multiplexed connection. If ALPN selects HTTP/1.1, the first Transaction stays on
+the negotiated connection and the remainder are fanned out onto separate
+HTTP/1.1 connections so fallback concurrency is preserved.
+
 A streaming producer is available immediately, even before TLS/ALPN completes.
-Bytes written before protocol selection are held in a selector queue with a 64 KiB cooperative high-water mark
-with cooperative backpressure. After ALPN selects H2 or HTTP/1.1, the same
-Transaction and Body::Stream producer are adopted by the selected protocol and
-the queued bytes are transferred in order. Content-Length is enforced before
-selection when present. Unknown-length HTTP/1.1 fallback gains normal chunked
-framing; H2 does not synthesize Transfer-Encoding.
+Bytes written before protocol selection are held in a per-Transaction selector
+queue with a 64 KiB cooperative high-water mark. After ALPN selects H2 or
+HTTP/1.1, the same Transaction and Body::Stream producer are adopted by the
+selected protocol and the queued bytes are transferred in order. Content-Length
+is enforced before selection when present. Unknown-length HTTP/1.1 fallback
+gains normal chunked framing; H2 does not synthesize Transfer-Encoding.
 
 Explicit forward-proxy routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and
 explicit HTTP version selection continue to use the existing HTTP/1 path even
 when C<http2> is true.
+
+HTTP/2 currently requires the optional L<Net::HTTP2::nghttp2> binding and the
+underlying nghttp2 library. They are not yet normal distribution prerequisites.
+Constructing a Client with C<http2 =E<gt> 1> fails explicitly when that
+capability is unavailable.
+
+Redirect, cookie, and target-authentication policy remains owned by the
+high-level Client. Redirect and authentication retries create normal additional
+Transactions and may reuse the selected H2 connection; the HTTP/2 executor does
+not duplicate those policies.
 
 Selected H2 connections remain available to the Client pool while streams are
 active, so later Operations to the same origin can use concurrent HTTP/2
