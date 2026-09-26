@@ -843,6 +843,53 @@ The latest non-threaded lane also completed the full regression gate:
 - client receive-path benchmark smoke: PASS;
 - distribution integrity / disttest: PASS.
 
+### HTTP/2 decoded header-list hardening
+
+Both private HTTP/2 executors now enforce a decoded header-list limit.
+
+Public option on high-level Server and Client:
+
+    http2_max_header_list_size => 65_536
+
+The option requires `http2 => 1`.
+
+Accounting follows HTTP/2 SETTINGS_MAX_HEADER_LIST_SIZE semantics:
+
+    length(name) + length(value) + 32
+
+for each decoded field.
+
+Behavior:
+
+- default limit is 65,536 bytes;
+- the configured limit is advertised through SETTINGS_MAX_HEADER_LIST_SIZE;
+- the same limit is independently enforced after HPACK decoding;
+- Server applies it to initial Request headers and Request trailers;
+- Client applies it to Response header blocks;
+- an over-limit block resets/fails only the offending stream using
+  ENHANCE_YOUR_CALM rather than closing the entire H2 connection;
+- repeated fields after the limit trip do not cause repeated application errors.
+
+Focused coverage:
+
+`t/98-http2-header-list-limit.t`
+
+checks the emitted SETTINGS frame and both Server and Client decoded-limit
+paths using a fake transport.
+
+CI run `36212199466` passed Build-and-test, including t/98, on Perl 5.36,
+5.38, 5.40, 5.42, 5.44, latest, and latest-threaded. The Perl 5.42 lane
+reported 53 files / 1,360 tests, Result PASS.
+
+GOAWAY replay note discovered during this hardening pass:
+
+Net::HTTP2::nghttp2 0.008 exposes receipt of a GOAWAY frame through
+on_frame_recv, but its frame hash does not expose GOAWAY last_stream_id and no
+alternate Session accessor provides it. Safe transparent replay requires that
+value to distinguish streams the peer promises it did not process. Therefore
+HTTP currently marks the connection draining and does not automatically replay
+streams. Do not guess from stream-close timing or replay all active requests.
+
 ### HTTP/2 distribution decision
 
 HTTP/2 belongs in **Linux::Event::HTTP**, not in a separate Linux::Event::HTTP2
