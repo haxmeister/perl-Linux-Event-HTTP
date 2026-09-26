@@ -804,6 +804,15 @@ sub _start_operation_hop ($self, $operation, $spec) {
     $connection_callback{buffer_body} = $spec->{buffer_body}
         if $spec->{has_buffer_body};
 
+    if ($allow_http2
+        && $connection->can('_http2_capable')
+        && $connection->_http2_capable) {
+        $connection_callback{_http1_reassign} = sub ($replacement) {
+            $connection = $replacement;
+            return;
+        };
+    }
+
     if (defined $spec->{upgrade_to}) {
         $connection_callback{upgrade_to} = $spec->{upgrade_to};
         $connection_callback{on_upgrade} = sub (
