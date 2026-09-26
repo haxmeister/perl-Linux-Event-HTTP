@@ -231,28 +231,44 @@ leh2_send_callback(nghttp2_session *session, const uint8_t *data,
 }
 
 static int
+leh2_on_begin_frame(nghttp2_session *session, const nghttp2_frame_hd *hd,
+    void *user_data)
+{
+    leh2_state_t *state = (leh2_state_t *)user_data;
+    int rv;
+
+    if (!state->is_server || hd->type != NGHTTP2_HEADERS || hd->stream_id <= 0)
+        return 0;
+
+    /* Existing streams may legally receive later HEADERS (for example
+     * trailers). Only a HEADERS frame for an ID with no live stream can
+     * represent a newly opened peer stream here. */
+    if (nghttp2_session_get_stream_remote_close(session, hd->stream_id) != -1)
+        return 0;
+
+    if (state->last_peer_stream_id
+        && hd->stream_id <= state->last_peer_stream_id) {
+        state->rejected_stream_id = hd->stream_id;
+        rv = nghttp2_session_terminate_session(
+            session, NGHTTP2_PROTOCOL_ERROR);
+        return rv == 0 ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+
+    state->last_peer_stream_id = hd->stream_id;
+    return 0;
+}
+
+static int
 leh2_on_begin_headers(nghttp2_session *session, const nghttp2_frame *frame,
     void *user_data)
 {
     leh2_state_t *state = (leh2_state_t *)user_data;
     SV *args[3];
-    int rv;
     dTHX;
 
-    if (state->is_server
-        && frame->hd.type == NGHTTP2_HEADERS
-        && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
-        if (state->last_peer_stream_id
-            && frame->hd.stream_id <= state->last_peer_stream_id) {
-            state->rejected_stream_id = frame->hd.stream_id;
-            rv = nghttp2_session_terminate_session(
-                session, NGHTTP2_PROTOCOL_ERROR);
-            return rv == 0 ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
-        }
-        state->last_peer_stream_id = frame->hd.stream_id;
-    }
-
-    if (frame->hd.stream_id == state->rejected_stream_id)
+    (void)session;
+    if (state->rejected_stream_id
+        && frame->hd.stream_id == state->rejected_stream_id)
         return 0;
 
     args[0] = newSViv(frame->hd.stream_id);
@@ -271,7 +287,8 @@ leh2_on_header(nghttp2_session *session, const nghttp2_frame *frame,
     dTHX;
 
     (void)session;
-    if (frame->hd.stream_id == state->rejected_stream_id)
+    if (state->rejected_stream_id
+        && frame->hd.stream_id == state->rejected_stream_id)
         return 0;
     args[0] = newSViv(frame->hd.stream_id);
     args[1] = newSVpvn((const char *)name, namelen);
@@ -289,7 +306,8 @@ leh2_on_data_chunk_recv(nghttp2_session *session, uint8_t flags,
     dTHX;
 
     (void)session;
-    if (stream_id == state->rejected_stream_id)
+    if (state->rejected_stream_id
+        && stream_id == state->rejected_stream_id)
         return 0;
     args[0] = newSViv(stream_id);
     args[1] = newSVpvn((const char *)data, len);
@@ -308,7 +326,8 @@ leh2_on_frame_recv(nghttp2_session *session, const nghttp2_frame *frame,
 
     (void)session;
 
-    if (frame->hd.stream_id == state->rejected_stream_id) {
+    if (state->rejected_stream_id
+        && frame->hd.stream_id == state->rejected_stream_id) {
         SvREFCNT_dec((SV *)frame_hv);
         return 0;
     }
@@ -857,6 +876,8 @@ CODE:
 
     nghttp2_session_callbacks_set_send_callback(
         cbs, leh2_send_callback);
+    nghttp2_session_callbacks_set_on_begin_frame_callback(
+        cbs, leh2_on_begin_frame);
     nghttp2_session_callbacks_set_on_begin_headers_callback(
         cbs, leh2_on_begin_headers);
     nghttp2_session_callbacks_set_on_header_callback(cbs, leh2_on_header);
