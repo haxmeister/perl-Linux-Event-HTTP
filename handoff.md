@@ -1,6 +1,6 @@
 # Linux::Event::HTTP handoff
 
-Updated: 2026-09-25 (America/Chicago)
+Updated: 2026-09-26 (America/Chicago)
 
 ## CURRENT STATE - READ THIS FIRST
 
@@ -11,13 +11,46 @@ Canonical branch: `main`
 Project boundary: modify only Linux::Event::HTTP unless the user explicitly
 authorizes another repository in the current chat.
 
-### Active HTTP/2 stabilization state
+### 0.003 release candidate state
 
-Active branch:
+HTTP/2 work is merged to `main`.
 
-`experiment/http2-nghttp2-spike`
+Merge commit:
 
-Draft PR: #39.
+`4312c07f0793790d76009dd60c6a3415f91b540b`
+"Merge HTTP/2 support via Net::HTTP2::nghttp2"
+
+Release-prep commits on `main`:
+
+- `868d95653682568b1f8a84b15c1fc7736d0c4c14`
+  "Bump Linux::Event::HTTP to 0.003"
+- `93cf55003b4efb6d69e70e5df9cabcf5f6fa059e`
+  "CI: test production HTTP/2 on main and pull requests"
+- `76ae2f42b359e2fbaca103554f9059a92fbfbb52`
+  "Prepare 0.003 changelog"
+
+Version 0.003 includes both the native HTTP/1 client response-head path merged
+after 0.002 and the production HTTP/2 implementation.
+
+Final release-candidate CI:
+
+GitHub Actions run `36252364092`, run #791.
+
+- Perl 5.36 PASS
+- Perl 5.38 PASS
+- Perl 5.40 PASS
+- Perl 5.42 PASS
+- Perl 5.44 PASS
+- latest Perl PASS
+- latest threaded Perl PASS
+- HTTP/1-only without Net::HTTP2::nghttp2 PASS
+- latest-Perl main suite: 57 files / 1,489 tests, PASS
+- distribution integrity / disttest PASS
+- h2spec v2.6.0: 146 tests, 144 passed, 1 skipped, 1 known
+  libnghttp2 stream-ID policy failure; CI gate PASS
+
+PR #39 is merged. PR #40, the private native libnghttp2 experiment, is closed
+as superseded and must not be merged into the release path.
 
 ### HTTP/2 backend decision (2026-09-26)
 
