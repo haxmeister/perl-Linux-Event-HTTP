@@ -108,3 +108,4 @@ t/93-http2-client-executor-spike.t
 t/94-http2-selector-transition-spike.t
 t/95-http2-high-level-client.t
 t/96-http2-high-level-multiplex.t
+t/97-http2-high-level-streaming-upload.t
