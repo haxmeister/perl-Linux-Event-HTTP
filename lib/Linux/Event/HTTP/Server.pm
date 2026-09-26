@@ -32,18 +32,33 @@ sub _take_callback ($name, $option) {
     return $callback;
 }
 
-sub _http2_available () {
+sub _http2_available ($session_class = undef) {
     return 0 if !eval {
-        require Net::HTTP2::nghttp2;
-        Net::HTTP2::nghttp2->VERSION('0.011');
         require Linux::Event::HTTP::_HTTP2::Server;
         require Linux::Event::HTTP::_HTTP2::ServerConnection;
+        if (defined $session_class) {
+            (my $file = "$session_class.pm") =~ s{::}{/}g;
+            require $file;
+            die "$session_class does not provide new_server()"
+                if !$session_class->can('new_server');
+            die "$session_class reports HTTP/2 unavailable"
+                if $session_class->can('available')
+                && !$session_class->available;
+        } else {
+            require Net::HTTP2::nghttp2;
+            Net::HTTP2::nghttp2->VERSION('0.011');
+            require Net::HTTP2::nghttp2::Session;
+            die 'nghttp2 library is unavailable'
+                if !Net::HTTP2::nghttp2->available;
+        }
         1;
     };
-    return Net::HTTP2::nghttp2->available ? 1 : 0;
+    return 1;
 }
 
-sub _http2_ready ($conn, $user_ready, $max_header_list_size) {
+sub _http2_ready (
+    $conn, $user_ready, $max_header_list_size, $session_class = undef,
+) {
     if (($conn->selected_alpn // '') ne 'h2') {
         $user_ready->($conn) if $user_ready;
         return;
@@ -61,6 +76,8 @@ sub _http2_ready ($conn, $user_ready, $max_header_list_size) {
             on_body        => $conn->{_http_on_body},
             on_request_end => $conn->{_http_on_request_end},
             max_header_list_size => $max_header_list_size,
+            (defined($session_class)
+                ? (_session_class => $session_class) : ()),
         );
         $conn->{_http2_executor} = $executor;
 
@@ -94,6 +111,10 @@ sub new ($class, %option) {
     );
 
     my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    my $http2_session_class = delete $option{_http2_session_class};
+    croak 'new(): _http2_session_class must be a package name'
+        if defined($http2_session_class)
+        && (ref($http2_session_class) || $http2_session_class eq '');
     my $has_http2_max_header_list_size =
         exists $option{http2_max_header_list_size};
     my $http2_max_header_list_size =
@@ -144,14 +165,15 @@ sub new ($class, %option) {
             if defined($connection_class_option);
         croak 'new(): http2 owns TLS ALPN selection; do not supply tls => { alpn => ... }'
             if exists $tls->{alpn};
-        croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2 0.011 or newer'
-            if !_http2_available();
+        croak 'new(): HTTP/2 session backend is unavailable'
+            if !_http2_available($http2_session_class);
         $tls->{alpn} = [ 'h2', 'http/1.1' ];
 
         my $user_on_ready = $stream_callback{on_ready};
         $stream_callback{on_ready} = sub ($conn) {
             _http2_ready(
                 $conn, $user_on_ready, 0 + $http2_max_header_list_size,
+                $http2_session_class,
             );
         };
     }
@@ -185,6 +207,7 @@ sub new ($class, %option) {
         data             => $data,
         state            => $state,
         http2            => $http2,
+        http2_session_class => $http2_session_class,
         http2_max_header_list_size => 0 + $http2_max_header_list_size,
     }, $class;
 }
