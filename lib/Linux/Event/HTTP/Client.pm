@@ -504,7 +504,11 @@ sub _release_connection ($self, $origin, $connection) {
 
     if (my $idle = $self->{idle}{$origin}) {
         if (!$idle->is_closed && refaddr($idle) != refaddr($connection)) {
-            $connection->close;
+            if ($connection->can('end')) {
+                $connection->end;
+            } else {
+                $connection->close;
+            }
             return;
         }
     }
