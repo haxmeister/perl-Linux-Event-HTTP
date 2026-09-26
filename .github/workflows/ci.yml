@@ -102,9 +102,13 @@ jobs:
           "$H2SPEC_DIR/h2spec" --version 2>&1 | tee -a "$H2SPEC_LOG" || true
 
           unset OPENSSL_CONF || true
-          openssl req -x509 -newkey rsa:2048 -nodes             -keyout "$KEY"             -out "$CERT"             -subj "/CN=localhost"             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"             -days 1 >/dev/null 2>&1
+          if ! /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes             -keyout "$KEY"             -out "$CERT"             -subj "/CN=localhost"             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"             -days 1 >>"$H2SPEC_LOG" 2>&1; then
+            echo "certificate generation failed" >>"$H2SPEC_LOG"
+            exit 1
+          fi
           test -s "$CERT"
           test -s "$KEY"
+          echo "certificate generation complete" >>"$H2SPEC_LOG"
 
           perl -Mblib tools/http2-h2spec-server.pl             --host 127.0.0.1             --port "$PORT"             --cert "$CERT"             --key "$KEY"             >"$SERVER_LOG" 2>&1 &
           SERVER_PID=$!
