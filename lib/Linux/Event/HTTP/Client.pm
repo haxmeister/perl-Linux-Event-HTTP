@@ -1372,6 +1372,10 @@ Returns the Linux::Event Loop.
 
 Returns the configured Client::Connection class.
 
+=head2 http2
+
+Returns true when the Client was constructed with C<http2 =E<gt> 1>.
+
 =head2 max_redirects
 
 Returns the Client default redirect limit.
@@ -1414,13 +1418,53 @@ A connection that successfully leaves HTTP through Upgrade or CONNECT is never
 returned to the HTTP idle pool. A non-2xx CONNECT response remains HTTP and may
 leave a reusable proxy connection when its normal response framing permits it.
 
-=head1 HTTPS
+=head1 HTTPS AND HTTP/2
 
-HTTPS uses the same Client::Connection class with a Linux::Event TLS transport.
-For a direct HTTPS request, TLS is established to the target URL host. For an
-C<https> forward-proxy endpoint, TLS is established to the proxy and the target
-URI is then sent in absolute-form. Cookie and target-auth origin identity remain
-the target URL; proxy-auth origin identity remains the proxy endpoint.
+HTTPS uses Linux::Event TLS transport.
+
+Without C<http2>, the Client advertises only C<http/1.1> and retains the
+existing HTTP/1 behavior.
+
+Enable HTTP/2 negotiation for direct HTTPS requests with:
+
+    my $client = Linux::Event::HTTP::Client->new(
+        loop  => $loop,
+        http2 => 1,
+        tls   => {
+            verify => 1,
+        },
+    );
+
+The Client advertises C<h2> before C<http/1.1>. If the peer selects C<h2>, the
+same live TLS Stream is transitioned from the HTTP/1 native-consumer connection
+to the private HTTP/2 executor before any HTTP/2 preface or SETTINGS bytes are
+sent. If the peer selects C<http/1.1>, the existing HTTP/1 connection remains
+in use.
+
+The operation and Transaction are created immediately, before TLS negotiation
+finishes. If H2 is selected, that same mutable Request object is committed as
+HTTP/2: its version becomes C<2>, its scheme and authority metadata are filled,
+and the HTTP/1 Host field is consumed into authority rather than exposed as an
+ordinary HTTP/2 field. Object identity is preserved.
+
+An already-selected H2 connection commits later Requests as HTTP/2 immediately.
+
+Initial high-level HTTP/2 support applies to direct HTTPS requests with scalar
+or bodyless Request bodies. Streaming Request bodies, explicit forward-proxy
+routes, HTTP/1 Upgrade, CONNECT tunnel handoff, and explicit HTTP version
+selection continue to use the existing HTTP/1 path even when C<http2> is true.
+
+The private HTTP/2 executor already supports concurrent streams. The current
+high-level Client pool still reuses selected H2 connections sequentially;
+capacity-aware multiplexing is a separate pool-level step.
+
+C<http2 =E<gt> 1> currently requires the default C<connection_class> and an
+installed C<Net::HTTP2::nghttp2> implementation.
+
+For an C<https> forward-proxy endpoint, TLS is established to the proxy and the
+target URI is sent in HTTP/1 absolute-form. Cookie and target-auth origin
+identity remain the target URL; proxy-auth origin identity remains the proxy
+endpoint.
 
 =head1 SEE ALSO
 
