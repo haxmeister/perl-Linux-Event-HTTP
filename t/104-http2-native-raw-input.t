@@ -13,10 +13,21 @@ BEGIN {
 }
 
 use Linux::Event::Framer ();
+use Linux::Event::HTTP::_HTTP1 ();
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::Loop;
+
+{
+    package T::NativeH1Source;
+    use parent 'Linux::Event::IO::Sock::Stream';
+
+    Linux::Event::Framer->declare_native_consumer(
+        __PACKAGE__,
+        Linux::Event::HTTP::_HTTP1->_raw_consumer_definition,
+    );
+}
 
 {
     package T::NativeH2RawStream;
@@ -52,17 +63,13 @@ my @errors;
 my $server_closed = 0;
 my $server_stream;
 my $client_stream;
-my $perl_callback_data_calls = 0;
 
 my $listener = Linux::Event::IO::Sock::Listener->new(
     loop => $loop,
     host => '127.0.0.1',
     port => 0,
     stream => {
-        on_data => sub ($stream, $bytes) {
-            ++$perl_callback_data_calls;
-            die "native HTTP/2 server input escaped into configured on_data\n";
-        },
+        class => 'T::NativeH1Source',
         on_ready => sub ($stream) {
             $server_stream = $stream;
 
@@ -108,14 +115,10 @@ my $listener = Linux::Event::IO::Sock::Listener->new(
     },
 );
 
-$client_stream = Linux::Event::IO::Sock::Stream->connect(
+$client_stream = T::NativeH1Source->connect(
     loop => $loop,
     host => '127.0.0.1',
     port => $listener->port,
-    on_data => sub ($stream, $bytes) {
-        ++$perl_callback_data_calls;
-        die "native HTTP/2 client input escaped into configured on_data\n";
-    },
     on_ready => sub ($stream) {
         my $session;
         $session = Linux::Event::HTTP::_HTTP2::Native->new_client(
@@ -179,8 +182,10 @@ $listener->close if !$listener->is_closed;
 
 is_deeply(\@errors, [],
     'native raw-input HTTP/2 exchange has no transport errors');
-is($perl_callback_data_calls, 0,
-    'HTTP/2 wire input never reached configured Perl on_data callbacks');
+is(ref($client_stream), 'T::NativeH2RawStream',
+    'client replaced its HTTP/1 native consumer with the HTTP/2 consumer');
+is(ref($server_stream), 'T::NativeH2RawStream',
+    'server replaced its HTTP/1 native consumer with the HTTP/2 consumer');
 is(scalar(keys %closed), $expected,
     'all native raw-input client streams closed');
 is($server_closed, $expected,
