@@ -603,13 +603,39 @@ Linux::Event 0.117 feature review for HTTP:
    especially Loop->defer(), managed fork, Listener recipes, and transition
    semantics.
 
-Recommended HTTP action after the core transition fix:
+HTTP-side 0.117 adoption now completed on this branch:
 
-- raise the HTTP prerequisite from Linux::Event 0.116 to 0.117;
-- replace the four zero-delay handoff Timers with Loop->defer();
-- keep real-duration timers unchanged;
-- add a managed-fork HTTP server validation/example as a separate small task;
-- continue the HTTP/2 high-level ALPN selector using Loop->defer().
+- the distribution prerequisite is Linux::Event >= 0.117;
+- server Upgrade, server CONNECT, client Upgrade, and client CONNECT now use
+  Loop->defer() rather than zero-delay Kernel::Timer objects;
+- real-duration timers remain timers;
+- focused existing Upgrade/CONNECT tests pass with the defer implementation;
+- t/43-managed-fork-server.t validates a plain HTTP server using
+  Loop->fork(share => [ $server->listener ]);
+- Server POD documents managed pre-fork Listener sharing while keeping worker
+  management outside the HTTP protocol API;
+- TLS/HTTPS managed-fork Listener sharing remains intentionally unclaimed until
+  separately validated.
+
+Validation run 36203949038 reached all of these tests successfully:
+
+- t/42-upgrade.t PASS;
+- t/43-managed-fork-server.t PASS;
+- t/67-client-upgrade.t PASS;
+- t/69-client-connect.t PASS;
+- t/72-server-connect.t PASS;
+- t/90 through t/93 HTTP/2 tests PASS.
+
+The same run still fails only at the known current-core blocker:
+
+- t/94-http2-selector-transition-spike.t exits with SIGSEGV while exercising
+  TLS native-consumer -> ordinary raw transition on Linux::Event 0.117.
+
+Next after the core transition fix:
+
+- continue the HTTP/2 high-level ALPN selector using Loop->defer();
+- separately validate managed-fork TLS/HTTPS Listener sharing before documenting
+  it as supported.
 
 ### HTTP/2 distribution decision
 
