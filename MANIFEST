@@ -112,4 +112,5 @@ t/97-http2-high-level-streaming-upload.t
 t/98-http2-header-list-limit.t
 t/99-http2-aggregate-buffer-limit.t
 t/100-http2-prealpn-fanout.t
+t/101-http2-high-level-policy.t
 tools/http2-h2spec-server.pl
