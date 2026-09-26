@@ -124,14 +124,16 @@ sub request ($self, $request, %option) {
 }
 
 sub _prepare_h2_request ($self, $request) {
-    return if ($request->version // '') eq '2';
-
     croak 'HTTP/2 selector cannot change a committed Request'
         if !$request->is_mutable;
 
-    $request->version('2');
+    my $authority = $request->header('Host');
+    $authority = $self->{authority}
+        if !defined($authority) || $authority eq '';
+
+    $request->version('2') if ($request->version // '') ne '2';
     $request->scheme($self->{scheme});
-    $request->authority($self->{authority});
+    $request->authority($authority);
     $request->remove_header('Host');
     return;
 }
@@ -179,7 +181,7 @@ sub _transport_ready ($self, $stream) {
 }
 
 sub _submit_pending_http1 ($self) {
-    my $pending = delete $self->{pending} or return;
+    my $pending = $self->{pending} or return;
     my $ok = eval {
         $self->{stream}->request(
             $pending->{request},
@@ -188,12 +190,16 @@ sub _submit_pending_http1 ($self) {
         );
         1;
     };
-    $self->_fail_pending("$@") if !$ok;
+    if ($ok) {
+        delete $self->{pending};
+    } else {
+        $self->_fail_pending("$@");
+    }
     return;
 }
 
 sub _submit_pending_h2 ($self) {
-    my $pending = delete $self->{pending} or return;
+    my $pending = $self->{pending} or return;
     my $ok = eval {
         $self->_prepare_h2_request($pending->{request});
         $self->{executor}->request(
@@ -203,7 +209,11 @@ sub _submit_pending_h2 ($self) {
         );
         1;
     };
-    $self->_fail_pending("$@") if !$ok;
+    if ($ok) {
+        delete $self->{pending};
+    } else {
+        $self->_fail_pending("$@");
+    }
     return;
 }
 
