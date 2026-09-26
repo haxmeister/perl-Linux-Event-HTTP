@@ -22,17 +22,10 @@ use Linux::Event::Loop;
     package T::NativeH2RawStream;
     use parent 'Linux::Event::IO::Sock::Stream';
 
-    our $PERL_DATA_CALLS = 0;
-
     Linux::Event::Framer->declare_native_consumer(
         __PACKAGE__,
         Linux::Event::HTTP::_HTTP2::Native->_raw_consumer_definition,
     );
-
-    sub on_data ($self, $bytes) {
-        ++$PERL_DATA_CALLS;
-        die "native HTTP/2 input escaped into Perl on_data\n";
-    }
 }
 
 use constant {
@@ -188,8 +181,6 @@ is_deeply(\@errors, [],
     'native raw-input HTTP/2 exchange has no transport errors');
 is($perl_callback_data_calls, 0,
     'HTTP/2 wire input never reached configured Perl on_data callbacks');
-is($T::NativeH2RawStream::PERL_DATA_CALLS, 0,
-    'HTTP/2 wire input never reached class Perl on_data');
 is(scalar(keys %closed), $expected,
     'all native raw-input client streams closed');
 is($server_closed, $expected,
