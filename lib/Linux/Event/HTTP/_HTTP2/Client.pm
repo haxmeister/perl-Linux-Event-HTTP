@@ -186,6 +186,7 @@ sub _buffer_limit ($value) {
 
 sub request ($self, $request, %option) {
     die 'request(): executor is closed' if $self->{closed};
+    my $provided_transaction = delete $option{_transaction};
     die 'request(): executor is not started' if !$self->{started};
     die 'request(): requires a Linux::Event::HTTP::Request'
         if !blessed($request)
@@ -229,11 +230,25 @@ sub request ($self, $request, %option) {
     my $block = Linux::Event::HTTP::_HTTP2->request_headers($request);
     my @normal = grep { substr($_->[0], 0, 1) ne ':' } @$block;
 
-    my $tx = Linux::Event::HTTP::Transaction->_new(
-        request    => $request,
-        controller => $self,
-    );
-    $tx->_activate;
+    my $tx;
+    if ($provided_transaction) {
+        die 'request(): _transaction must be a Linux::Event::HTTP::Transaction'
+            if !blessed($provided_transaction)
+            || !$provided_transaction->isa('Linux::Event::HTTP::Transaction');
+        die 'request(): _transaction Request does not match'
+            if refaddr($provided_transaction->request) != refaddr($request);
+        die 'request(): _transaction is already terminal'
+            if $provided_transaction->is_terminal;
+        $tx = $provided_transaction;
+        $tx->_set_controller($self);
+        $tx->_activate;
+    } else {
+        $tx = Linux::Event::HTTP::Transaction->_new(
+            request    => $request,
+            controller => $self,
+        );
+        $tx->_activate;
+    }
 
     my ($request_body, $provider, $provider_cb);
     if ($stream_body) {
