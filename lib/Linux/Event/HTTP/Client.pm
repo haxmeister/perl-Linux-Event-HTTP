@@ -125,16 +125,35 @@ sub _parse_proxy_url ($url, $where = 'request()') {
     return $destination;
 }
 
+sub _http2_available () {
+    return 0 if !eval {
+        require Net::HTTP2::nghttp2;
+        require Linux::Event::HTTP::_HTTP2::ClientSelector;
+        1;
+    };
+    return Net::HTTP2::nghttp2->available ? 1 : 0;
+}
+
 sub new ($class, %option) {
     my $loop = delete $option{loop}
         // croak 'new(): loop is required';
     croak 'new(): loop must be an object implementing add() and watch_fd()'
         if !blessed($loop) || !$loop->can('add') || !$loop->can('watch_fd');
 
+    my $connection_class_option = delete $option{connection_class};
     my $connection_class = _load_connection_class(
-        delete($option{connection_class})
+        $connection_class_option
             // 'Linux::Event::HTTP::Client::Connection',
     );
+    my $http2 = exists($option{http2}) ? delete($option{http2}) : 0;
+    croak 'new(): http2 must be zero or one'
+        if !defined($http2) || ref($http2)
+        || ("$http2" ne '0' && "$http2" ne '1');
+    $http2 = $http2 ? 1 : 0;
+    croak 'new(): http2 currently requires the default connection_class'
+        if $http2 && defined($connection_class_option);
+    croak 'new(): HTTP/2 support requires Net::HTTP2::nghttp2'
+        if $http2 && !_http2_available();
     my $connect_timeout = delete $option{connect_timeout};
     my $max_redirects = _validate_max_redirects(
         exists($option{max_redirects}) ? delete($option{max_redirects}) : 5,
@@ -184,6 +203,7 @@ sub new ($class, %option) {
         cookie_jar       => $cookie_jar,
         auth             => $auth,
         proxy_auth       => $proxy_auth,
+        http2            => $http2,
         idle             => {},
         connections      => {},
         closed           => 0,
@@ -198,6 +218,7 @@ sub proxy            ($self) { $self->{proxy_url} }
 sub cookie_jar       ($self) { $self->{cookie_jar} }
 sub auth             ($self) { $self->{auth} }
 sub proxy_auth       ($self) { $self->{proxy_auth} }
+sub http2            ($self) { !!$self->{http2} }
 sub is_closed        ($self) { !!$self->{closed} }
 
 sub _copy_headers ($headers) {
@@ -238,15 +259,23 @@ sub _track_connection ($self, $connection) {
     return $connection;
 }
 
-sub _take_idle_connection ($self, $origin) {
+sub _take_idle_connection ($self, $origin, $allow_http2 = 0) {
     my $connection = delete $self->{idle}{$origin};
     return undef if !$connection;
     return undef if $connection->is_closed;
     return undef if defined $connection->transaction;
+
+    my $is_http2_capable = $connection->can('_http2_capable')
+        && $connection->_http2_capable ? 1 : 0;
+    if ($is_http2_capable != ($allow_http2 ? 1 : 0)) {
+        $connection->close;
+        return undef;
+    }
+
     return $connection;
 }
 
-sub _new_connection ($self, $destination) {
+sub _new_connection ($self, $destination, $allow_http2 = 0) {
     my %connect = (
         loop => $self->{loop},
         host => $destination->{host},
@@ -259,18 +288,31 @@ sub _new_connection ($self, $destination) {
         require Linux::Event::TLS;
         $connect{transport} = Linux::Event::TLS->client(
             server_name => $destination->{host},
-            alpn        => ['http/1.1'],
+            alpn        => $allow_http2
+                ? [ 'h2', 'http/1.1' ]
+                : [ 'http/1.1' ],
             %{$self->{tls}},
         );
     }
 
-    my $connection = $self->{connection_class}->connect(%connect);
+    my $connection;
+    if ($allow_http2 && $destination->{scheme} eq 'https') {
+        require Linux::Event::HTTP::_HTTP2::ClientSelector;
+        $connection = Linux::Event::HTTP::_HTTP2::ClientSelector->new(
+            %connect,
+            scheme    => $destination->{scheme},
+            authority => $destination->{host_header},
+        );
+    } else {
+        $connection = $self->{connection_class}->connect(%connect);
+    }
     return $self->_track_connection($connection);
 }
 
-sub _connection_for ($self, $destination) {
-    return $self->_take_idle_connection($destination->{origin})
-        // $self->_new_connection($destination);
+sub _connection_for ($self, $destination, $allow_http2 = 0) {
+    return $self->_take_idle_connection(
+        $destination->{origin}, $allow_http2,
+    ) // $self->_new_connection($destination, $allow_http2);
 }
 
 sub _release_connection ($self, $origin, $connection) {
@@ -397,6 +439,7 @@ sub _redirect_plan ($self, $operation, $spec, $destination, $response) {
         method              => $method,
         headers             => $headers,
         version             => $spec->{version},
+        version_explicit    => $spec->{version_explicit},
         has_body            => 0,
         body                => undef,
         has_stream_body     => 0,
@@ -522,7 +565,14 @@ sub _start_operation_hop ($self, $operation, $spec) {
     $request{body} = $spec->{body} if $spec->{has_body};
     my $message = Linux::Event::HTTP::Request->new(%request);
 
-    my $connection = $self->_connection_for($route);
+    my $allow_http2 = $self->{http2}
+        && !$proxy
+        && $destination->{scheme} eq 'https'
+        && !$spec->{version_explicit}
+        && !$spec->{has_stream_body}
+        && !defined($spec->{upgrade_to});
+
+    my $connection = $self->_connection_for($route, $allow_http2);
     my $callback = $spec->{callback};
     my ($auth_retry, $redirect);
     my $upgraded = 0;
@@ -724,6 +774,7 @@ sub request ($self, $method, $url, %option) {
             if $proxy_auth && $name eq 'proxy-authorization';
     }
 
+    my $version_explicit = exists $option{version};
     my $version = delete($option{version}) // '1.1';
     my $has_body = exists $option{body};
     my $body = delete $option{body};
@@ -788,6 +839,7 @@ sub request ($self, $method, $url, %option) {
         method              => $method,
         headers             => $headers,
         version             => $version,
+        version_explicit    => $version_explicit ? 1 : 0,
         has_body            => $has_body ? 1 : 0,
         body                => $body,
         has_stream_body     => $has_stream_body ? 1 : 0,
@@ -826,7 +878,7 @@ sub _start_connect_tunnel_attempt ($self, $operation, $spec) {
         version => '1.1',
         headers => $headers,
     );
-    my $connection = $self->_connection_for($destination);
+    my $connection = $self->_connection_for($destination, 0);
     my $callback = $spec->{callback};
     my ($auth_retry, $tunneled);
 
