@@ -19,6 +19,7 @@ use Linux::Event::Loop;
 
 use constant {
     H2_HEADERS    => 1,
+    H2_GOAWAY     => 7,
     H2_END_STREAM => 0x1,
 };
 
@@ -194,5 +195,41 @@ like(
     qr/\A\d+\.\d+/,
     'native bridge reports linked libnghttp2 version',
 );
+
+my $received_goaway;
+my $goaway_client = Linux::Event::HTTP::_HTTP2::Native->new_client(
+    callbacks => {
+        on_frame_recv => sub ($frame) {
+            $received_goaway = $frame
+                if ($frame->{type} // -1) == H2_GOAWAY;
+        },
+    },
+);
+$goaway_client->send_connection_preface(max_concurrent_streams => 100);
+my $goaway_stream_id = $goaway_client->submit_request(
+    method    => 'GET',
+    path      => '/goaway-metadata',
+    scheme    => 'http',
+    authority => 'native.test',
+);
+is($goaway_stream_id, 1,
+    'native client allocates expected first stream before GOAWAY');
+
+my $settings_wire = pack('C C C C C N', 0, 0, 0, 4, 0, 0);
+my $goaway_wire = pack(
+    'C C C C C N N N',
+    0, 0, 8, H2_GOAWAY, 0, 0, $goaway_stream_id, 0,
+);
+my $goaway_input = $settings_wire . $goaway_wire;
+is(
+    $goaway_client->mem_recv($goaway_input),
+    length($goaway_input),
+    'native client consumes SETTINGS plus GOAWAY input',
+);
+is($received_goaway->{last_stream_id}, $goaway_stream_id,
+    'native GOAWAY callback exposes last_stream_id');
+is($received_goaway->{error_code}, 0,
+    'native GOAWAY callback exposes error_code');
+$goaway_client->close;
 
 done_testing;
