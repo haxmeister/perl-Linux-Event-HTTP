@@ -20,12 +20,9 @@ BEGIN {
 
 use Linux::Event::HTTP::Client::Connection;
 use Linux::Event::HTTP::Request;
-use Linux::Event::HTTP::Server::Connection;
+use Linux::Event::HTTP::Server;
 use Linux::Event::HTTP::_HTTP2::Client;
 use Linux::Event::HTTP::_HTTP2::ClientConnection;
-use Linux::Event::HTTP::_HTTP2::Server;
-use Linux::Event::HTTP::_HTTP2::ServerConnection;
-use Linux::Event::IO::Sock::Listener;
 use Linux::Event::IO::Sock::Stream;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::Loop;
@@ -41,7 +38,7 @@ if (!defined $openssl) {
         }
     }
 }
-plan skip_all => 'openssl command is required for HTTP/2 selector spike'
+plan skip_all => 'openssl command is required for HTTP/2 selector test'
     if !defined $openssl;
 
 my $temp = tempdir(CLEANUP => 1);
@@ -64,66 +61,43 @@ my $generated;
 plan skip_all => 'openssl could not generate temporary TLS certificate'
     if $generated != 0 || !-s $cert || !-s $key;
 
+my $loop = Linux::Event::Loop->new;
+my $state = {
+    server_ready       => [],
+    server_request     => [],
+    h2_client_response => '',
+    h1_client_response => '',
+    errors             => [],
+};
 
-{
-    package T::HTTP2SelectorSource;
-    use parent 'Linux::Event::HTTP::Server::Connection';
-
-    sub on_ready ($conn) {
-        my $state = $conn->data;
-        my $entry = {
-            alpn          => $conn->selected_alpn,
-            before_class  => ref($conn),
-            before_id     => Scalar::Util::refaddr($conn),
-            fd            => $conn->fd,
-            transport     => $conn->transport_name,
+my $server = Linux::Event::HTTP::Server->new(
+    loop  => $loop,
+    host  => '127.0.0.1',
+    port  => 0,
+    http2 => 1,
+    tls   => {
+        cert_file => $cert,
+        key_file  => $key,
+    },
+    on_ready => sub ($conn) {
+        push @{$state->{server_ready}}, {
+            class     => ref($conn),
+            id        => refaddr($conn),
+            fd        => $conn->fd,
+            alpn      => $conn->selected_alpn,
+            transport => $conn->transport_name,
         };
-
-        if (($conn->selected_alpn // '') eq 'h2') {
-            $conn->pause_read;
-            $conn->loop->defer(sub {
-                my $executor = Linux::Event::HTTP::_HTTP2::Server->new(
-                    stream         => $conn,
-                    connection     => $conn,
-                    autostart      => 0,
-                    on_request     => $conn->{_http_on_request},
-                    on_body        => $conn->{_http_on_body},
-                    on_request_end => $conn->{_http_on_request_end},
-                );
-                $conn->{_http2_executor} = $executor;
-
-                $conn->transition_to(
-                    'Linux::Event::HTTP::_HTTP2::ServerConnection',
-                );
-
-                $entry->{after_class} = ref($conn);
-                $entry->{after_id} = Scalar::Util::refaddr($conn);
-                $entry->{after_transport} = $conn->transport_name;
-                push @{$state->{server_ready}}, $entry;
-
-                $executor->start;
-
-                $conn->resume_read if $conn->is_read_paused;
-            });
-            return;
-        }
-
-        push @{$state->{server_ready}}, $entry;
-        return;
-    }
-
-    sub on_request ($conn, $req, $res) {
-        my $state = $conn->data;
+    },
+    on_request => sub ($conn, $req, $res) {
         my $tx = $conn->transaction;
         push @{$state->{server_request}}, {
-            class      => ref($conn),
-            alpn       => $conn->selected_alpn,
-            version    => $req->version,
-            target     => $req->target,
-            authority  => $req->authority,
-            tx_match   => defined($tx)
-                && Scalar::Util::refaddr($tx->request)
-                    == Scalar::Util::refaddr($req) ? 1 : 0,
+            class     => ref($conn),
+            alpn      => $conn->selected_alpn,
+            version   => $req->version,
+            target    => $req->target,
+            authority => $req->authority,
+            tx_match  => defined($tx)
+                && refaddr($tx->request) == refaddr($req) ? 1 : 0,
         };
 
         if ($req->version eq '2') {
@@ -133,46 +107,20 @@ plan skip_all => 'openssl could not generate temporary TLS certificate'
             $res->header('x-protocol', 'http/1.1');
             $res->body("h1\n");
         }
-        return;
-    }
-}
-
-my $loop = Linux::Event::Loop->new;
-my $state = {
-    server_ready          => [],
-    server_request        => [],
-    h2_client_response    => '',
-    h1_client_response    => '',
-    h2_client_complete    => 0,
-    h1_client_complete    => 0,
-    errors                => [],
-};
-
-my $listener;
-$listener = Linux::Event::IO::Sock::Listener->new(
-    loop => $loop,
-    host => '127.0.0.1',
-    port => 0,
-    stream => {
-        class => 'T::HTTP2SelectorSource',
-        data  => $state,
-        tls   => {
-            cert_file => $cert,
-            key_file  => $key,
-            alpn      => [ 'h2', 'http/1.1' ],
-        },
-        on_error => sub ($conn, $error) {
-            push @{$state->{errors}}, "server: $error";
-            $loop->stop;
-        },
+    },
+    on_error => sub ($conn, $error) {
+        push @{$state->{errors}}, "server: $error";
+        $loop->stop;
     },
 );
 
+ok($server->http2, 'high-level Server reports HTTP/2 enabled');
+
 my $guard = Linux::Event::Kernel::Timer->new(
-    loop => $loop,
+    loop  => $loop,
     after => 10,
     on_timer => sub ($timer) {
-        die "HTTP/2 ALPN selector transition spike timed out\n";
+        die "high-level HTTP/2 Server selector test timed out\n";
     },
 );
 
@@ -182,7 +130,7 @@ $start_h1 = sub {
     Linux::Event::IO::Sock::Stream->connect(
         loop => $loop,
         host => '127.0.0.1',
-        port => $listener->port,
+        port => $server->port,
         transport => Linux::Event::TLS->client(
             server_name => 'localhost',
             verify      => 0,
@@ -205,7 +153,7 @@ $start_h1 = sub {
             $state->{h1_client_complete} = 1;
             $guard->cancel;
             $stream->close if !$stream->is_closed;
-            $listener->close;
+            $server->close;
             $loop->stop;
         },
         on_error => sub ($stream, $error) {
@@ -219,7 +167,7 @@ my $h2_executor;
 my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
     loop => $loop,
     host => '127.0.0.1',
-    port => $listener->port,
+    port => $server->port,
     transport => Linux::Event::TLS->client(
         server_name => 'localhost',
         verify      => 0,
@@ -238,7 +186,6 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
                 autostart => 0,
             );
             $conn->{_http2_executor} = $h2_executor;
-
             $conn->transition_to(
                 'Linux::Event::HTTP::_HTTP2::ClientConnection',
             );
@@ -261,7 +208,8 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
                 $request,
                 on_response => sub ($tx, $res) {
                     $state->{h2_status} = $res->status;
-                    $state->{h2_protocol_header} = $res->header('x-protocol');
+                    $state->{h2_protocol_header} =
+                        $res->header('x-protocol');
                 },
                 on_body => sub ($tx, $res, $bytes) {
                     $state->{h2_client_response} .= $bytes;
@@ -270,10 +218,6 @@ my $h2_client = Linux::Event::HTTP::Client::Connection->connect(
                     $state->{h2_client_complete} = 1;
                     $state->{h2_tx_complete_in_callback} =
                         $tx->is_complete ? 1 : 0;
-                    # Keep the negotiated H2 TLS connection alive while the
-                    # second client verifies HTTP/1.1 fallback. Closing it here
-                    # would intentionally omit a TLS close_notify and make the
-                    # server-side transport error stop this selector test.
                     $start_h1->();
                 },
                 on_error => sub ($tx, $error) {
@@ -290,84 +234,144 @@ $loop->run;
 
 $h2_client->close if !$h2_client->is_closed;
 
-is_deeply($state->{errors}, [], 'selector spike has no transport/protocol errors');
+is_deeply($state->{errors}, [],
+    'high-level Server selector has no transport/protocol errors');
+
 is($state->{h2_client_alpn}, 'h2', 'client TLS selects h2');
-is($state->{h2_client_before_class}, 'Linux::Event::HTTP::Client::Connection',
-    'h2 client begins as existing native HTTP/1 connection class');
+is($state->{h2_client_before_class},
+    'Linux::Event::HTTP::Client::Connection',
+    'test client begins as native HTTP/1 connection');
 is($state->{h2_client_after_class},
     'Linux::Event::HTTP::_HTTP2::ClientConnection',
-    'h2 client transitions to private raw HTTP/2 connection');
+    'test client transitions to private H2 connection');
 is($state->{h2_client_before_id}, $state->{h2_client_after_id},
-    'client transition retains object identity');
+    'test client transition preserves object identity');
 is($state->{h2_client_transport}, 'tls',
-    'client transition retains TLS transport');
-is($state->{h2_status}, 200, 'transitioned H2 client receives response');
+    'test client transition preserves TLS transport');
+is($state->{h2_status}, 200, 'H2 client receives status 200');
 is($state->{h2_protocol_header}, 'h2',
-    'transitioned H2 response came through HTTP/2 server executor');
+    'H2 response came through high-level Server HTTP/2 path');
 is($state->{h2_client_response}, "h2\n",
-    'transitioned H2 client receives response body');
-ok($state->{h2_client_complete}, 'H2 client Transaction completes');
+    'H2 client receives response body');
+ok($state->{h2_client_complete}, 'H2 Transaction completes');
 ok($state->{h2_tx_complete_in_callback},
     'H2 on_complete observes terminal Transaction');
 
 is($state->{h1_client_alpn}, 'http/1.1',
     'second TLS client negotiates HTTP/1.1 fallback');
 like($state->{h1_client_response}, qr{\AHTTP/1\.1 200 OK\r\n}s,
-    'HTTP/1.1 fallback still uses existing serializer');
+    'HTTP/1.1 fallback uses existing serializer');
 like($state->{h1_client_response}, qr{x-protocol: http/1\.1}i,
-    'HTTP/1.1 fallback reaches the same application callback');
+    'HTTP/1.1 fallback reaches same Server callback');
 like($state->{h1_client_response}, qr{\r\n\r\nh1\n\z}s,
     'HTTP/1.1 fallback receives correct body');
-ok($state->{h1_client_complete}, 'HTTP/1.1 fallback connection completes');
+ok($state->{h1_client_complete}, 'HTTP/1.1 fallback completes');
 
 is(scalar(@{$state->{server_ready}}), 2,
-    'server accepted one H2 and one HTTP/1.1 TLS connection');
+    'Server readiness runs once for H2 and once for HTTP/1.1');
 my ($h2_ready) = grep { ($_->{alpn} // '') eq 'h2' }
     @{$state->{server_ready}};
 my ($h1_ready) = grep { ($_->{alpn} // '') eq 'http/1.1' }
     @{$state->{server_ready}};
 
-is($h2_ready->{before_class}, 'T::HTTP2SelectorSource',
-    'server H2 socket begins as configured native HTTP/1 subclass');
-is($h2_ready->{after_class},
-    'Linux::Event::HTTP::_HTTP2::ServerConnection',
-    'server H2 socket transitions to private raw HTTP/2 connection');
-is($h2_ready->{before_id}, $h2_ready->{after_id},
-    'server transition retains object identity');
+is($h2_ready->{class}, 'Linux::Event::HTTP::_HTTP2::ServerConnection',
+    'high-level Server on_ready sees transitioned H2 connection');
 is($h2_ready->{transport}, 'tls',
-    'server source connection is TLS');
-is($h2_ready->{after_transport}, 'tls',
-    'server H2 target retains TLS transport');
-is($h1_ready->{before_class}, 'T::HTTP2SelectorSource',
-    'HTTP/1.1 fallback remains on configured native HTTP/1 subclass');
-ok(!exists($h1_ready->{after_class}),
-    'HTTP/1.1 fallback performs no protocol transition');
+    'H2 Server connection retains TLS transport');
+is($h1_ready->{class}, 'Linux::Event::HTTP::Server::Connection',
+    'HTTP/1.1 fallback stays on existing Server::Connection');
+is($h1_ready->{transport}, 'tls',
+    'HTTP/1.1 fallback retains TLS transport');
 
 is(scalar(@{$state->{server_request}}), 2,
-    'same server callback receives H2 and HTTP/1.1 requests');
+    'same high-level on_request receives H2 and HTTP/1.1');
 my ($h2_request) = grep { $_->{version} eq '2' }
     @{$state->{server_request}};
 my ($h1_request) = grep { $_->{version} eq '1.1' }
     @{$state->{server_request}};
 
 is($h2_request->{class}, 'Linux::Event::HTTP::_HTTP2::ServerConnection',
-    'H2 callback receives the live transitioned connection object');
-is($h2_request->{alpn}, 'h2', 'H2 callback can inspect negotiated ALPN');
-is($h2_request->{target}, '/selected', 'H2 callback sees mapped Request target');
+    'H2 callback receives transitioned connection object');
+is($h2_request->{alpn}, 'h2', 'H2 callback sees h2 ALPN');
+is($h2_request->{target}, '/selected',
+    'H2 callback sees mapped Request target');
 is($h2_request->{authority}, 'localhost',
     'H2 callback sees mapped Request authority');
 ok($h2_request->{tx_match},
-    'H2 conn->transaction is callback-scoped to the current stream');
+    'H2 conn->transaction is scoped to current stream');
 
-is($h1_request->{class}, 'T::HTTP2SelectorSource',
-    'HTTP/1.1 callback receives configured HTTP/1 subclass');
+is($h1_request->{class}, 'Linux::Event::HTTP::Server::Connection',
+    'HTTP/1.1 callback receives existing connection class');
 is($h1_request->{alpn}, 'http/1.1',
-    'HTTP/1.1 callback sees negotiated fallback ALPN');
+    'HTTP/1.1 callback sees fallback ALPN');
 is($h1_request->{target}, '/fallback',
     'HTTP/1.1 callback sees ordinary Request target');
 is($h1_request->{authority}, 'localhost',
     'HTTP/1.1 Request derives authority from Host');
 ok($h1_request->{tx_match},
     'HTTP/1.1 conn->transaction retains ordinary semantics');
+
+{
+    my $ok = eval {
+        Linux::Event::HTTP::Server->new(
+            loop  => Linux::Event::Loop->new,
+            host  => '127.0.0.1',
+            port  => 0,
+            http2 => 1,
+            on_request => sub {},
+        );
+        1;
+    };
+    ok(!$ok, 'http2 Server requires TLS');
+    like($@, qr/http2 requires tls/,
+        'missing TLS error is explicit');
+}
+
+{
+    package T::CustomHTTP2Connection;
+    use parent 'Linux::Event::HTTP::Server::Connection';
+    sub on_request ($self, $req, $res) { $res->body('unused') }
+}
+
+{
+    my $ok = eval {
+        Linux::Event::HTTP::Server->new(
+            loop  => Linux::Event::Loop->new,
+            host  => '127.0.0.1',
+            port  => 0,
+            http2 => 1,
+            connection_class => 'T::CustomHTTP2Connection',
+            tls => {
+                cert_file => $cert,
+                key_file  => $key,
+            },
+        );
+        1;
+    };
+    ok(!$ok, 'http2 rejects custom connection_class for now');
+    like($@, qr/http2 currently requires the default connection_class/,
+        'custom connection_class limitation is explicit');
+}
+
+{
+    my $ok = eval {
+        Linux::Event::HTTP::Server->new(
+            loop  => Linux::Event::Loop->new,
+            host  => '127.0.0.1',
+            port  => 0,
+            http2 => 1,
+            tls => {
+                cert_file => $cert,
+                key_file  => $key,
+                alpn      => [ 'h2' ],
+            },
+            on_request => sub {},
+        );
+        1;
+    };
+    ok(!$ok, 'http2 Server owns ALPN policy');
+    like($@, qr/http2 owns TLS ALPN selection/,
+        'custom ALPN conflict is explicit');
+}
 
 done_testing;
