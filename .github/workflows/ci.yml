@@ -85,44 +85,57 @@ jobs:
           set -euo pipefail
           H2SPEC_VERSION=2.6.0
           H2SPEC_DIR="$RUNNER_TEMP/h2spec"
+          H2SPEC_LOG="$RUNNER_TEMP/h2spec-output.log"
+          SERVER_LOG="$RUNNER_TEMP/h2spec-server.log"
           CERT="$RUNNER_TEMP/h2spec-cert.pem"
           KEY="$RUNNER_TEMP/h2spec-key.pem"
           PORT=18443
 
+          : >"$H2SPEC_LOG"
+          : >"$SERVER_LOG"
+          echo "h2spec harness starting" >>"$H2SPEC_LOG"
+
           mkdir -p "$H2SPEC_DIR"
-          curl --fail --location             "https://github.com/summerwind/h2spec/releases/download/v$H2SPEC_VERSION/h2spec_linux_amd64.tar.gz"             --output "$RUNNER_TEMP/h2spec.tar.gz"
+          curl --fail --location --silent --show-error             "https://github.com/summerwind/h2spec/releases/download/v$H2SPEC_VERSION/h2spec_linux_amd64.tar.gz"             --output "$RUNNER_TEMP/h2spec.tar.gz"
           tar -xzf "$RUNNER_TEMP/h2spec.tar.gz" -C "$H2SPEC_DIR"
+          test -x "$H2SPEC_DIR/h2spec"
+          "$H2SPEC_DIR/h2spec" --version | tee -a "$H2SPEC_LOG"
 
+          unset OPENSSL_CONF || true
           openssl req -x509 -newkey rsa:2048 -nodes             -keyout "$KEY"             -out "$CERT"             -subj "/CN=localhost"             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"             -days 1 >/dev/null 2>&1
+          test -s "$CERT"
+          test -s "$KEY"
 
-          perl -Mblib tools/http2-h2spec-server.pl             --host 127.0.0.1             --port "$PORT"             --cert "$CERT"             --key "$KEY"             >"$RUNNER_TEMP/h2spec-server.log" 2>&1 &
+          perl -Mblib tools/http2-h2spec-server.pl             --host 127.0.0.1             --port "$PORT"             --cert "$CERT"             --key "$KEY"             >"$SERVER_LOG" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 
           for attempt in $(seq 1 100); do
-            if grep -q '^READY ' "$RUNNER_TEMP/h2spec-server.log"; then
+            if grep -q '^READY ' "$SERVER_LOG"; then
               break
             fi
             if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              cat "$RUNNER_TEMP/h2spec-server.log"
+              cat "$SERVER_LOG"
+              echo "h2spec target server exited before readiness" >>"$H2SPEC_LOG"
               exit 1
             fi
             sleep 0.1
           done
 
-          if ! grep -q '^READY ' "$RUNNER_TEMP/h2spec-server.log"; then
-            cat "$RUNNER_TEMP/h2spec-server.log"
-            echo "h2spec target server did not become ready" >&2
+          if ! grep -q '^READY ' "$SERVER_LOG"; then
+            cat "$SERVER_LOG"
+            echo "h2spec target server did not become ready" >>"$H2SPEC_LOG"
             exit 1
           fi
 
           set +e
-          "$H2SPEC_DIR/h2spec" -t -k -h 127.0.0.1 -p "$PORT"             2>&1 | tee "$RUNNER_TEMP/h2spec-output.log"
+          "$H2SPEC_DIR/h2spec" -t -k -h 127.0.0.1 -p "$PORT"             2>&1 | tee -a "$H2SPEC_LOG"
           STATUS=${PIPESTATUS[0]}
           set -e
 
+          echo "H2SPEC_EXIT_STATUS=$STATUS" | tee -a "$H2SPEC_LOG"
           echo "===== h2spec target server log ====="
-          cat "$RUNNER_TEMP/h2spec-server.log"
+          cat "$SERVER_LOG"
           exit "$STATUS"
 
       - name: Upload HTTP/2 h2spec diagnostic
