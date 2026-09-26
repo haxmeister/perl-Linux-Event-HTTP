@@ -647,7 +647,6 @@ sub _start_operation_hop ($self, $operation, $spec) {
         && !$proxy
         && $destination->{scheme} eq 'https'
         && !$spec->{version_explicit}
-        && !$spec->{has_stream_body}
         && !defined($spec->{upgrade_to});
 
     my $connection = $self->_connection_for($route, $allow_http2);
