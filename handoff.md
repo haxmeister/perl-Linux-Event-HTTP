@@ -1,3 +1,39 @@
+# ACTIVE REBUILD HANDOFF - 2026-10-22
+
+This section supersedes the old release/development guidance below for the
+current Unblock-based reconstruction. The historical material after the
+divider remains reference context, not a current work queue.
+
+Repository: `haxmeister/perl-Linux-Event-HTTP`
+Work branch: `feature/unblock-http-rebuild`
+Start point: main `c0bf714e0f08f9031684e2eb4fd70dea3c68449f`
+Approved plan: `docs/UNBLOCK-REBUILD-PLAN.md`
+
+Current state:
+- Architectural design agreed; implementation not started.
+- Rebuild as thin Linux-native integration of Unblock::HTTP family.
+- No backward compatibility required; remove old duplicate HTTP code and
+  object wrappers as the replacement passes tests.
+- Server `on_headers` is early; `on_request` runs after complete body.
+- Client uses Unblock operation handles, bounded responses, opt-in streaming.
+- HTTP1 default; optional HTTP2/H3; generic Upgrade/CONNECT and optional
+  WebSockets; retain separate Linux::Event::WebSocket distribution.
+- No web framework or user-agent policy; Uniform::Upload deferred.
+- Highest priority: native ABI bridge/performance, correct lifecycle,
+  backpressure and protocol handoff.
+- Open contracts: generic non-WebSocket switching through unified Unblock,
+  request-body streaming admission callback, optional engine dependencies.
+- Plan stages A-F are the authoritative implementation checklist.
+
+Work restrictions:
+- Modify only this repository unless newly authorized by the user.
+- No modifications to main, no merge, tag, release, or version bump.
+- Read the approved plan first and refresh this handoff after milestones.
+- Begin implementation with Stage A and proceed with useful tests and
+  measurements, not another architecture debate.
+
+---
+
 # Linux::Event::HTTP handoff
 
 Updated: 2026-09-26 (America/Chicago)
