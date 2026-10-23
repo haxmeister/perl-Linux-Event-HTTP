@@ -263,7 +263,7 @@ Stage A - Inventory, baseline, and executable skeleton:
 - Gate: simple end-to-end HTTP1 GET/POST from the proposed APIs.
 
 Stage B - HTTP/1 lifecycle and native fast path:
-- Implement true Linux::Event connection ownership, EOF/error/dain
+- Implement true Linux::Event connection ownership, EOF/error/drain
   contracts (including output congestion), timers, cancellation,
   bounded body reception, request/response streaming, and repeated
   HTTP/1 requests over persistent sockets.
