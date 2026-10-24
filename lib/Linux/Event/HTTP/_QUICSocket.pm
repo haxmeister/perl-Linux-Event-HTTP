@@ -1,7 +1,8 @@
 package Linux::Event::HTTP::_QUICSocket;
 use v5.36;
 use Carp qw(croak);
-use Scalar::Util qw(weaken refaddr);
+use POSIX qw(isfinite);
+use Scalar::Util qw(weaken refaddr looks_like_number);
 use Socket qw(AF_INET6 inet_pton);
 use Linux::Event::Address;
 use Linux::Event::IO::Sock::Dgram;
@@ -96,8 +97,9 @@ sub _set_timeout ($self, $seconds) {
         $old->cancel;
     }
     return unless defined $seconds;
-    croak 'QUIC timeout must be non-negative seconds'
-        unless !ref($seconds) && $seconds =~ /\A(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\z/;
+    croak 'QUIC timeout must be finite, non-negative seconds'
+        unless !ref($seconds) && looks_like_number($seconds)
+            && isfinite(0 + $seconds) && $seconds >= 0;
     my $weak = $self;
     weaken($weak);
     $self->{timer} = Linux::Event::Kernel::Timer->new(

@@ -67,6 +67,12 @@ $guard = Linux::Event::Kernel::Timer->new(loop => $loop, after => 3,
 $loop->run;
 $guard->cancel;
 is($manager->{timed_out}, 1, 'latest relative timer fires once');
+$timer->('1e-3');
+$guard = Linux::Event::Kernel::Timer->new(loop => $loop, after => 3,
+    on_timer => sub { die "QUIC small timer timed out\n" });
+$loop->run;
+$guard->cancel;
+is($manager->{timed_out}, 2, 'scientific notation fractional seconds accepted');
 $timer->(10);
 $timer->(undef);
 ok(!$bridge->{timer}, 'undef cancels outstanding timer');

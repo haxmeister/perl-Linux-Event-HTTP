@@ -13,6 +13,27 @@ are not implemented. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
+## 2026-10-24 Stage D real QUIC test pending CI
+
+- Added t/rebuild/70-http3-loopback.t using the private Linux UDP bridge
+  on BOTH ends, the actual Net::QUIC::Driver, Unblock::HTTP::QUIC manager,
+  Unblock::HTTP3 engine, an ephemeral verified localhost certificate, and
+  two concurrent HTTP3 GET transactions sharing a QUIC connection.
+- The fixture checks callback ordering, Uniform/Unblock identity, exact
+  response bodies, and release of UDP/timer watchers after close.
+- The test is gated by optional Net::QUIC >= 0.06 and Unblock::HTTP3 >= 0.13;
+  latest non-threaded CI explicitly installs these dependencies and requires
+  the test rather than treating a skip as success. The ordinary HTTP1-only
+  installation must remain unaffected.
+- _QUICSocket now accepts finite non-negative scientific notation timeouts
+  (such as 1e-3 seconds) and rejects NaN/infinity, matching Net::QUIC
+  dynamic relative timer semantics. t/rebuild/60 covers this edge case.
+- This is a concrete H3 transport/engine test, NOT public HTTP3 Server/Client
+  integration. Those remain disabled until full ownership, cancellation,
+  shutdown and verification are implemented and tested.
+- CI verification pending for this commit. Existing Stage B/Stage C gates
+  remain open, and Stage F cleanup remains deferred as originally approved.
+
 ## Current h2spec failure grouping (not a fix)
 
 The recorded 11 h2spec 2.6.0 failures are not all the same condition:

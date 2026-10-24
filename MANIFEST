@@ -169,3 +169,4 @@ bench/results/unblock-stage-c/h2spec-parity.json
 docs/NEXT-CHAT-PROMPT.txt
 lib/Linux/Event/HTTP/_QUICSocket.pm
 t/rebuild/60-quic-socket.t
+t/rebuild/70-http3-loopback.t
