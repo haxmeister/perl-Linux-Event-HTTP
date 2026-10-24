@@ -1,0 +1,205 @@
+{
+  "command": "h2spec -t -k -p 18553 -j REPORT.xml",
+  "h2spec": "2.6.0",
+  "http2_source": "7bc0b6ccd653a74ad1e7399d27aa9d94c941b513",
+  "note": "Same failing cases and diagnostics on the untouched baseline and both rebuilt input paths. Not a clean conformance pass. XML control bytes are displayed as question marks.",
+  "perl": "5.38.2 threaded",
+  "results": [
+    {
+      "failed": 11,
+      "failures": [
+        {
+          "case": "half closed (remote): Sends a DATA frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "half closed (remote): Sends a HEADERS frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a DATA frame after sending RST_STREAM frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a HEADERS frame after sending RST_STREAM frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a DATA frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nTimeout",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a HEADERS frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nConnection closed\nTimeout",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "Sends stream identifier that is numerically smaller than previous",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:5)",
+          "section": "http2/5.1.1"
+        },
+        {
+          "case": "Sends PRIORITY frame that depend on itself",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nRST_STREAM Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nTimeout",
+          "section": "http2/5.3.1"
+        },
+        {
+          "case": "Sends a DATA frame on the stream that is not in \"open\" or \"half-closed (local)\" state",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/6.1"
+        },
+        {
+          "case": "Sends a PRIORITY frame with 0x0 stream identifier",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nTimeout",
+          "section": "http2/6.3"
+        },
+        {
+          "case": "Sends multiple WINDOW_UPDATE frames increasing the flow control window to above 2^31-1 on a stream",
+          "diagnostic": "RST_STREAM Frame (Error Code: FLOW_CONTROL_ERROR)\nConnection closed",
+          "section": "http2/6.9.1"
+        }
+      ],
+      "passed": 134,
+      "path": "baseline",
+      "skipped": 1,
+      "source": "c0bf714e0f08f9031684e2eb4fd70dea3c68449f",
+      "tests": 146
+    },
+    {
+      "failed": 11,
+      "failures": [
+        {
+          "case": "half closed (remote): Sends a DATA frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "half closed (remote): Sends a HEADERS frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a DATA frame after sending RST_STREAM frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a HEADERS frame after sending RST_STREAM frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a DATA frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nTimeout",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a HEADERS frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nConnection closed\nTimeout",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "Sends stream identifier that is numerically smaller than previous",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:5)",
+          "section": "http2/5.1.1"
+        },
+        {
+          "case": "Sends PRIORITY frame that depend on itself",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nRST_STREAM Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nTimeout",
+          "section": "http2/5.3.1"
+        },
+        {
+          "case": "Sends a DATA frame on the stream that is not in \"open\" or \"half-closed (local)\" state",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/6.1"
+        },
+        {
+          "case": "Sends a PRIORITY frame with 0x0 stream identifier",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nTimeout",
+          "section": "http2/6.3"
+        },
+        {
+          "case": "Sends multiple WINDOW_UPDATE frames increasing the flow control window to above 2^31-1 on a stream",
+          "diagnostic": "RST_STREAM Frame (Error Code: FLOW_CONTROL_ERROR)\nConnection closed",
+          "section": "http2/6.9.1"
+        }
+      ],
+      "passed": 134,
+      "path": "native",
+      "skipped": 1,
+      "source": "HTTP2 integration working tree",
+      "tests": 146
+    },
+    {
+      "failed": 11,
+      "failures": [
+        {
+          "case": "half closed (remote): Sends a DATA frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "half closed (remote): Sends a HEADERS frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a DATA frame after sending RST_STREAM frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a HEADERS frame after sending RST_STREAM frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a DATA frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nTimeout",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "closed: Sends a HEADERS frame",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nConnection closed\nTimeout",
+          "section": "http2/5.1"
+        },
+        {
+          "case": "Sends stream identifier that is numerically smaller than previous",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:5)",
+          "section": "http2/5.1.1"
+        },
+        {
+          "case": "Sends PRIORITY frame that depend on itself",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nRST_STREAM Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nTimeout",
+          "section": "http2/5.3.1"
+        },
+        {
+          "case": "Sends a DATA frame on the stream that is not in \"open\" or \"half-closed (local)\" state",
+          "diagnostic": "GOAWAY Frame (Error Code: STREAM_CLOSED)\nRST_STREAM Frame (Error Code: STREAM_CLOSED)\nConnection closed\nDATA Frame (length:3, flags:0x01, stream_id:1)",
+          "section": "http2/6.1"
+        },
+        {
+          "case": "Sends a PRIORITY frame with 0x0 stream identifier",
+          "diagnostic": "GOAWAY Frame (Error Code: PROTOCOL_ERROR)\nConnection closed\nTimeout",
+          "section": "http2/6.3"
+        },
+        {
+          "case": "Sends multiple WINDOW_UPDATE frames increasing the flow control window to above 2^31-1 on a stream",
+          "diagnostic": "RST_STREAM Frame (Error Code: FLOW_CONTROL_ERROR)\nConnection closed",
+          "section": "http2/6.9.1"
+        }
+      ],
+      "passed": 134,
+      "path": "perl",
+      "skipped": 1,
+      "source": "HTTP2 integration working tree",
+      "tests": 146
+    }
+  ],
+  "unblock_nghttp2": "1.70.0"
+}

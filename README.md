@@ -8,7 +8,9 @@ The implemented slice provides HTTP/1 servers and clients over TCP and TLS,
 real Unblock transactions and Uniform messages, bounded buffering, streaming
 reception/responses, pooling, cancellation, timers and native borrowed input.
 Queued streaming uploads and graceful HTTP/1 service shutdown are implemented.
-HTTP/2, HTTP/3, WebSocket and generic handoff remain pending.
+Optional HTTP/2 over TLS now has an initial implementation with ALPN,
+multiplexing, flow control and GOAWAY draining. HTTP/3, WebSocket and generic
+handoff remain pending.
 
 ## Server
 
@@ -58,7 +60,7 @@ my $op = $client->get('https://example.com/',
         say $response->status;
         say $response->body;
     },
-    on_error => sub ($object, $error) { warn "$error\n" },
+    on_error => sub ($object, $error, @protocol_details) { warn "$error\n" },
 );
 $loop->run;
 ```
@@ -86,12 +88,32 @@ HTTPS verifies certificates and the original hostname by default. Use
 hostname and ALPN selection. Server TLS options are passed as
 `tls => { cert_file => $cert, key_file => $key }`.
 
+## HTTP/2
+
+Install `Unblock::HTTP2 >= 0.12` and set `http2 => 1` on Client and Server.
+Server HTTP/2 requires `tls => { cert_file => ..., key_file => ... }`; ALPN
+selects HTTP/2 while HTTP/1 stays available by default. Set `http1 => 0` to
+disable it. Cleartext HTTP/2 prior knowledge and h2c are not implemented.
+
+The same request callbacks receive actual HTTP2 Transactions and Uniform
+messages. Protocol-specific engine tuning belongs in `http2 => { ... }`.
+Client `http_version => '2'` is strict; ordinary requests can negotiate
+HTTP/1 fallback. Cancelled H2 streams leave sibling streams active. Server
+`shutdown` sends GOAWAY and drains admitted streams before its grace deadline.
+
+`on_error` retains the engine callback arguments; HTTP/2 can supply a third
+protocol error-code argument. With Perl signatures, use an optional argument
+or `@protocol_details` as in the example above.
+
 ## Implementation and dependencies
 
-Native HTTP/1 input is the default. `native_input => 0` selects the ordinary
+Native borrowed HTTP/1 and HTTP/2 input is the default. `native_input => 0` selects the ordinary
 Perl input path for comparisons and diagnostics. Both paths share lifecycle
 callbacks; the native path adapts the two distinct ABIs and retains the host
 across callbacks that can close the stream. It contains no HTTP parser.
+HTTP/2 native input uses its own checked ABI table; output uses the ordinary
+attached host, respecting congestion until on_drain. Malformed protocol input
+closes the affected connection without unwinding the reactor.
 
 Current requirements: Linux, Perl 5.36+, Linux::Event 0.117,
 Unblock::HTTP 0.02, Unblock::HTTP1 0.12 and Uniform::HTTP 0.06.

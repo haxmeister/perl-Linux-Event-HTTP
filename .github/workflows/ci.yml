@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    name: HTTP1 Perl ${{ matrix.label }}
+    name: HTTP1 and HTTP2 Perl ${{ matrix.label }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -66,3 +66,8 @@ jobs:
           perl -Mblib bench/run-rebuild-client.pl --requests 100 --warmup 10 --repeats 1
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role server
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role client
+      - name: Optional HTTP2 integration
+        run: |
+          cpanm --notest 'Unblock::HTTP2@0.12'
+          REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t
+          REBUILD_REQUIRE_HTTP2=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/50-http2.t

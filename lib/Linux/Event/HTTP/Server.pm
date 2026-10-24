@@ -28,6 +28,8 @@ sub new ($class, %option) {
     for my $name (qw(tls tuning)) {
         $stream{$name} = delete $option{$name} if exists $option{$name};
     }
+    croak 'new(): HTTP/2 Server requires tls for ALPN negotiation'
+        if exists($protocols{http2}) && !exists($stream{tls});
     if (exists $stream{tls}) {
         croak 'new(): tls must be a hash reference' unless ref($stream{tls}) eq 'HASH';
         croak 'new(): HTTP Server owns TLS alpn' if exists $stream{tls}{alpn};
@@ -163,6 +165,10 @@ connections when the grace period expires. TLS handshakes without admitted
 requests close immediately. Completion runs once after owned connections
 and their transactions have finished; it can run synchronously if idle.
 Repeated shutdown calls have no effect. C<grace> is non-negative seconds.
-HTTP/2/3 are subsequent reconstruction stages.
+C<http2 =E<gt> 1> enables optional Unblock::HTTP2 (at least 0.12). Server
+HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>.
+A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains
+admitted streams. Cleartext HTTP/2, HTTP/3 and handoff are not implemented.
+HTTP/2 C<on_error> may include a third protocol error-code argument.
 
 =cut

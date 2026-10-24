@@ -24,7 +24,11 @@ sub protocols ($option) {
         croak "new(): $name must be 0, 1 or a hash reference"
             unless ref($value) eq 'HASH' || (defined($value) && !ref($value) && $value =~ /\A[01]\z/);
         next unless ref($value) || $value;
-        croak "new(): $name integration is not implemented yet" unless $name eq 'http1';
+        croak "new(): $name integration is not implemented yet" if $name eq 'http3';
+        if ($name eq 'http2') {
+            eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.12'); 1 }
+                or croak "new(): http2 requires Unblock::HTTP2 >= 0.12: $@";
+        }
         croak 'new(): WebSocket integration is not implemented yet'
             if ref($value) && $value->{websocket};
         $protocols{$name} = ref($value) ? $value : {};

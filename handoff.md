@@ -3,127 +3,154 @@
 This section supersedes historical release/development instructions below.
 Repository: haxmeister/perl-Linux-Event-HTTP
 Branch: feature/unblock-http-rebuild
-Published implementation: faa457abda2aa4f7bb441c174d6b61c8cf2b47a0
-Prior local checkpoint: ed7c924cdd2d5ca9a991258c7d262739804d15ec
+Current milestone: HTTP2 integration (the commit containing this section).
+Previous published checkpoint: dda70401c7d86db6a5600dc15874e93589e14344
 Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
 Detailed evidence: docs/UNBLOCK-REBUILD-STATUS.md
 
-## Current authorization
+## Authorization
 
-The user approved the five concrete upstream proposals from the Stage A
-checkpoint: HTTP1 performance and drain; upper HTTP admission callback,
-optional engine metadata and generic handoff. Only these two upstream
-repositories were added to the original HTTP implementation scope. They use
-feature/linux-event-integration, with published source commits:
+Continue implementation, not architecture discussion or release preparation.
+Feature-branch pushes are authorized as needed; main still requires permission.
+No merges, tags, version bumps or releases. Source changes are authorized in:
+- Linux::Event::HTTP, feature/unblock-http-rebuild.
+- Unblock::HTTP1, feature/linux-event-integration: the approved performance
+  and Server drain changes only.
+- Unblock::HTTP, feature/linux-event-integration: the approved admission
+  callback, optional dependency metadata and generic handoff changes only.
 
-- perl-Unblock-HTTP1: 1eb332872257087bb13ccde0f74f235c353d6e67
-- perl-Unblock-HTTP: 6fa6c452236f9ecc2830d250fefc7d79d1167676
+All other sources remain read-only, including core, Uniform, HTTP2/3,
+Net::QUIC and WebSocket. HTTP2 was built and tested without source changes.
+Generic handoff in upper HTTP remains authorized but unimplemented.
 
-All other repositories remain read-only. No main edits, merges, tags, version
-bumps or releases. On 2026-10-24 the user authorized pushes to feature branches as needed.
-Main still requires explicit permission. Both upstream feature branches are
-published; Linux HTTP CI pins those published commits. No repeated push
-permission is needed for feature-branch fixes. Generic handoff remains
-authorized and pending; do not ask for the same authorization again.
+## Published dependencies
 
-## Output ownership milestone (2026-10-24)
+- HTTP1 latest implementation: 06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14.
+- Upper HTTP implementation: 6fa6c452236f9ecc2830d250fefc7d79d1167676
+  (branch head includes docs-only 0b636373f39a117ef062f2b5e8bebc3655675aa2).
+- Optional HTTP2 0.12, read-only main: 7bc0b6ccd653a74ad1e7399d27aa9d94c941b513.
+- Linux::Event 0.117: 66af732c2dbc7475dfd285841b7b0bf1ecb3b6b0.
+- Uniform::HTTP 0.06: 670c8eed8aeae6edc6d5e15ff9d8be5e7346c8b5.
 
-Unblock HTTP1 feature commit `06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14`
-transfers serialized wire payloads out of retained transaction plans into the
-output queue. Empty batches preserve Perl copy-on-write storage; existing
-batches still coalesce. Canonical Uniform bodies and streaming framing state
-remain intact. This avoids retaining a second serialized body after sending.
-
-Validation: HTTP1 40 files / 349 top-level tests on Perl 5.38.2 threaded and
-5.44.0 non-threaded; 5.38 disttest passes. Linux HTTP 4 files / 18 subtests
-pass on both input paths and both Perls. Upper HTTP 30 files / 870 tests pass
-on 5.38 (optional real engines still skipped in this run).
-
-New `bench/run-unblock-retention.pl` is a Linux socket-free diagnostic. Each
-fresh process holds 256 completed transactions with distinct 256 KiB canonical
-bodies (64 MiB total). Three before/after samples used the previous HTTP1
-`0edca539...` Perl modules versus the changed modules with identical XS.
-Median additional RSS: server 133444 -> 67896 KiB; client 133448 -> 67644 KiB.
-Bodies are checked after measurement. RSS includes allocator overhead and is
-not peak RSS or evidence about unrelated workloads. Raw samples are under
-`bench/results/unblock-stage-b-retention/`.
-
-Matched native GET/16 KiB, 100 connections, pipeline 1, 10000 requests after
-1000 warmup, three repeats: 9454 -> 9772 median req/s; server CPU 106.419 ->
-103.208 us/request. This small change on the shared host does not establish
-reliable throughput improvement. The original performance gap remains open.
-Before source is reproducible with a read-only worktree at `0edca539...` and
-`perl -I/path/to/before/lib` ahead of the same HTTP1 XS in PERL5LIB.
-
-Feature branch published; main unchanged. Remote CI for this milestone is
-pending. Previous green run links below do not validate these new changes.
+HTTP1/upper versions remain 0.12/0.02; their released versions do not contain
+these feature additions. Root CI pins the published feature source commits.
 
 ## Implemented
 
-- Stage A working TCP/TLS H1 Server/Client using actual Unblock operations,
-  transactions and Uniform messages, pooling, bounded reception, streaming,
-  timeout/cancellation, backpressure and native borrowed input.
-- Stage B now includes queued streamed uploads via on_transaction($tx), and
-  Server shutdown(grace => seconds, on_complete => callback). Listener-only
-  close remains distinct. Shutdown drains admitted H1 work, excludes pipeline
-  suffixes, preserves application finish callbacks, cancels its timer and
-  force-closes stalls at the deadline.
-- Stalled TLS testing caught the earlier ownership mistake: transport-ready
-  means TLS-ready, so it missed incomplete handshakes. Registration now starts
-  at Listener on_accept; shutdown closes unfinished handshakes immediately.
-- Upstream H1 native simple-response serialization uses the existing Uniform
-  native inspection ABI with general-path fallbacks. No Uniform XS or ABI
-  layout change. Clone-local handles are tested on threaded Perl.
-- Upstream H1 public drain handles delayed/streamed responses, congestion,
-  manual output, repeated calls, and synchronous host close ordering.
-- Upper admission callback is once per actual assignment, excludes queued
-  cancellation/failed admission/H3 missing credit, and normalizes producer
-  exceptions using the existing cancellation/operation-error convention.
-- Upper metadata makes H2/H3 optional; H1-only tests and CI no longer depend
-  on --nodeps. Published 0.02/0.12 do NOT yet contain these feature additions.
+Stage A/B:
+- TCP/TLS HTTP1 Server/Client, actual Unblock operations/transactions and
+  Uniform messages, bounded buffers, streaming bodies, pooling, cancellation,
+  timeouts, ownership/backpressure and native borrowed input.
+- on_transaction starts queued streamed uploads after actual admission.
+- Server shutdown closes the listener, drains admitted work and force-closes
+  at the grace deadline. Ownership starts at on_accept, including stalled TLS.
+- HTTP1 native simple-response serialization and public idempotent drain.
+- Upper H1-only installation metadata and admission callback are implemented.
+- Latest HTTP1 retention fix transfers serialized bytes out of send_plan into
+  the output queue; empty batches use copy-on-write assignment. Retaining a
+  transaction no longer retains a second serialized canonical body.
 
-## Verified and not verified
+Stage C initial integration:
+- Optional http2 => 1/hashref on Server/Client; TLS ALPN, HTTP1 fallback,
+  strict client http_version => '2', multiplexing and stream cancellation.
+- Server HTTP2 requires TLS. Cleartext prior knowledge/h2c are not implemented.
+- Native bridge selects the actual engine after ALPN and validates distinct
+  H1/H2 ABI tables. A licensed public H2 ABI header snapshot is bundled so
+  HTTP1-only builds do not require HTTP2 development dependencies.
+- H2 input is borrowed; output uses the attached Perl host, never native output
+  at the same time. Host congestion is retained until on_drain. Native H2 input
+  explicitly flushes only a ready output host through public resume_output.
+- A real eval boundary contains malformed H2 input exceptions to that socket.
+  It passes a stack-frame address, not a payload SV/copy. Perl input has the
+  corresponding exception containment. Invalid prefaces cannot stop service.
+- When H2 wants neither input nor output, the adapter defers Stream->end to
+  preserve queued writes and leave protocol callbacks first. This fixed
+  GOAWAY/error cleanup and completion without waiting for the grace deadline.
+- H2 error callbacks may carry a third protocol-code argument; documented
+  examples use a slurpy tail so Perl signatures accept it.
 
-- Linux HTTP: 4 files / 18 subtests / 80 inner assertions on Perl 5.38.2
-  threaded and 5.44.0 non-threaded, BOTH native and Perl input paths.
-- HTTP1: 39 files / 346 top-level tests on both Perls; 5.38 disttest passes.
-- Upper HTTP: 30 files / 870 top-level tests on both Perls; 5.38 disttest
-  passes (27 files / 753 tests). Real optional H2/H3/WebSocket suites skip.
-- Full Linux HTTP CI PASS on Perl 5.36/5.38/5.40/5.42/5.44/latest and latest
-  threaded: both input paths, H1-only runtime and benchmark-harness smoke.
-  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40105849132
-- Upstream HTTP1 cross-platform tests and framework examples PASS:
-  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40105783566
-  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40105783602
-- Upper ordinary H1-only installation and disttest PASS on Perl 5.20/5.44:
-  https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/40105784783
-- Original baseline: 57 files / 1,489 tests. Old t/*.t remain historical API
-  references. Default make test explicitly runs t/rebuild/*.t.
-- Stage B performance gate remains OPEN. Matched GET32 medians were
-  15,164 before / 16,610 after, and reverse-order 9,922 before / 11,340 after.
-  This is useful incremental improvement, not resolution of the original
-  62,924 req/s versus rebuilt gap. Shared-host variation is substantial.
-  See raw bench/results/unblock-stage-b and detailed measurement caveats.
+## Verified
 
-## Publication details
+- Current root: 5 files / 28 subtests on Perl 5.38.2 threaded and 5.44.0
+  non-threaded, both native and Perl paths. Ten new HTTP2 subtests cover eight
+  concurrent streams on one verified TLS connection; callback/object identity;
+  fallback/strict selection; 2 MiB flow-controlled/congested output; sibling
+  cancellation; streamed upload and GOAWAY; forced expiry; reentrant socket
+  close/weak-reference release; malformed preface followed by healthy traffic;
+  certificate and hostname rejection. Graceful test expires its guard BEFORE
+  the grace deadline, proving completion is not merely forced cleanup.
+- H1-only configuration still passes with optional H2 absent/skipped.
+- HTTP1: 40 files / 349 tests on both Perls; 5.38 disttest passes.
+- Upper HTTP after retention change: 30 files / 870 tests, Perl 5.38;
+  real optional engines were skipped in that particular run.
+- Unchanged HTTP2 standalone: 30 files / 525 tests, Perl 5.38.
+- POD and git diff --check pass. Root 5.38 disttest passes all 5 files / 28 subtests.
+- h2spec 2.6.0: 146 tests, 134 pass, 1 skip, 11 fail. The exact failing cases
+  AND diagnostics match the untouched main baseline and both rebuilt input
+  paths in this environment. This is parity, NOT a clean conformance pass.
+  JSON evidence: bench/results/unblock-stage-c/h2spec-parity.json.
+  Historical 144/1/1 results are not this environment's current result.
+- The H2 conformance fixture responds at headers and drains the body, matching
+  the old fixture, since some test requests deliberately leave the body open.
+  Production on_request still fires only after full request completion.
 
-Shell Git lacked credentials, so publication used the connected GitHub API.
-Uploaded trees were verified against local tested Git tree hashes. Commit IDs
-changed because API commits have new author/time metadata; source content is
-identical apart from documented dependency pins and handoff updates. Local
-feature branches were aligned to published commits, with old local commits
-still available through Git reflogs. Main refs remain at their original SHAs.
+Remote CI for the previous retention milestone is GREEN:
+- Root seven Perl lanes, both H1 input paths and harness smoke:
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40135515145
+- HTTP1 Linux 5.16/latest, macOS latest, Windows 5.40 and disttest:
+  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40135426474
+- HTTP1 framework examples:
+  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40135426480
+Current H2 milestone remote CI is pending publication. The workflow now adds
+optional HTTP2 tests on ALL seven Perl lanes after the HTTP1-only check.
+Do not claim these H2 remote lanes passed until their run is inspected.
 
-## Next
+## Performance
 
-Output-retention milestone is complete. Continue Stage B performance work without broad repeated sweeps. Native
-response construction/lifecycle costs still need attention; preserve actual
-Uniform objects and protocol checks. Then continue the approved Stages C-F.
-HTTP2/3, WebSocket and generic handoff remain unimplemented. Native INPUT_SWITCH
-still raises an explicit unsupported error. No post-upgrade-tail claim.
-Do not remove old private code until its required replacement capabilities
-are covered. Do not restart architectural design or prepare a release.
+Stage B throughput gate remains OPEN. Original GET32 was 62,924 req/s versus
+initial rebuilt native 12,819. Prior serializer changes improved matched
+pairs incrementally but did not close the gap.
+Retention fix: 256 retained transactions with distinct 256 KiB bodies (64 MiB
+canonical data), three fresh-process samples. Median additional RSS:
+server 133444 -> 67896 KiB; client 133448 -> 67644 KiB. This is retained RSS,
+not peak memory. Raw results: bench/results/unblock-stage-b-retention.
+Matched GET16KiB: 9454 -> 9772 median req/s, CPU 106.419 -> 103.208 us/request.
+Small/noisy difference: no reliable throughput speedup or release-gate claim.
+No new H2 throughput claim has been made. Avoid broad repeated sweeps without
+new changes or a specific unresolved question.
+
+## Next work
+
+1. Verify the published H2 milestone and its remote CI; fix any feature-branch
+   CI failures. Keep H1-only packaging/runtime checks intact.
+2. Continue Stage B performance and Stage C remaining conformance/performance
+   work from the recorded evidence. Do not silently waive the 11 h2spec cases
+   or implement another parser to make them pass. Establish exact upstream
+   fixes before requesting authorization for any read-only repository.
+3. Continue Stage D real H3/UDP/Net::QUIC Driver and dynamic relative timers,
+   then Stage E optional WebSockets and generic handoff. Neither is implemented.
+   Native HTTP1 INPUT_SWITCH still explicitly fails; no tail-handoff claim.
+4. Stage F cleanup remains pending. Keep old private implementations/tests until
+   replacement capabilities have coverage; no backward compatibility required.
+
+## Local continuation / publication
+
+Workspace: /workspace/scratch/9be1ecae0d40; root checkout http; upstream deps/
+http1 and deps/unblock. Read-only baseline is baseline. Read-only H2 checkout
+is deps/http2. env.sh selects system Perl 5.38 and base dependencies; for H2
+prepend deps/http2/blib/lib and deps/http2/blib/arch to PERL5LIB.
+env544.sh selects Perl 5.44; prepend deps/perl544/http2/blib/lib and blib/arch.
+Root 5.44 build copy: build544. Use make test with the correct generated Perl
+Makefile; system-shebang prove would select the wrong interpreter.
+
+Shell Git fetch works but push lacks credentials. Publish through connected
+GitHub create_tree/create_commit/update_ref(expected_sha, force=false).
+publication/tree_payload.py emits tree diffs. Verify API tree SHA equals the
+local tested tree before updating refs, then fetch/reset --soft to the API
+commit (author/time means SHA differs). Never force-push or update main.
+Current generated untracked HTTP1.bs and upper disttest directory are not
+source changes. Check all trees and remote refs before editing.
 
 ---
 

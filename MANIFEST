@@ -163,3 +163,6 @@ bench/results/unblock-stage-b-retention/server-after-3.json
 bench/results/unblock-stage-b-retention/server-before-1.json
 bench/results/unblock-stage-b-retention/server-before-2.json
 bench/results/unblock-stage-b-retention/server-before-3.json
+t/rebuild/50-http2.t
+xsbridge/unblock_http2_native_abi.h
+bench/results/unblock-stage-c/h2spec-parity.json

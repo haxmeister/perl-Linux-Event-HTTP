@@ -1,6 +1,6 @@
 # Linux::Event::HTTP - Unblock Reconstruction Plan
 
-Status: Stage A implemented; Stage B lifecycle/drain implemented, performance gate open
+Status: Stage A implemented; Stage B performance gate open; Stage C initial HTTP2 integration implemented
 Date: 2026-10-22
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Working branch: `feature/unblock-http-rebuild`

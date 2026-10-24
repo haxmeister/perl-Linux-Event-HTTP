@@ -98,11 +98,15 @@ C<on_transaction =E<gt> sub ($tx) { $tx-E<gt>write(...); $tx-E<gt>end }>. This
 callback runs when queued work is admitted to the real engine. It may run
 synchronously for an available connection; use the supplied Transaction.
 
-This reconstruction slice supports HTTP/1 over TCP and TLS. HTTPS verifies
+This reconstruction slice supports HTTP/1 over TCP/TLS and optional HTTP/2
+over TLS with C<http2 =E<gt> 1> (Unblock::HTTP2 0.12 or later). HTTPS verifies
 the certificate and original hostname by default. C<tls> accepts Linux::Event
 TLS options such as C<ca_file>. HTTP owns the hostname and ALPN selection.
 C<native_input =E<gt> 0> selects the Perl input path for diagnostics.
-HTTP/2/3 are subsequent stages; unsupported protocols fail explicitly.
+HTTP/2 uses ALPN and multiplexes operations through Unblock's pool. Ordinary
+requests can fall back to HTTP/1; C<http_version =E<gt> '2'> fails if HTTP/2
+cannot be negotiated. HTTP/2 C<on_error> may include a third protocol error-code
+argument. HTTP/3 and protocol handoff remain subsequent stages.
 No redirects, cookies, authentication retries or response wrappers are added.
 
 =cut

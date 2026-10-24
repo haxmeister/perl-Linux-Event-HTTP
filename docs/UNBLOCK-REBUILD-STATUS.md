@@ -8,9 +8,45 @@ Untouched baseline: `c0bf714e0f08f9031684e2eb4fd70dea3c68449f`
 
 Stage A's executable HTTP1 GET/POST gate passes. Stage B is in progress;
 HTTP1 lifecycle and service draining are implemented, but the performance
-gate has NOT passed. Stages C-F are not implemented. The user authorized
+gate has NOT passed. Stage C initial integration is implemented; Stages D-F
+are not implemented. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
+
+## HTTP2 integration milestone (2026-10-24)
+
+Optional HTTP2 now works through the unified layer with TLS ALPN, HTTP1
+fallback, strict version selection, multiplexed streams, streaming uploads,
+flow control, sibling cancellation, GOAWAY drain and grace expiry. The native
+bridge validates the distinct H2 ABI and borrows input without a payload SV.
+Output uses only the attached host and resumes only when transport congestion
+has cleared. A real eval boundary contains malformed-input exceptions; the
+adapter defers ordered Stream->end when H2 no longer wants input or output.
+No HTTP2/core/Uniform source changes were made. The bundled ABI header is a
+licensed public-contract snapshot from HTTP2 0.12 at 7bc0b6ccd653a74ad1e7399d27aa9d94c941b513.
+
+Current suite: 5 files / 28 subtests, both native and Perl paths, Perl 5.38.2
+threaded and 5.44.0 non-threaded. Root 5.38 disttest passes the same 5 files / 28 subtests. The new HTTP2 tests cover concurrency,
+TLS verification, callback ordering, ownership, congestion, forced and graceful
+shutdown, and continued listener service after an invalid connection preface.
+H1-only tests continue to pass without the optional dependency. The unchanged
+HTTP2 standalone suite passes 30 files / 525 tests on 5.38.
+
+h2spec 2.6.0: **146 tests / 134 passed / 1 skipped / 11 failed** on the
+untouched main baseline, rebuilt native input and rebuilt Perl input. Failing
+case identities and diagnostics match exactly across all three runs. This
+establishes same-environment parity, not clean protocol conformance; the
+historical 144/1/1 result must not be substituted for these current results.
+See bench/results/unblock-stage-c/h2spec-parity.json. The conformance server
+responds at headers and drains the body, preserving the old fixture behavior.
+The public on_request callback still waits for body completion.
+
+The workflow now tests optional HTTP2 on every supported Perl lane after
+checking HTTP1-only behavior. Remote CI for this milestone is pending.
+Prior retention CI is green: root run 40135515145, HTTP1 standalone
+40135426474 and framework examples 40135426480. Main remains untouched.
+Cleartext H2 prior knowledge/h2c, H3, WebSockets and generic handoff are pending.
+The Stage B performance gate remains open; no H2 throughput claim is made.
 
 ## Output ownership milestone (2026-10-24)
 
@@ -41,8 +77,8 @@ reliable throughput improvement. The original performance gap remains open.
 Before source is reproducible with a read-only worktree at `0edca539...` and
 `perl -I/path/to/before/lib` ahead of the same HTTP1 XS in PERL5LIB.
 
-Feature branch published; main unchanged. Remote CI for this milestone is
-pending. Previous green run links below do not validate these new changes.
+Retention feature branch published; main unchanged. Remote CI passed in root
+run 40135515145 and HTTP1 runs 40135426474 / 40135426480.
 
 ## Earlier Stage B milestone
 

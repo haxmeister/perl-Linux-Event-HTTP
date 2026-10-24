@@ -10,8 +10,13 @@ sub definition {
         abi_version => 1, operations_address => _operations_address() };
 }
 
-sub _input_operations_address {
-    return Unblock::HTTP1::NativeABI::definition()->{operations_address};
+sub _input_operations_address ($engine) {
+    if ($engine->isa('Unblock::HTTP2::_Connection')) {
+        require Unblock::HTTP2::NativeABI;
+        return (2, Unblock::HTTP2::NativeABI::definition()->{operations_address});
+    }
+    die 'unsupported HTTP native engine' unless $engine->isa('Unblock::HTTP1::_Engine');
+    return (1, Unblock::HTTP1::NativeABI::definition()->{operations_address});
 }
 
 1;

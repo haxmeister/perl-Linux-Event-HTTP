@@ -57,6 +57,12 @@ WriteMakefile(
         'URI'                 => 0,
     },
     META_MERGE => {
+        optional_features => {
+            http2 => {
+                description => 'HTTP/2 over TLS with ALPN',
+                prereqs => { runtime => { requires => { 'Unblock::HTTP2' => '0.12' } } },
+            },
+        },
         'meta-spec' => {
             version => 2,
         },

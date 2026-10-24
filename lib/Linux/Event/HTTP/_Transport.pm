@@ -1,6 +1,7 @@
 package Linux::Event::HTTP::_Transport;
 use v5.36;
 use parent 'Linux::Event::IO::Sock::Stream';
+use Scalar::Util qw(weaken);
 
 sub on_ready ($self) {
     my $state = $self->data;
@@ -14,9 +15,17 @@ sub on_ready ($self) {
             return;
         }
         $self->{http_engine} = $engine;
+        $self->{http_multiplexed} = $engine && $engine->isa('Unblock::HTTP2::_Connection');
         $self->close unless $engine;
     } elsif (my $server = $state->{server}) {
-        $self->{http_engine} = $server->_attach($self);
+        my $engine = $server->_attach($self);
+        if ($self->is_closed) {
+            $engine->transport_error('HTTP transport closed during attachment') if $engine;
+            return;
+        }
+        $self->{http_engine} = $engine;
+        $self->{http_multiplexed} = $engine && $engine->isa('Unblock::HTTP2::_Connection');
+        $self->close unless $engine;
     } else {
         $self->close;
     }
@@ -30,8 +39,36 @@ sub on_eof ($self) {
 }
 
 sub on_drain ($self) {
+    $self->{http_output_blocked} = 0;
+    $self->_http_flush;
+    return;
+}
+
+sub _http_flush ($self) {
+    return if $self->is_closed || $self->{http_output_blocked};
     my $engine = $self->{http_engine};
     $engine->resume_output if $engine;
+    $self->_http_maybe_finish if $self->{http_multiplexed};
+    return;
+}
+
+sub _http_maybe_finish ($self) {
+    return unless $self->{http_multiplexed};
+    return if $self->is_closed || $self->{http_output_blocked} || $self->{http_finish_scheduled};
+    my $engine = $self->{http_engine} or return;
+    return if $engine->want_read || $engine->want_write;
+    # nghttp2 has no further input or output after its final GOAWAY/stream.
+    # End outside protocol callbacks, preserving bytes already in our queue.
+    $self->{http_finish_scheduled} = 1;
+    my $weak = $self;
+    weaken($weak);
+    $self->loop->defer(sub {
+        my $stream = $weak or return;
+        delete $stream->{http_finish_scheduled};
+        return if $stream->is_closed || $stream->{http_output_blocked};
+        my $engine = $stream->{http_engine} or return;
+        $stream->end unless $engine->want_read || $engine->want_write;
+    });
     return;
 }
 
@@ -54,6 +91,13 @@ sub on_error ($self, $error) {
     return;
 }
 
+sub _http_input_failed ($self, $error) {
+    my $engine = $self->{http_engine};
+    $engine->transport_error($error) if $engine;
+    $self->close unless $self->is_closed;
+    return;
+}
+
 sub on_close ($self) {
     # Remove before notifying: transport_error may call unblock_abort again.
     my $engine = delete $self->{http_engine};
@@ -71,6 +115,8 @@ sub on_close ($self) {
 sub unblock_send ($self, $bytes) {
     my $ready = $self->write($bytes);
     die "HTTP transport closed during output\n" if $self->is_closed;
+    $self->{http_output_blocked} = !$ready;
+    $self->_http_maybe_finish if $self->{http_multiplexed};
     return $ready;
 }
 

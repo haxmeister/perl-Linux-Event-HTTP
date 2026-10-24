@@ -11,12 +11,14 @@ use Linux::Event::Loop;
 my $host = '127.0.0.1';
 my $port = 18443;
 my ($cert, $key);
+my $native = 1;
 
 GetOptions(
     'host=s' => \$host,
     'port=i' => \$port,
     'cert=s' => \$cert,
     'key=s'  => \$key,
+    'native-input!' => \$native,
 ) or die "usage: $0 --cert FILE --key FILE [--host HOST] [--port PORT]\n";
 
 die "--cert is required\n" if !defined($cert) || $cert eq '';
@@ -31,14 +33,19 @@ my $server = Linux::Event::HTTP::Server->new(
     host  => $host,
     port  => $port,
     http2 => 1,
+    native_input => $native,
     tls   => {
         cert_file => $cert,
         key_file  => $key,
     },
-    on_request => sub ($conn, $req, $res) {
-        $res->header('content-type', 'text/plain');
-        $res->body("ok\n");
+    # Match the original conformance fixture: respond at headers while
+    # draining any incoming body. Some tests deliberately leave it open.
+    on_headers => sub ($tx, $request) {
+        $tx->on_data(sub { });
+        $tx->respond(status => 200,
+            headers => [['content-type', 'text/plain']], body => "ok\n");
     },
+    on_request => sub { },
 );
 
 $| = 1;
