@@ -57,8 +57,24 @@ Validation:
 - Upper HTTP: **30 files / 870 top-level tests** on both Perls; 5.38 disttest
   **27 files / 753 tests**. Real optional H2/H3/WebSocket suites skip locally;
   mocked protocol tests do not establish real multiplexed transport coverage.
-- POD/ASCII checks and git diff --check pass. Remote CI and the intermediate
-  Perl versions have not run for this milestone. No full matrix claim.
+- POD/ASCII checks and git diff --check pass.
+- Remote Linux HTTP matrix **PASS**: 5.36, 5.38, 5.40, 5.42, 5.44, latest,
+  latest threaded. Both input paths, H1-only runtime and harness smoke pass.
+  [Run 40105849132](https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40105849132)
+  tested published source `faa457abda2aa4f7bb441c174d6b61c8cf2b47a0`.
+- HTTP1 standalone cross-platform and framework CI **PASS**:
+  [standalone](https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40105783566),
+  [frameworks](https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40105783602).
+- Upper H1-only installation **PASS** on Perl 5.20/5.44 with ordinary
+  prerequisite resolution, disttest and optional-package absence checks:
+  [run 40105784783](https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/40105784783).
+  Real H2/H3/WebSocket integration remains untested for these changes.
+
+Publication used the connected GitHub Git-data API because shell Git lacked
+credentials. Every uploaded tree was checked against the tested local tree;
+API commit IDs differ from the earlier local checkpoint IDs. No force-push
+or main update was performed. Later handoff-only commits use [skip ci]; the
+linked runs above validate their unchanged runtime source.
 
 Matched GET/32 server comparisons, 100 connections, pipeline 1, 10,000 measured
 requests, 1,000 warmup, 3 repeats. Before uses unchanged HTTP1 `826fb573...`;

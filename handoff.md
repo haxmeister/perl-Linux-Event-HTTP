@@ -3,7 +3,8 @@
 This section supersedes historical release/development instructions below.
 Repository: haxmeister/perl-Linux-Event-HTTP
 Branch: feature/unblock-http-rebuild
-Prior local checkpoint: b5356a120ce0290c31fc79b7336877e2b039f047
+Published implementation: faa457abda2aa4f7bb441c174d6b61c8cf2b47a0
+Prior local checkpoint: ed7c924cdd2d5ca9a991258c7d262739804d15ec
 Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
 Detailed evidence: docs/UNBLOCK-REBUILD-STATUS.md
@@ -57,8 +58,14 @@ authorized and pending; do not ask for the same authorization again.
 - HTTP1: 39 files / 346 top-level tests on both Perls; 5.38 disttest passes.
 - Upper HTTP: 30 files / 870 top-level tests on both Perls; 5.38 disttest
   passes (27 files / 753 tests). Real optional H2/H3/WebSocket suites skip.
-- CI matrix 5.36/5.38/5.40/5.42/5.44/latest/latest-threaded is configured but
-  has not run remotely. Do not equate two local Perls with the full matrix.
+- Full Linux HTTP CI PASS on Perl 5.36/5.38/5.40/5.42/5.44/latest and latest
+  threaded: both input paths, H1-only runtime and benchmark-harness smoke.
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40105849132
+- Upstream HTTP1 cross-platform tests and framework examples PASS:
+  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40105783566
+  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40105783602
+- Upper ordinary H1-only installation and disttest PASS on Perl 5.20/5.44:
+  https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/40105784783
 - Original baseline: 57 files / 1,489 tests. Old t/*.t remain historical API
   references. Default make test explicitly runs t/rebuild/*.t.
 - Stage B performance gate remains OPEN. Matched GET32 medians were
@@ -66,6 +73,15 @@ authorized and pending; do not ask for the same authorization again.
   This is useful incremental improvement, not resolution of the original
   62,924 req/s versus rebuilt gap. Shared-host variation is substantial.
   See raw bench/results/unblock-stage-b and detailed measurement caveats.
+
+## Publication details
+
+Shell Git lacked credentials, so publication used the connected GitHub API.
+Uploaded trees were verified against local tested Git tree hashes. Commit IDs
+changed because API commits have new author/time metadata; source content is
+identical apart from documented dependency pins and handoff updates. Local
+feature branches were aligned to published commits, with old local commits
+still available through Git reflogs. Main refs remain at their original SHAs.
 
 ## Next
 
