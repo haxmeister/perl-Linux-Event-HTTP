@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: haxmeister/perl-Unblock-HTTP1
-          ref: 1eb332872257087bb13ccde0f74f235c353d6e67
+          ref: 06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14
           path: .ci-deps/http1
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -64,3 +64,5 @@ jobs:
         run: |
           perl -Mblib bench/run-unblock-end-to-end.pl --smoke
           perl -Mblib bench/run-rebuild-client.pl --requests 100 --warmup 10 --repeats 1
+          perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role server
+          perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role client

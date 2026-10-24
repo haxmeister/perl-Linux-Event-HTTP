@@ -12,7 +12,39 @@ gate has NOT passed. Stages C-F are not implemented. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
-## Latest Stage B milestone
+## Output ownership milestone (2026-10-24)
+
+Unblock HTTP1 feature commit `06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14`
+transfers serialized wire payloads out of retained transaction plans into the
+output queue. Empty batches preserve Perl copy-on-write storage; existing
+batches still coalesce. Canonical Uniform bodies and streaming framing state
+remain intact. This avoids retaining a second serialized body after sending.
+
+Validation: HTTP1 40 files / 349 top-level tests on Perl 5.38.2 threaded and
+5.44.0 non-threaded; 5.38 disttest passes. Linux HTTP 4 files / 18 subtests
+pass on both input paths and both Perls. Upper HTTP 30 files / 870 tests pass
+on 5.38 (optional real engines still skipped in this run).
+
+New `bench/run-unblock-retention.pl` is a Linux socket-free diagnostic. Each
+fresh process holds 256 completed transactions with distinct 256 KiB canonical
+bodies (64 MiB total). Three before/after samples used the previous HTTP1
+`0edca539...` Perl modules versus the changed modules with identical XS.
+Median additional RSS: server 133444 -> 67896 KiB; client 133448 -> 67644 KiB.
+Bodies are checked after measurement. RSS includes allocator overhead and is
+not peak RSS or evidence about unrelated workloads. Raw samples are under
+`bench/results/unblock-stage-b-retention/`.
+
+Matched native GET/16 KiB, 100 connections, pipeline 1, 10000 requests after
+1000 warmup, three repeats: 9454 -> 9772 median req/s; server CPU 106.419 ->
+103.208 us/request. This small change on the shared host does not establish
+reliable throughput improvement. The original performance gap remains open.
+Before source is reproducible with a read-only worktree at `0edca539...` and
+`perl -I/path/to/before/lib` ahead of the same HTTP1 XS in PERL5LIB.
+
+Feature branch published; main unchanged. Remote CI for this milestone is
+pending. Previous green run links below do not validate these new changes.
+
+## Earlier Stage B milestone
 
 Required development dependencies (both on `feature/linux-event-integration`):
 

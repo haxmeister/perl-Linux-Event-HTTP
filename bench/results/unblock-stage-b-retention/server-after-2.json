@@ -1,0 +1,14 @@
+{
+   "body_bytes" : 262144,
+   "bytes_sent" : 67119872,
+   "canonical_body_bytes" : 67108864,
+   "cpu_us_per_request" : 200.4305546875,
+   "engine_source" : "deps/http1/blib/lib/Unblock/HTTP1/_Engine.pm",
+   "label" : "after",
+   "perl" : "v5.38.2",
+   "requests" : 256,
+   "retained_rss_delta_kib" : 67896,
+   "role" : "server",
+   "rss_after_kib" : 78996,
+   "rss_before_kib" : 11100
+}
