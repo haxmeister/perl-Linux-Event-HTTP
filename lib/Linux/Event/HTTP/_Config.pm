@@ -1,0 +1,35 @@
+package Linux::Event::HTTP::_Config;
+use v5.36;
+use Carp qw(croak);
+use Scalar::Util qw(blessed);
+
+sub loop ($loop) {
+    croak 'new(): loop must be a Linux::Event::Loop'
+        unless blessed($loop) && $loop->isa('Linux::Event::Loop');
+}
+
+sub stream_class ($option) {
+    my $native = exists($option->{native_input}) ? delete($option->{native_input}) : 1;
+    croak 'new(): native_input must be 0 or 1'
+        unless defined($native) && !ref($native) && $native =~ /\A[01]\z/;
+    return 'Linux::Event::HTTP::_Stream' unless $native;
+    require Linux::Event::HTTP::_NativeStream;
+    return 'Linux::Event::HTTP::_NativeStream';
+}
+
+sub protocols ($option) {
+    my %protocols;
+    for my $name (qw(http1 http2 http3)) {
+        my $value = exists($option->{$name}) ? delete($option->{$name}) : ($name eq 'http1' ? 1 : 0);
+        croak "new(): $name must be 0, 1 or a hash reference"
+            unless ref($value) eq 'HASH' || (defined($value) && !ref($value) && $value =~ /\A[01]\z/);
+        next unless ref($value) || $value;
+        croak "new(): $name integration is not implemented yet" unless $name eq 'http1';
+        croak 'new(): WebSocket integration is not implemented yet'
+            if ref($value) && $value->{websocket};
+        $protocols{$name} = ref($value) ? $value : {};
+    }
+    return %protocols;
+}
+
+1;

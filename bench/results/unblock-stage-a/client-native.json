@@ -1,0 +1,25 @@
+{
+   "connections" : 1,
+   "legacy" : 0,
+   "native_input" : 1,
+   "records" : [
+      {
+         "client_cpu_us_per_request" : 161.3905122,
+         "repeat" : 1,
+         "requests_per_second" : 5958.67304826403
+      },
+      {
+         "client_cpu_us_per_request" : 173.3228822,
+         "repeat" : 2,
+         "requests_per_second" : 5459.49217646653
+      },
+      {
+         "client_cpu_us_per_request" : 163.5477678,
+         "repeat" : 3,
+         "requests_per_second" : 5742.9738561644
+      }
+   ],
+   "repeats" : 3,
+   "requests" : 5000,
+   "warmup" : 500
+}

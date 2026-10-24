@@ -1,6 +1,6 @@
 # Linux::Event::HTTP - Unblock Reconstruction Plan
 
-Status: approved architecture; implementation not yet started
+Status: Stage A implemented; Stage B lifecycle/drain implemented, performance gate open
 Date: 2026-10-22
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Working branch: `feature/unblock-http-rebuild`
@@ -244,10 +244,16 @@ Retain Linux-only scope. Establish supported Perl versions from the
 actual current dependencies and CI before updating MIN_PERL_VERSION;
 historically the current Linux::Event::HTTP baseline is Perl 5.36+.
 
+Current implementation evidence: `docs/UNBLOCK-REBUILD-STATUS.md`.
+The architecture below remains authoritative; later protocol stages are not complete.
+
 ## 8. Work plan and validation gates
 
-Only `haxmeister/perl-Linux-Event-HTTP` is authorized for changes in
-the current work scope. Work on `feature/unblock-http-rebuild`.
+Work on `haxmeister/perl-Linux-Event-HTTP`, branch `feature/unblock-http-rebuild`.
+The user subsequently authorized the specific Unblock::HTTP1 performance/drain
+and Unblock::HTTP admission/optional-dependency/generic-handoff improvements
+documented in the status file. Both upstreams use `feature/linux-event-integration`.
+Other repositories remain read-only.
 Do not modify main, merge, tag, bump releases, push other repositories,
 or start a release process without user approval. If upstream changes
 are needed, prepare a precise proposal and obtain authorization before

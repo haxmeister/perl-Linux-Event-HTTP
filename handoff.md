@@ -1,36 +1,81 @@
-# ACTIVE REBUILD HANDOFF - 2026-10-22
+# ACTIVE REBUILD HANDOFF - 2026-10-24
 
-This section supersedes the old release/development guidance below for the
-current Unblock-based reconstruction. The historical material after the
-divider remains reference context, not a current work queue.
+This section supersedes historical release/development instructions below.
+Repository: haxmeister/perl-Linux-Event-HTTP
+Branch: feature/unblock-http-rebuild
+Prior local checkpoint: b5356a120ce0290c31fc79b7336877e2b039f047
+Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
+Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
+Detailed evidence: docs/UNBLOCK-REBUILD-STATUS.md
 
-Repository: `haxmeister/perl-Linux-Event-HTTP`
-Work branch: `feature/unblock-http-rebuild`
-Start point: main `c0bf714e0f08f9031684e2eb4fd70dea3c68449f`
-Approved plan: `docs/UNBLOCK-REBUILD-PLAN.md`
+## Current authorization
 
-Current state:
-- Architectural design agreed; implementation not started.
-- Rebuild as thin Linux-native integration of Unblock::HTTP family.
-- No backward compatibility required; remove old duplicate HTTP code and
-  object wrappers as the replacement passes tests.
-- Server `on_headers` is early; `on_request` runs after complete body.
-- Client uses Unblock operation handles, bounded responses, opt-in streaming.
-- HTTP1 default; optional HTTP2/H3; generic Upgrade/CONNECT and optional
-  WebSockets; retain separate Linux::Event::WebSocket distribution.
-- No web framework or user-agent policy; Uniform::Upload deferred.
-- Highest priority: native ABI bridge/performance, correct lifecycle,
-  backpressure and protocol handoff.
-- Open contracts: generic non-WebSocket switching through unified Unblock,
-  request-body streaming admission callback, optional engine dependencies.
-- Plan stages A-F are the authoritative implementation checklist.
+The user approved the five concrete upstream proposals from the Stage A
+checkpoint: HTTP1 performance and drain; upper HTTP admission callback,
+optional engine metadata and generic handoff. Only these two upstream
+repositories were added to the original HTTP implementation scope. They use
+feature/linux-event-integration, with published source commits:
 
-Work restrictions:
-- Modify only this repository unless newly authorized by the user.
-- No modifications to main, no merge, tag, release, or version bump.
-- Read the approved plan first and refresh this handoff after milestones.
-- Begin implementation with Stage A and proceed with useful tests and
-  measurements, not another architecture debate.
+- perl-Unblock-HTTP1: 1eb332872257087bb13ccde0f74f235c353d6e67
+- perl-Unblock-HTTP: 6fa6c452236f9ecc2830d250fefc7d79d1167676
+
+All other repositories remain read-only. No main edits, merges, tags, version
+bumps or releases. On 2026-10-24 the user authorized pushes to feature branches as needed.
+Main still requires explicit permission. Both upstream feature branches are
+published; Linux HTTP CI pins those published commits. No repeated push
+permission is needed for feature-branch fixes. Generic handoff remains
+authorized and pending; do not ask for the same authorization again.
+
+## Implemented
+
+- Stage A working TCP/TLS H1 Server/Client using actual Unblock operations,
+  transactions and Uniform messages, pooling, bounded reception, streaming,
+  timeout/cancellation, backpressure and native borrowed input.
+- Stage B now includes queued streamed uploads via on_transaction($tx), and
+  Server shutdown(grace => seconds, on_complete => callback). Listener-only
+  close remains distinct. Shutdown drains admitted H1 work, excludes pipeline
+  suffixes, preserves application finish callbacks, cancels its timer and
+  force-closes stalls at the deadline.
+- Stalled TLS testing caught the earlier ownership mistake: transport-ready
+  means TLS-ready, so it missed incomplete handshakes. Registration now starts
+  at Listener on_accept; shutdown closes unfinished handshakes immediately.
+- Upstream H1 native simple-response serialization uses the existing Uniform
+  native inspection ABI with general-path fallbacks. No Uniform XS or ABI
+  layout change. Clone-local handles are tested on threaded Perl.
+- Upstream H1 public drain handles delayed/streamed responses, congestion,
+  manual output, repeated calls, and synchronous host close ordering.
+- Upper admission callback is once per actual assignment, excludes queued
+  cancellation/failed admission/H3 missing credit, and normalizes producer
+  exceptions using the existing cancellation/operation-error convention.
+- Upper metadata makes H2/H3 optional; H1-only tests and CI no longer depend
+  on --nodeps. Published 0.02/0.12 do NOT yet contain these feature additions.
+
+## Verified and not verified
+
+- Linux HTTP: 4 files / 18 subtests / 80 inner assertions on Perl 5.38.2
+  threaded and 5.44.0 non-threaded, BOTH native and Perl input paths.
+- HTTP1: 39 files / 346 top-level tests on both Perls; 5.38 disttest passes.
+- Upper HTTP: 30 files / 870 top-level tests on both Perls; 5.38 disttest
+  passes (27 files / 753 tests). Real optional H2/H3/WebSocket suites skip.
+- CI matrix 5.36/5.38/5.40/5.42/5.44/latest/latest-threaded is configured but
+  has not run remotely. Do not equate two local Perls with the full matrix.
+- Original baseline: 57 files / 1,489 tests. Old t/*.t remain historical API
+  references. Default make test explicitly runs t/rebuild/*.t.
+- Stage B performance gate remains OPEN. Matched GET32 medians were
+  15,164 before / 16,610 after, and reverse-order 9,922 before / 11,340 after.
+  This is useful incremental improvement, not resolution of the original
+  62,924 req/s versus rebuilt gap. Shared-host variation is substantial.
+  See raw bench/results/unblock-stage-b and detailed measurement caveats.
+
+## Next
+
+Continue Stage B performance work without broad repeated sweeps. Native
+response construction/lifecycle costs still need attention; preserve actual
+Uniform objects and protocol checks. Then continue the approved Stages C-F.
+HTTP2/3, WebSocket and generic handoff remain unimplemented. Native INPUT_SWITCH
+still raises an explicit unsupported error. No post-upgrade-tail claim.
+Do not remove old private code until its required replacement capabilities
+are covered. Do not restart architectural design or prepare a release.
 
 ---
 

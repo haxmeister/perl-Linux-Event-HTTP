@@ -33,13 +33,17 @@ my %provides = map {
 WriteMakefile(
     NAME             => 'Linux::Event::HTTP',
     VERSION_FROM     => 'lib/Linux/Event/HTTP.pm',
-    ABSTRACT         => 'Native HTTP/1.x and HTTP/2 support for Linux::Event',
+    ABSTRACT         => 'Linux-native integration of Unblock HTTP',
     AUTHOR           => 'Joshua S. Day <hax@cpan.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036000',
-    DIR              => [qw(xshttp1)],
+    DIR              => [qw(xshttp1 xsbridge)],
+    # The original public-API suite remains as migration reference. Its
+    # verified baseline is recorded in docs/UNBLOCK-REBUILD-STATUS.md.
+    test             => { TESTS => 't/rebuild/*.t' },
     CONFIGURE_REQUIRES => {
         'ExtUtils::MakeMaker' => 0,
+        'Unblock::HTTP1' => '0.12',
     },
     TEST_REQUIRES => {
         'Test::More' => 0,
@@ -47,6 +51,8 @@ WriteMakefile(
     PREREQ_PM => {
         'HTTP::CookieJar'     => '0.014',
         'Linux::Event'        => '0.117',
+        'Unblock::HTTP'       => '0.02',
+        'Uniform::HTTP'       => '0.06',
         'Uniform::HTTP::Auth' => '0.02',
         'URI'                 => 0,
     },
@@ -54,20 +60,13 @@ WriteMakefile(
         'meta-spec' => {
             version => 2,
         },
-        optional_features => {
-            http2 => {
-                description => 'HTTP/2 support via Net::HTTP2::nghttp2',
-                prereqs => {
-                    runtime => {
-                        requires => {
-                            'Net::HTTP2::nghttp2' => '0.011',
-                        },
-                    },
-                },
-            },
-        },
         no_index => {
             package => [qw(
+                Linux::Event::HTTP::_Config
+                Linux::Event::HTTP::_Stream
+                Linux::Event::HTTP::_Transport
+                Linux::Event::HTTP::_NativeStream
+                Linux::Event::HTTP::_NativeBridge
                 Linux::Event::HTTP::_ClientAuth
                 Linux::Event::HTTP::_ClientConnect
                 Linux::Event::HTTP::_ClientUpgrade

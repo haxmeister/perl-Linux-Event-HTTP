@@ -1,0 +1,20 @@
+[
+   {
+      "cpu_seconds" : 2.921831034,
+      "cpu_us_per_iteration" : 58.43662068,
+      "iterations" : 50000,
+      "name" : "engine_input_and_response"
+   },
+   {
+      "cpu_seconds" : 0.360718419,
+      "cpu_us_per_iteration" : 7.21436838,
+      "iterations" : 50000,
+      "name" : "response_construction"
+   },
+   {
+      "cpu_seconds" : 0.990551785,
+      "cpu_us_per_iteration" : 19.8110357,
+      "iterations" : 50000,
+      "name" : "response_construction_and_wire_plan"
+   }
+]
