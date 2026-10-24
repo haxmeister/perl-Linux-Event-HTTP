@@ -58,6 +58,12 @@ WriteMakefile(
     },
     META_MERGE => {
         optional_features => {
+            http3 => {
+                description => 'HTTP/3 over verified QUIC/TLS (optional)',
+                prereqs => { runtime => { requires => {
+                    'Unblock::HTTP3' => '0.13', 'Net::QUIC' => '0.06',
+                } } },
+            },
             http2 => {
                 description => 'HTTP/2 over TLS with ALPN',
                 prereqs => { runtime => { requires => { 'Unblock::HTTP2' => '0.12' } } },

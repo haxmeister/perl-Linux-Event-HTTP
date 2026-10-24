@@ -5,6 +5,7 @@ use Linux::Event::HTTP::_Config;
 use Linux::Event::HTTP::_Stream;
 use Linux::Event::Kernel::Timer;
 use Carp qw(croak);
+use Scalar::Util qw(weaken refaddr);
 
 our $VERSION = '0.003';
 
@@ -18,6 +19,17 @@ sub new ($class, %option) {
     croak 'new(): HTTP Client owns TLS server_name and alpn'
         if exists($tls->{server_name}) || exists($tls->{alpn});
     $tls = { %$tls };
+    my $quic = delete($option{quic}) // {};
+    croak 'new(): quic must be a hash reference' unless ref($quic) eq 'HASH';
+    croak 'new(): quic requires http3 => 1' if %$quic && !$protocols{http3};
+    for my $key (keys %$quic) {
+        croak "new(): unknown quic option $key"
+            unless $key =~ /\A(?:ca_file|transport|version)\z/;
+    }
+    $quic = { %$quic };
+    $quic->{ca_file} = $tls->{ca_file}
+        if !exists($quic->{ca_file}) && exists($tls->{ca_file});
+    my %quic_connections;
     for my $name (qw(connect_stream connect_quic defer schedule_timer release_connection)) {
         die "new(): $name is owned by Linux::Event::HTTP\n" if exists $option{$name};
     }
@@ -46,7 +58,76 @@ sub new ($class, %option) {
             );
             return sub { $stream->close };
         },
-        release_connection => \&_release_transport,
+        ($protocols{http3} ? (
+            connect_quic => sub ($origin, $ready) {
+                require Net::QUIC::Driver;
+                require Linux::Event::HTTP::_QUICSocket;
+                my $record = { cancelled => 0, completed => 0 };
+                my $weak = $record;
+                weaken($weak);
+                my $fail = sub ($error) {
+                    my $state = $weak or return;
+                    return if $state->{cancelled} || $state->{completed}++;
+                    $state->{socket}->close if $state->{socket};
+                    $ready->(error => "$error");
+                };
+                my $socket = Linux::Event::HTTP::_QUICSocket->connect(
+                    loop => $loop,
+                    host => ($origin->{alternative_host} // $origin->{host}),
+                    port => ($origin->{alternative_port} // $origin->{port}),
+                    on_ready => sub ($bridge) {
+                        my $state = $weak or return;
+                        return if $state->{cancelled};
+                        my $ok = eval {
+                            my $driver = Net::QUIC::Driver->client(
+                                local => $bridge->local, peer => $bridge->peer,
+                                server_name => $origin->{host}, alpn => 'h3',
+                                %$quic,
+                                send => $bridge->send_callback,
+                                set_timeout => $bridge->set_timeout_callback,
+                            );
+                            my $connection = $driver->connection;
+                            $state->{driver} = $driver;
+                            $state->{connection} = $connection;
+                            $bridge->start($driver);
+                            1;
+                        };
+                        $fail->("$@") unless $ok;
+                    },
+                    on_progress => sub {
+                        my $state = $weak or return;
+                        return if $state->{cancelled} || $state->{completed};
+                        my $connection = $state->{connection} or return;
+                        if ($connection->ready && !$connection->closed) {
+                            $state->{completed} = 1;
+                            $quic_connections{refaddr($connection)} = $state;
+                            $ready->(connection => $connection, verified_origin => 1);
+                        } elsif ($connection->closed) {
+                            $fail->('QUIC connection closed before authentication');
+                        }
+                    },
+                    on_error => sub ($udp, $error) { $fail->("$error") },
+                );
+                $record->{socket} = $socket;
+                return sub {
+                    return if $record->{cancelled}++;
+                    delete $quic_connections{refaddr($record->{connection})}
+                        if $record->{connection};
+                    $record->{connection}->close
+                        if $record->{connection} && !$record->{connection}->closed;
+                    $record->{socket}->close if $record->{socket};
+                };
+            },
+        ) : ()),
+        release_connection => sub ($host, $engine, $protocol, $reason) {
+            if ($protocol eq 'h3') {
+                my $record = delete $quic_connections{refaddr($host)};
+                $host->close unless $host->closed;
+                $record->{socket}->close if $record && $record->{socket};
+            } else {
+                $host->close;
+            }
+        },
     );
     $self->{linux_event_loop} = $loop;
     return $self;
@@ -106,7 +187,12 @@ C<native_input =E<gt> 0> selects the Perl input path for diagnostics.
 HTTP/2 uses ALPN and multiplexes operations through Unblock's pool. Ordinary
 requests can fall back to HTTP/1; C<http_version =E<gt> '2'> fails if HTTP/2
 cannot be negotiated. HTTP/2 C<on_error> may include a third protocol error-code
-argument. HTTP/3 and protocol handoff remain subsequent stages.
+argument. HTTP/3 is optional through C<http3 =E<gt> 1> using Net::QUIC 0.06 and
+Unblock::HTTP3 0.13. C<quic =E<gt> { ca_file =E<gt> ... }> configures
+QUIC-specific trust and transport options. Origin hostnames are resolved
+asynchronously by Linux::Event UDP, and QUIC authenticates the original
+HTTPS origin, even when an alternative endpoint is used.
+Protocol handoff remains a subsequent stage.
 No redirects, cookies, authentication retries or response wrappers are added.
 
 =cut

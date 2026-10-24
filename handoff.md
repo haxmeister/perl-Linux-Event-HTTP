@@ -128,6 +128,24 @@ Stage C initial integration:
 - Existing Stage B throughput and Stage C conformance gates remain open.
   Stage F cleanup remains deferred as originally approved.
 
+## 2026-10-24 Stage D public Client initial integration
+
+- Optional public http3 => 1 enables the existing Unblock::HTTP::Client
+  H3 connection-pool/transaction path. No replacement H3 pool was created.
+- Linux Event _QUICSocket->connect now delegates hostname resolution to the
+  asynchronous Linux::Event Datagram connector, uses the resulting concrete
+  local/peer sockaddr pair, maintains dynamic QUIC timers, validates outgoing
+  destinations on connected sockets, and reports driver progress.
+- Client connect_quic constructs Net::QUIC::Driver->client using the original
+  origin hostname for TLS identity and the selected UDP peer destination.
+  The factory calls Unblock's ready callback only after authenticated QUIC
+  readiness. Connection cancellation and release own the UDP socket/timer.
+- The H3 optional runtime/metadata requirements are Unblock::HTTP3 >= 0.13
+  and Net::QUIC >= 0.06. No H3 dependency is loaded for HTTP1-only clients.
+- Public H3 Server, graceful QUIC ownership/drain and broad failure tests
+  remain pending. This commit needs live CI before the Client can be called
+  verified. Core, upstream engines and main remain unchanged.
+
 ## Verified
 
 - Current root: 5 files / 28 subtests on Perl 5.38.2 threaded and 5.44.0

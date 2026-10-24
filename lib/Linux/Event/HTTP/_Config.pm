@@ -24,7 +24,15 @@ sub protocols ($option) {
         croak "new(): $name must be 0, 1 or a hash reference"
             unless ref($value) eq 'HASH' || (defined($value) && !ref($value) && $value =~ /\A[01]\z/);
         next unless ref($value) || $value;
-        croak "new(): $name integration is not implemented yet" if $name eq 'http3';
+        if ($name eq 'http3') {
+            eval {
+                require Unblock::HTTP3;
+                Unblock::HTTP3->VERSION('0.13');
+                require Net::QUIC;
+                Net::QUIC->VERSION('0.06');
+                1;
+            } or croak "new(): http3 requires Unblock::HTTP3 >= 0.13 and Net::QUIC >= 0.06: $@";
+        }
         if ($name eq 'http2') {
             eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.12'); 1 }
                 or croak "new(): http2 requires Unblock::HTTP2 >= 0.12: $@";

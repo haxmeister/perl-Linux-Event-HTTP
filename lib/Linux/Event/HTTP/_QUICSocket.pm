@@ -24,14 +24,18 @@ sub new ($class, %option) {
     my $host = delete $option{host};
     my $port = delete $option{port};
     my $on_error = delete $option{on_error};
+    my $on_progress = delete $option{on_progress};
     croak 'QUIC socket requires loop, host and port'
         unless $loop && defined($host) && defined($port);
     croak 'QUIC socket on_error must be a coderef'
         if defined($on_error) && ref($on_error) ne 'CODE';
+    croak 'QUIC socket on_progress must be a coderef'
+        if defined($on_progress) && ref($on_progress) ne 'CODE';
     croak 'QUIC socket unknown options: ' . join(', ', sort keys %option) if %option;
     croak 'QUIC socket requires a concrete local host, not a wildcard address'
         if $host eq '0.0.0.0' || $host eq '::';
-    my $self = bless { loop => $loop, on_error => $on_error }, $class;
+    my $self = bless { loop => $loop, on_error => $on_error,
+        on_progress => $on_progress }, $class;
     my $weak = $self;
     weaken($weak);
     $self->{socket} = Linux::Event::IO::Sock::Dgram->new(
@@ -40,11 +44,13 @@ sub new ($class, %option) {
             my $owner = $weak or return;
             my $manager = $owner->{manager} or return;
             $manager->receive($bytes, $owner->{local}, $peer->sockaddr);
+            $owner->_progress;
         },
         on_drain => sub {
             my $owner = $weak or return;
             my $manager = $owner->{manager} or return;
             $manager->writable;
+            $owner->_progress;
         },
         on_error => sub ($socket, $error) {
             my $owner = $weak or return;
@@ -67,6 +73,79 @@ sub new ($class, %option) {
 sub socket ($self) { $self->{socket} }
 sub local ($self) { $self->{local} }
 
+
+# A connected socket delegates hostname resolution to Linux::Event's async
+# datagram resolver. QUIC TLS still authenticates the original HTTP origin.
+sub connect ($class, %option) {
+    my $loop = delete $option{loop};
+    my $host = delete $option{host};
+    my $port = delete $option{port};
+    my $on_ready = delete $option{on_ready};
+    my $on_error = delete $option{on_error};
+    my $on_progress = delete $option{on_progress};
+    croak 'QUIC connect requires loop, host and port'
+        unless $loop && defined($host) && defined($port);
+    for my $pair ([on_ready => $on_ready], [on_error => $on_error],
+                  [on_progress => $on_progress]) {
+        croak "QUIC connect $pair->[0] must be a coderef"
+            if defined($pair->[1]) && ref($pair->[1]) ne 'CODE';
+    }
+    croak 'QUIC connect requires on_ready' unless $on_ready;
+    croak 'QUIC connect unknown options: ' . join(', ', sort keys %option)
+        if %option;
+    my $self = bless {
+        loop => $loop, connected => 1, on_error => $on_error,
+        on_progress => $on_progress,
+    }, $class;
+    my $weak = $self;
+    weaken($weak);
+    $self->{socket} = Linux::Event::IO::Sock::Dgram->connect(
+        loop => $loop, host => $host, port => $port,
+        on_ready => sub ($socket) {
+            my $owner = $weak or return;
+            return if $owner->{closed};
+            my $local = $socket->local;
+            unless (_concrete($local) && $socket->peer) {
+                $owner->{on_error}->($socket, 'QUIC client needs a concrete local and peer')
+                    if $owner->{on_error};
+                $owner->close;
+                return;
+            }
+            $owner->{local} = $local->sockaddr;
+            $owner->{peer} = $socket->peer->sockaddr;
+            $on_ready->($owner);
+        },
+        on_datagram => sub ($socket, $bytes, $peer) {
+            my $owner = $weak or return;
+            my $manager = $owner->{manager} or return;
+            $manager->receive($bytes, $owner->{local}, $peer->sockaddr);
+            $owner->_progress;
+        },
+        on_drain => sub {
+            my $owner = $weak or return;
+            my $manager = $owner->{manager} or return;
+            $manager->writable;
+            $owner->_progress;
+        },
+        on_error => sub ($socket, $error) {
+            my $owner = $weak or return;
+            $owner->{on_error}->($socket, $error) if $owner->{on_error};
+        },
+        on_close => sub {
+            my $owner = $weak or return;
+            $owner->close;
+        },
+    );
+    return $self;
+}
+
+sub peer ($self) { $self->{peer} }
+
+sub _progress ($self) {
+    $self->{on_progress}->($self) if !$self->{closed} && $self->{on_progress};
+    return;
+}
+
 sub send_callback ($self) {
     my $weak = $self;
     weaken($weak);
@@ -75,6 +154,11 @@ sub send_callback ($self) {
         croak 'QUIC socket is closed' if $owner->{closed};
         croak 'QUIC datagram uses a different source address'
             if $packet->local ne $owner->{local};
+        if ($owner->{connected}) {
+            croak 'QUIC datagram uses a different destination address'
+                if $packet->peer ne $owner->{peer};
+            return $owner->{socket}->send($packet->data);
+        }
         return $owner->{socket}->send(
             $packet->data,
             to => Linux::Event::Address->new($packet->peer),
@@ -112,6 +196,7 @@ sub _set_timeout ($self, $seconds) {
             delete $owner->{timer};
             my $manager = $owner->{manager} or return;
             $manager->timeout;
+            $owner->_progress;
         },
     );
     return;
@@ -125,6 +210,7 @@ sub start ($self, $manager) {
             qw(start receive timeout writable);
     $self->{manager} = $manager;
     $manager->start;
+    $self->_progress;
     return $self;
 }
 
@@ -133,6 +219,8 @@ sub close ($self) {
     my $timer = delete $self->{timer};
     $timer->cancel if $timer;
     delete $self->{manager};
+    delete $self->{on_progress};
+    delete $self->{on_error};
     my $socket = delete $self->{socket};
     $socket->close if $socket && $socket->is_active;
     return $self;
