@@ -71,6 +71,7 @@ WriteMakefile(
                 Linux::Event::HTTP::_Config
                 Linux::Event::HTTP::_Stream
                 Linux::Event::HTTP::_Transport
+                Linux::Event::HTTP::_QUICSocket
                 Linux::Event::HTTP::_NativeStream
                 Linux::Event::HTTP::_NativeBridge
                 Linux::Event::HTTP::_ClientAuth

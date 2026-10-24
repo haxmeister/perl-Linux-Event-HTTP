@@ -13,6 +13,24 @@ are not implemented. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
+## Stage D Linux UDP transport foundation (2026-10-24)
+
+A new private _QUICSocket supplies the Linux::Event datagram and one-shot
+timer callback contract for Net::QUIC::Driver / Unblock::HTTP::QUIC. It
+forwards packed packet addresses without parsing QUIC; preserves full packet
+boundaries; maps false from the Linux::Event send queue as accepted but
+congested and resumes the QUIC manager at on_drain; and replaces/cancels
+relative-seconds timers on each driver update. It also closes owned UDP and
+timers idempotently. Concrete bound source addresses only: wildcard local
+and outgoing local-address changes are rejected until pktinfo/multihoming
+support exists. The new isolated regression uses actual Linux UDP sockets
+and a mock manager so HTTP3 is not mandatory for HTTP1 installations.
+
+The Stage C seven-lane HTTP2 workflow 40142345620 passed. The new Stage D
+runtime regression is pending CI verification. Public http3 remains disabled;
+real QUIC handshake, HTTP3 request/response, timeout/credit recovery and
+service shutdown are still pending. Stage B and h2spec limitations are unchanged.
+
 ## HTTP2 integration milestone (2026-10-24)
 
 Optional HTTP2 now works through the unified layer with TLS ALPN, HTTP1

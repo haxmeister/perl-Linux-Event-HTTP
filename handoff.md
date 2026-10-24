@@ -70,6 +70,32 @@ Stage C initial integration:
 - H2 error callbacks may carry a third protocol-code argument; documented
   examples use a slurpy tail so Perl signatures accept it.
 
+## 2026-10-24 Stage D transport groundwork
+
+- The HTTP2 milestone workflow 40142345620 completed successfully in all
+  seven Perl lanes (5.36, 5.38, 5.40, 5.42, 5.44, latest, latest-threaded).
+  Both input-path and HTTP1-only checks were included in that workflow.
+- A private _QUICSocket adapter now binds a concrete IPv4/IPv6 Linux::Event
+  datagram socket, forwards packed local/peer addresses to a QUIC manager,
+  maps the whole-datagram send/accepted-but-blocked contract, resumes on
+  UDP drain, and implements replaceable relative-second timers.
+- The adapter rejects wildcard local bindings because Linux::Event's current
+  datagram callback does not supply per-packet destination/source information
+  required by Net::QUIC. It also refuses outgoing datagrams requesting a
+  different local source from the bound socket. No migration/multihoming
+  support is claimed.
+- t/rebuild/60-quic-socket.t exercises real UDP forwarding with a mock
+  manager, timer replacement/cancel, source-address rejection and cleanup.
+  Syntax checked on Perl 5.40 with dependency stubs; the actual runtime
+  test and remote CI still need verification.
+- This is Stage D groundwork only. Public http3 remains explicitly disabled.
+  No actual QUIC/TLS handshake, H3 HTTP transaction, or H3 shutdown test
+  has yet passed. Do not promote it to an implemented H3 feature.
+- Next: inspect the feature-branch CI result, fix failures, then wire this
+  adapter to Unblock::HTTP::QUIC and the unified Client/Server with concrete
+  local path handling and real QUIC loopback tests. Preserve optional installs.
+  Stage B throughput and Stage C conformance gates remain open.
+
 ## Verified
 
 - Current root: 5 files / 28 subtests on Perl 5.38.2 threaded and 5.44.0

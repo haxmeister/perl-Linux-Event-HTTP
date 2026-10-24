@@ -167,3 +167,5 @@ t/rebuild/50-http2.t
 xsbridge/unblock_http2_native_abi.h
 bench/results/unblock-stage-c/h2spec-parity.json
 docs/NEXT-CHAT-PROMPT.txt
+lib/Linux/Event/HTTP/_QUICSocket.pm
+t/rebuild/60-quic-socket.t
