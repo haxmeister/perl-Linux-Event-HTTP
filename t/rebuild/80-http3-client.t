@@ -83,9 +83,9 @@ $guard->cancel;
 is_deeply(\@errors, [], 'strict HTTP3 operations completed without error');
 is($finished, 4, 'all operations reached terminal callback');
 is_deeply([sort @seen], [map { "/$_" } 1 .. 4], 'server received all requests');
-is_deeply(\%body, { map { "/$_" => "H3:/$_" } 1 .. 4 },
+is_deeply(\%body, { map { ("/$_", "H3:/$_") } 1 .. 4 },
     'all high-level responses delivered exactly');
-is_deeply(\%version, { map { "/$_" => '3' } 1 .. 4 },
+is_deeply(\%version, { map { ("/$_", '3') } 1 .. 4 },
     'all operations selected HTTP3');
 is(scalar($manager->sessions), 1, 'one shared QUIC connection serves all requests');
 is(scalar @transactions, 4, 'real engine transactions exposed');
