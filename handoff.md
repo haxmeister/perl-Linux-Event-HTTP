@@ -146,6 +146,15 @@ Stage C initial integration:
   remain pending. This commit needs live CI before the Client can be called
   verified. Core, upstream engines and main remain unchanged.
 
+## Stage D public H3 Client targeted verification
+
+- Added t/rebuild/80-http3-client.t using a real authenticated QUIC/TLS
+  server and the public Linux::Event::HTTP::Client request API.
+- The test explicitly requires HTTP3 engines in CI, checks four strict H3
+  operations on one multiplexed QUIC connection, preserved transaction
+  identity, responses, and watcher cleanup.
+- Pending actual CI test result; no verified public H3 claim yet.
+
 ## Verified
 
 - Current root: 5 files / 28 subtests on Perl 5.38.2 threaded and 5.44.0
