@@ -42,7 +42,9 @@ responds at headers and drains the body, preserving the old fixture behavior.
 The public on_request callback still waits for body completion.
 
 The workflow now tests optional HTTP2 on every supported Perl lane after
-checking HTTP1-only behavior. Remote CI for this milestone is pending.
+checking HTTP1-only behavior. Published implementation: `38ef7d3035190132a658c12e80e487eb254c7069`.
+Remote CI is queued/in progress and must be checked:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40142345620
 Prior retention CI is green: root run 40135515145, HTTP1 standalone
 40135426474 and framework examples 40135426480. Main remains untouched.
 Cleartext H2 prior knowledge/h2c, H3, WebSockets and generic handoff are pending.

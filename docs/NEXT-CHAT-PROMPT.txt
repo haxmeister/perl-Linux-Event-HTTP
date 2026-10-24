@@ -1,0 +1,46 @@
+Continue implementation of Linux::Event::HTTP's approved Unblock reconstruction. Do not restart the architecture discussion or prepare a release.
+
+Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
+Branch: feature/unblock-http-rebuild
+Latest implementation checkpoint: 38ef7d3035190132a658c12e80e487eb254c7069
+Later handoff-only commits may follow; inspect the remote branch and working tree first.
+Main remains untouched at c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+
+Read first:
+1. handoff.md: ACTIVE REBUILD HANDOFF section; older sections are historical.
+2. docs/UNBLOCK-REBUILD-PLAN.md: authoritative approved architecture/stages.
+3. docs/UNBLOCK-REBUILD-STATUS.md: exact test/performance evidence and limitations.
+
+Authorization:
+- Implement in Linux::Event::HTTP on its feature branch.
+- Previously approved upstream changes remain authorized in Unblock::HTTP1 and Unblock::HTTP on feature/linux-event-integration: HTTP1 performance/drain; upper admission callback, optional dependencies and generic handoff.
+- Feature-branch pushes are authorized as needed. Do not ask again for push permission.
+- Main requires permission. No merges, tags, version bumps or releases.
+- Core, Uniform, HTTP2/3, Net::QUIC and WebSocket sources remain read-only. Explain any exact needed upstream change and obtain authorization before editing those repositories.
+
+Completed:
+- Stage A/B HTTP1 Server/Client using actual Unblock operations/transactions and Uniform messages; native borrowed input, TCP/TLS, streaming, bounded buffers, pooling, cancellation, timers, queued upload admission and graceful service shutdown.
+- HTTP1 output-retention fix: serialized payload leaves the transaction plan when queued. Retaining 256 transactions with distinct 256 KiB bodies reduced median additional RSS from about 130 MiB to 66 MiB for both server and client. Throughput gate remains OPEN.
+- Initial Stage C HTTP2: optional http2 => 1/hashref, TLS ALPN and HTTP1 fallback, strict version selection, multiplexing, native borrowed-input ABI bridge, flow control, stream cancellation, GOAWAY/grace expiry and TLS verification.
+- Protocol-input exceptions are contained to their connection. Finished H2 transports end after queued output drains, outside protocol callbacks.
+- H2 upstream source was built/tested but NOT modified. Cleartext H2, H3, WebSockets and generic handoff are not implemented. HTTP1 native INPUT_SWITCH still explicitly fails.
+
+Validation:
+- Linux HTTP: 5 files / 28 subtests pass on Perl 5.38.2 threaded and 5.44.0 non-threaded, BOTH native and Perl input. 5.38 disttest passes. H1-only configuration still passes with H2 absent.
+- HTTP1: 40 files / 349 tests on both Perls; disttest passes.
+- Unchanged HTTP2: 30 files / 525 tests on 5.38.
+- h2spec: 146 tests, 134 pass, 1 skip, 11 fail. Exact failing cases AND diagnostics match untouched main and both rebuilt input paths in this environment. This is parity, NOT clean conformance. Evidence: bench/results/unblock-stage-c/h2spec-parity.json.
+
+Published upstream dependencies:
+- HTTP1 implementation: 06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14.
+- Upper HTTP implementation: 6fa6c452236f9ecc2830d250fefc7d79d1167676; branch head 0b636373f39a117ef062f2b5e8bebc3655675aa2 includes handoff-only changes.
+- Optional HTTP2 0.12 read-only source: 7bc0b6ccd653a74ad1e7399d27aa9d94c941b513.
+Feature additions are not in the released HTTP1/upper versions; use the pinned commits.
+
+Immediate next action: inspect HTTP2 milestone CI (queued/in progress at handoff):
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40142345620
+It covers all seven Perl lanes, both input paths, H1-only checks, then optional H2 tests. Fix any feature-branch failures. Previous retention CI was green (root 40135515145; HTTP1 40135426474 and 40135426480).
+
+Then continue Stage B performance / Stage C remaining conformance and performance work, followed by Stages D-F. Do not repeat broad benchmark sweeps without a new change or specific question. Keep handoff.md current. No backward compatibility is required, but retain old private implementations until replacement coverage is adequate.
+
+If the workspace persists: /workspace/scratch/9be1ecae0d40/http. env.sh and env544.sh plus dependency paths/build instructions are documented in handoff.md. Shell Git fetch works but push lacks credentials; prior publication used the connected GitHub Git-data API, verified exact trees, and non-forced expected-SHA ref updates. Continue from the published source, not old local pre-publication SHAs.

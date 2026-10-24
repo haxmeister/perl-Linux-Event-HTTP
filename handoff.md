@@ -3,7 +3,7 @@
 This section supersedes historical release/development instructions below.
 Repository: haxmeister/perl-Linux-Event-HTTP
 Branch: feature/unblock-http-rebuild
-Current milestone: HTTP2 integration (the commit containing this section).
+Published HTTP2 implementation: 38ef7d3035190132a658c12e80e487eb254c7069
 Previous published checkpoint: dda70401c7d86db6a5600dc15874e93589e14344
 Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
@@ -102,7 +102,9 @@ Remote CI for the previous retention milestone is GREEN:
   https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40135426474
 - HTTP1 framework examples:
   https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40135426480
-Current H2 milestone remote CI is pending publication. The workflow now adds
+Current H2 milestone remote CI is queued/in progress (not yet verified):
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40142345620
+The workflow now adds
 optional HTTP2 tests on ALL seven Perl lanes after the HTTP1-only check.
 Do not claim these H2 remote lanes passed until their run is inspected.
 
