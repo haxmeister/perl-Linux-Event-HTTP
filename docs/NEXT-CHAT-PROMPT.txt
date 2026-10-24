@@ -1,8 +1,34 @@
+## Next current continuation (after 2026-10-24 H3 transport milestone)
+
+Implementation commit 1aafe973698cf64ddfeb66b46ff138b75456d07b
+was verified in all seven Perl lanes in GitHub Actions run 40143923528.
+The latest Perl lane installed real Net::QUIC 0.06 and Unblock::HTTP3 0.13
+and completed t/rebuild/70-http3-loopback.t: 19 passing assertions on
+two independent HTTP3 GET streams over one verified QUIC/TLS connection,
+using Linux::Event UDP on both ends. t/rebuild/60 additionally checks
+dynamic small fractional QUIC timers; HTTP1-only isolation and H2 remain
+green. Neither Unblock nor Net::QUIC sources were changed.
+
+NEXT IMPLEMENTATION: wire optional HTTP3 through the public Linux::Event::HTTP
+Server and Client, respecting concrete bound UDP local addresses, hostname
+verification, shared transport ownership, pool dispatch, cancellation,
+shutdown/drain, and error containment. The underlying _QUICSocket and
+Unblock::HTTP::QUIC attachment have been verified separately; do not
+replace the high-level Unblock pool with another. Add full end-to-end
+tests before claiming public HTTP3 support. HTTP3 remains disabled in
+_Config. No backward compatibility is required; DO NOT start Stage F
+cleanup early.
+
+Other gates remain open: Stage B throughput, 11 unchanged h2spec cases
+in Stage C, native HTTP1 INPUT_SWITCH, Stage E WebSocket/generic handoff,
+and Stage F cleanup. All feature-branch pushes authorized; main needs
+permission. Read the ACTIVE REBUILD HANDOFF and approved plan first.
+
 Continue implementation of Linux::Event::HTTP's approved Unblock reconstruction. Do not restart the architecture discussion or prepare a release.
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Branch: feature/unblock-http-rebuild
-Latest implementation checkpoint: 093295ff476809f3389652ae302fa851df6f1eae
+Latest implementation checkpoint: 1aafe973698cf64ddfeb66b46ff138b75456d07b
 (The follow-up documentation commit after this is [skip ci]; inspect the current remote head.)
 Later handoff-only commits may follow; inspect the remote branch and working tree first.
 Main remains untouched at c0bf714e0f08f9031684e2eb4fd70dea3c68449f.

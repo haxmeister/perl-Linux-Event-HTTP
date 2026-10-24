@@ -31,8 +31,16 @@ main change has occurred. Feature-branch publication is authorized.
 - This is a concrete H3 transport/engine test, NOT public HTTP3 Server/Client
   integration. Those remain disabled until full ownership, cancellation,
   shutdown and verification are implemented and tested.
-- CI verification pending for this commit. Existing Stage B/Stage C gates
-  remain open, and Stage F cleanup remains deferred as originally approved.
+- Verified in CI run 40143923528, GREEN in all seven Perl lanes:
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40143923528
+  The latest non-threaded Perl 5.44 lane installed Net::QUIC 0.06 and
+  Unblock::HTTP3 0.13 from CPAN, REQUIRED the real HTTP3 loopback test,
+  and passed all 19 assertions. The ordinary rebuild test suite passed
+  7 files / 32 subtests with H3 optional when its deps were absent,
+  and both HTTP1 input paths plus optional HTTP2 passed.
+  This is actual QUIC/TLS/HTTP3 evidence, not a mocked handshake.
+- Existing Stage B throughput and Stage C conformance gates remain open.
+  Stage F cleanup remains deferred as originally approved.
 
 ## Current h2spec failure grouping (not a fix)
 
