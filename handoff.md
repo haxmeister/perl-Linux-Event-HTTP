@@ -86,13 +86,16 @@ Stage C initial integration:
   support is claimed.
 - t/rebuild/60-quic-socket.t exercises real UDP forwarding with a mock
   manager, timer replacement/cancel, source-address rejection and cleanup.
-  Syntax checked on Perl 5.40 with dependency stubs; the actual runtime
-  test and remote CI still need verification.
+  Runtime test verified in remote CI on both input paths, seven Perl lanes.
+  CI run 40143058003: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40143058003
+  Perl 5.40 build logs show 6 files / 31 subtests on each input path,
+  including the new real UDP mock-manager test. Optional H2 and H1-only
+  isolation checks also passed. No real QUIC/H3 handshake was tested.
 - This is Stage D groundwork only. Public http3 remains explicitly disabled.
   No actual QUIC/TLS handshake, H3 HTTP transaction, or H3 shutdown test
   has yet passed. Do not promote it to an implemented H3 feature.
-- Next: inspect the feature-branch CI result, fix failures, then wire this
-  adapter to Unblock::HTTP::QUIC and the unified Client/Server with concrete
+- Next: wire this adapter to Unblock::HTTP::QUIC and the unified Client/Server
+  with concrete
   local path handling and real QUIC loopback tests. Preserve optional installs.
   Stage B throughput and Stage C conformance gates remain open.
 

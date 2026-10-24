@@ -13,6 +13,20 @@ are not implemented. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
+## Current h2spec failure grouping (not a fix)
+
+The recorded 11 h2spec 2.6.0 failures are not all the same condition:
+six are in HTTP/2 section 5.1 (half-closed/closed stream handling), one
+in section 5.1.1 (decreasing stream ID), one in 5.3.1 (self-dependent
+PRIORITY), one in 6.1 (DATA on a non-open stream), one in 6.3 (PRIORITY
+on stream zero), and one in 6.9.1 (stream WINDOW_UPDATE overflow).
+The baseline, rebuilt native path, and rebuilt Perl path have identical
+diagnostics for each. That rules out a new regression in the rebuilt
+input bridge for these cases; it does not establish which engine policy,
+harness fixture, or wire-order issue explains each failure. Before
+proposing read-only HTTP2 source changes, reduce the specific failing
+case(s) against the current upstream engine.
+
 ## Stage D Linux UDP transport foundation (2026-10-24)
 
 A new private _QUICSocket supplies the Linux::Event datagram and one-shot
@@ -26,8 +40,12 @@ and outgoing local-address changes are rejected until pktinfo/multihoming
 support exists. The new isolated regression uses actual Linux UDP sockets
 and a mock manager so HTTP3 is not mandatory for HTTP1 installations.
 
-The Stage C seven-lane HTTP2 workflow 40142345620 passed. The new Stage D
-runtime regression is pending CI verification. Public http3 remains disabled;
+The Stage C seven-lane HTTP2 workflow 40142345620 passed. New Stage D
+CI run 40143058003 also passed all seven Perl lanes (5.36, 5.38, 5.40,
+5.42, 5.44, latest and latest-threaded), with the real UDP mock-manager
+test included in both input paths. Perl 5.40 logs report 6 files / 31
+subtests on each path. H1-only isolation and optional H2 checks passed.
+Public http3 remains disabled;
 real QUIC handshake, HTTP3 request/response, timeout/credit recovery and
 service shutdown are still pending. Stage B and h2spec limitations are unchanged.
 

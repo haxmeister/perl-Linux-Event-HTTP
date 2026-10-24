@@ -2,7 +2,8 @@ Continue implementation of Linux::Event::HTTP's approved Unblock reconstruction.
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Branch: feature/unblock-http-rebuild
-Latest implementation checkpoint: 38ef7d3035190132a658c12e80e487eb254c7069
+Latest implementation checkpoint: 093295ff476809f3389652ae302fa851df6f1eae
+(The follow-up documentation commit after this is [skip ci]; inspect the current remote head.)
 Later handoff-only commits may follow; inspect the remote branch and working tree first.
 Main remains untouched at c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
 
@@ -37,9 +38,20 @@ Published upstream dependencies:
 - Optional HTTP2 0.12 read-only source: 7bc0b6ccd653a74ad1e7399d27aa9d94c941b513.
 Feature additions are not in the released HTTP1/upper versions; use the pinned commits.
 
-Immediate next action: inspect HTTP2 milestone CI (queued/in progress at handoff):
-https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40142345620
-It covers all seven Perl lanes, both input paths, H1-only checks, then optional H2 tests. Fix any feature-branch failures. Previous retention CI was green (root 40135515145; HTTP1 40135426474 and 40135426480).
+Latest milestone CI is green:
+- HTTP2 seven-lane integration: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40142345620
+- Stage D UDP/QUIC transport foundation, seven Perl lanes: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40143058003
+- Root 6 files / 31 subtests on Perl 5.40 in both input paths, including a real UDP mock-manager test; H1-only isolation and optional H2 tests pass.
+
+Stage D now has a private _QUICSocket adapter with concrete Linux UDP
+source/destination addresses, full packet forwarding, send backpressure,
+dynamic relative timers and idempotent cleanup. It intentionally rejects
+wildcard local addresses and outgoing source changes: no pktinfo or
+multihoming implementation. It is NOT wired into public Server/Client yet.
+HTTP3 remains explicitly disabled. No actual QUIC/TLS/H3 loopback test
+has passed. Continue with Unblock::HTTP::QUIC integration, real H3 traffic
+and shutdown/credit recovery tests, then Stage E/F. The 11 h2spec cases
+remain open and the Stage B throughput gate has not passed.
 
 Then continue Stage B performance / Stage C remaining conformance and performance work, followed by Stages D-F. Do not repeat broad benchmark sweeps without a new change or specific question. Keep handoff.md current. No backward compatibility is required, but retain old private implementations until replacement coverage is adequate.
 
