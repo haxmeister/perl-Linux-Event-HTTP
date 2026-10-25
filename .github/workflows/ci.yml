@@ -80,6 +80,10 @@ jobs:
           make -j2
           make test
           REBUILD_NATIVE_INPUT=0 make test
+      - name: Stage F packaged distribution test
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          make disttest
       - name: Runtime stays HTTP1-only
         run: |
           perl -Mblib -MLinux::Event::Loop -MLinux::Event::HTTP::Client -e 'my $c = Linux::Event::HTTP::Client->new(loop => Linux::Event::Loop->new); die "optional engine loaded" if grep { m{^(?:Unblock/HTTP[23]|Net/QUIC|Unblock/WebSocket)} } keys %INC; $c->shutdown'

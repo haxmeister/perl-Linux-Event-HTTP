@@ -1,5 +1,23 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Stage F verified cleanup and packaging gate - 2026-10-25 UTC
+
+Root source removal: 51dc44d01f84848346a16bad9d6c1a0bd2541c8f.
+GitHub Actions run 40158416159 PASSED all seven Perl jobs, including
+both native and Perl input, H2/H3 transport, WebSocket and generic
+handoff coverage. The 21 t/rebuild test files remain unchanged. The
+native consumer ABI header was relocated unchanged to xsbridge.
+Docs replacement: 21f0ec61808de7cb3a506faa7dc1a6613bdbe245.
+Architecture/HTTP2/CONNECT/benchmark docs no longer present the deleted
+client policy wrappers or old parsers as current production APIs.
+
+New CI packaging gate: latest nonthreaded Perl will run make disttest,
+building and exercising a distribution from MANIFEST rather than only
+from the checkout. This gate is PENDING the new CI result.
+
+Stage B performance and Stage C h2spec remain OPEN, with no performance
+claims from source cleanup. No upstream/main/version/release changes.
+
 ## Stage F initial legacy source and test removal (2026-10-25 UTC)
 
 A root-only Stage F cleanup removes the former Linux::Event::HTTP-specific
