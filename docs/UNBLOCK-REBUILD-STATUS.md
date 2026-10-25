@@ -14,6 +14,27 @@ are not implemented. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
+## Stage D verified TLS identity and queued cancellation - 2026-10-24
+
+- Source checkpoint: 8a48d6aed17e13fa0a57d6dbce772397a79c9cf2.
+- CI https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40145575144
+  PASS on all seven Perl lanes, with both H1 input paths, HTTP1-only
+  isolation, optional HTTP2 and required real H3 tests preserved.
+- t/rebuild/95-http3-errors.t passed two subtests using genuine QUIC:
+  a trusted certificate naming localhost but not 127.0.0.1 cannot
+  authenticate strict H3 requests to the IP address; on_error/on_finish
+  fire, on_request is never admitted, and watchers release cleanly.
+  An operation cancelled before QUIC readiness finishes once with
+  cancelled state and no remaining connector/timer watchers.
+- Existing real H3 tests remain green: lower loopback 19 assertions,
+  public Client 16, public Server 13. These tests do not yet cover
+  *active* H3 stream cancellation, credit recovery, independent
+  multi-connection scheduling, packet errors, or graceful shutdown
+  under a genuinely delayed response. Those are the next focused tasks.
+- Stage B performance gate remains OPEN and Stage C's 11 h2spec parity
+  failures remain OPEN. Stage E and Stage F are not started. Main and
+  other read-only repositories remain untouched.
+
 ## Stage D HTTP3 public Client/Server verification - 2026-10-24
 
 - Published source milestone: d0a1753c3edb9baf2351f9001fb876a26cbe5340.

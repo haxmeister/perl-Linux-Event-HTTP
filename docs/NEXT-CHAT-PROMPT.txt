@@ -2,7 +2,7 @@
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Working branch: feature/unblock-http-rebuild
-Last VERIFIED source checkpoint: d0a1753c3edb9baf2351f9001fb876a26cbe5340
+Last VERIFIED source checkpoint: 8a48d6aed17e13fa0a57d6dbce772397a79c9cf2
 Later documentation commits may exist: inspect remote feature ref first.
 Main baseline remains c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
 
@@ -32,16 +32,19 @@ COMPLETED / VERIFIED:
   multiplexing. Public Server accepts H3 on one concrete UDP host/port
   alongside TCP, sharing the Unblock Server definition and TLS credential.
   Initial H3 GOAWAY/shutdown drain integrated.
-- CI run 40145261643 GREEN in all seven Perl lanes, both input paths,
+- CI runs 40145261643 and 40145575144 GREEN in all seven Perl lanes, both input paths,
   HTTP1-only isolation, optional HTTP2. Required real H3 tests on latest
   Perl: 70-http3-loopback.t 19 assertions, 80-http3-client.t 16 assertions,
-  90-http3-server.t 13 assertions. No mock-only H3 success claim.
+  90-http3-server.t 13 assertions; 95-http3-errors.t two passing subtests
+  for mismatched TLS hostname rejection and pre-admission cancellation,
+  with actual QUIC/TLS. No mock-only H3 success claim.
 
 NEXT ACTIONS:
-- Stage D targeted failure/isolation tests: H3 TLS certificate/hostname
-  refusal; queued/active cancellation; timeout, QUIC credit recovery and
-  packet/UDP error containment; multiple connections; graceful drain
-  genuinely before grace deadline. Fix issues in this repo first.
+- Stage D next targeted tests: active H3 stream cancellation without
+  harming siblings; QUIC stream-credit recovery; UDP errors/input
+  containment; multiple independent H3 connections; slow response
+  graceful drain before grace deadline. TLS hostname refusal and queued
+  cancellation are now verified. Fix issues in this repo first.
 - H3-only and wildcard server bindings are explicitly unsupported today.
   Wildcard/multihomed QUIC requires per-packet local path info not exposed
   by present Linux Datagram callback. Do not pretend this is complete.
