@@ -1,84 +1,56 @@
-## Next current continuation (after 2026-10-24 H3 transport milestone)
-
-Implementation commit 1aafe973698cf64ddfeb66b46ff138b75456d07b
-was verified in all seven Perl lanes in GitHub Actions run 40143923528.
-The latest Perl lane installed real Net::QUIC 0.06 and Unblock::HTTP3 0.13
-and completed t/rebuild/70-http3-loopback.t: 19 passing assertions on
-two independent HTTP3 GET streams over one verified QUIC/TLS connection,
-using Linux::Event UDP on both ends. t/rebuild/60 additionally checks
-dynamic small fractional QUIC timers; HTTP1-only isolation and H2 remain
-green. Neither Unblock nor Net::QUIC sources were changed.
-
-NEXT IMPLEMENTATION: wire optional HTTP3 through the public Linux::Event::HTTP
-Server and Client, respecting concrete bound UDP local addresses, hostname
-verification, shared transport ownership, pool dispatch, cancellation,
-shutdown/drain, and error containment. The underlying _QUICSocket and
-Unblock::HTTP::QUIC attachment have been verified separately; do not
-replace the high-level Unblock pool with another. Add full end-to-end
-tests before claiming public HTTP3 support. HTTP3 remains disabled in
-_Config. No backward compatibility is required; DO NOT start Stage F
-cleanup early.
-
-Other gates remain open: Stage B throughput, 11 unchanged h2spec cases
-in Stage C, native HTTP1 INPUT_SWITCH, Stage E WebSocket/generic handoff,
-and Stage F cleanup. All feature-branch pushes authorized; main needs
-permission. Read the ACTIVE REBUILD HANDOFF and approved plan first.
-
-Continue implementation of Linux::Event::HTTP's approved Unblock reconstruction. Do not restart the architecture discussion or prepare a release.
+# Continue Linux::Event::HTTP Unblock Reconstruction
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
-Branch: feature/unblock-http-rebuild
-Latest implementation checkpoint: 1aafe973698cf64ddfeb66b46ff138b75456d07b
-(The follow-up documentation commit after this is [skip ci]; inspect the current remote head.)
-Later handoff-only commits may follow; inspect the remote branch and working tree first.
-Main remains untouched at c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+Working branch: feature/unblock-http-rebuild
+Last VERIFIED source checkpoint: d0a1753c3edb9baf2351f9001fb876a26cbe5340
+Later documentation commits may exist: inspect remote feature ref first.
+Main baseline remains c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
 
-Read first:
-1. handoff.md: ACTIVE REBUILD HANDOFF section; older sections are historical.
-2. docs/UNBLOCK-REBUILD-PLAN.md: authoritative approved architecture/stages.
-3. docs/UNBLOCK-REBUILD-STATUS.md: exact test/performance evidence and limitations.
+Read handoff.md ACTIVE REBUILD HANDOFF first, then
+docs/UNBLOCK-REBUILD-PLAN.md and docs/UNBLOCK-REBUILD-STATUS.md.
+These contain the approved design and all exact evidence.
+Continue implementation and verification; do not restart design,
+prepare a release, or accelerate Stage F deletion.
 
-Authorization:
-- Implement in Linux::Event::HTTP on its feature branch.
-- Previously approved upstream changes remain authorized in Unblock::HTTP1 and Unblock::HTTP on feature/linux-event-integration: HTTP1 performance/drain; upper admission callback, optional dependencies and generic handoff.
-- Feature-branch pushes are authorized as needed. Do not ask again for push permission.
-- Main requires permission. No merges, tags, version bumps or releases.
-- Core, Uniform, HTTP2/3, Net::QUIC and WebSocket sources remain read-only. Explain any exact needed upstream change and obtain authorization before editing those repositories.
+Authorization: pushes to feature branches authorized. Do not touch main
+without permission; no merges, tags, releases or version bumps.
+Unblock::HTTP1 and Unblock::HTTP changes remain authorized only on
+feature/linux-event-integration for the previously approved performance,
+drain, admission, optional-dependency and generic handoff features.
+Linux::Event core, Uniform, HTTP2/3, Net::QUIC and WebSocket read-only.
 
-Completed:
-- Stage A/B HTTP1 Server/Client using actual Unblock operations/transactions and Uniform messages; native borrowed input, TCP/TLS, streaming, bounded buffers, pooling, cancellation, timers, queued upload admission and graceful service shutdown.
-- HTTP1 output-retention fix: serialized payload leaves the transaction plan when queued. Retaining 256 transactions with distinct 256 KiB bodies reduced median additional RSS from about 130 MiB to 66 MiB for both server and client. Throughput gate remains OPEN.
-- Initial Stage C HTTP2: optional http2 => 1/hashref, TLS ALPN and HTTP1 fallback, strict version selection, multiplexing, native borrowed-input ABI bridge, flow control, stream cancellation, GOAWAY/grace expiry and TLS verification.
-- Protocol-input exceptions are contained to their connection. Finished H2 transports end after queued output drains, outside protocol callbacks.
-- H2 upstream source was built/tested but NOT modified. Cleartext H2, H3, WebSockets and generic handoff are not implemented. HTTP1 native INPUT_SWITCH still explicitly fails.
+COMPLETED / VERIFIED:
+- H1 Server/Client: true Unblock transactions + Uniform messages, native
+  borrowed input, TCP/TLS, streaming, bounded buffers, pooling, cancellation,
+  timeouts, admission callbacks, service shutdown. H1 output retention
+  fix reduced ~130 MiB to ~66 MiB additional RSS in the recorded workload.
+- H2: TLS ALPN, H1 fallback, strict selection, multiplexing, flow control,
+  cancellation, GOAWAY, malformed-input containment. h2spec parity but not
+  clean conformance.
+- H3: public Client using the same Unblock pool and Net::QUIC::Driver, async
+  Linux UDP hostname resolution, verified original-origin QUIC/TLS, real
+  multiplexing. Public Server accepts H3 on one concrete UDP host/port
+  alongside TCP, sharing the Unblock Server definition and TLS credential.
+  Initial H3 GOAWAY/shutdown drain integrated.
+- CI run 40145261643 GREEN in all seven Perl lanes, both input paths,
+  HTTP1-only isolation, optional HTTP2. Required real H3 tests on latest
+  Perl: 70-http3-loopback.t 19 assertions, 80-http3-client.t 16 assertions,
+  90-http3-server.t 13 assertions. No mock-only H3 success claim.
 
-Validation:
-- Linux HTTP: 5 files / 28 subtests pass on Perl 5.38.2 threaded and 5.44.0 non-threaded, BOTH native and Perl input. 5.38 disttest passes. H1-only configuration still passes with H2 absent.
-- HTTP1: 40 files / 349 tests on both Perls; disttest passes.
-- Unchanged HTTP2: 30 files / 525 tests on 5.38.
-- h2spec: 146 tests, 134 pass, 1 skip, 11 fail. Exact failing cases AND diagnostics match untouched main and both rebuilt input paths in this environment. This is parity, NOT clean conformance. Evidence: bench/results/unblock-stage-c/h2spec-parity.json.
+NEXT ACTIONS:
+- Stage D targeted failure/isolation tests: H3 TLS certificate/hostname
+  refusal; queued/active cancellation; timeout, QUIC credit recovery and
+  packet/UDP error containment; multiple connections; graceful drain
+  genuinely before grace deadline. Fix issues in this repo first.
+- H3-only and wildcard server bindings are explicitly unsupported today.
+  Wildcard/multihomed QUIC requires per-packet local path info not exposed
+  by present Linux Datagram callback. Do not pretend this is complete.
+- Continue Stage B throughput gate (OPEN, original ~62,924 GET32 vs
+  initial rebuild ~12,819; no gate waiver). Stage C 11 h2spec cases remain,
+  identical to untouched main in the recorded environment, not clean.
+- Stage E WebSocket and generic H1 whole-socket vs H2/H3 stream handoff,
+  native HTTP1 INPUT_SWITCH still unsupported. Stage F cleanup only after
+  replacement coverage. No backward compatibility required.
 
-Published upstream dependencies:
-- HTTP1 implementation: 06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14.
-- Upper HTTP implementation: 6fa6c452236f9ecc2830d250fefc7d79d1167676; branch head 0b636373f39a117ef062f2b5e8bebc3655675aa2 includes handoff-only changes.
-- Optional HTTP2 0.12 read-only source: 7bc0b6ccd653a74ad1e7399d27aa9d94c941b513.
-Feature additions are not in the released HTTP1/upper versions; use the pinned commits.
-
-Latest milestone CI is green:
-- HTTP2 seven-lane integration: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40142345620
-- Stage D UDP/QUIC transport foundation, seven Perl lanes: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40143058003
-- Root 6 files / 31 subtests on Perl 5.40 in both input paths, including a real UDP mock-manager test; H1-only isolation and optional H2 tests pass.
-
-Stage D now has a private _QUICSocket adapter with concrete Linux UDP
-source/destination addresses, full packet forwarding, send backpressure,
-dynamic relative timers and idempotent cleanup. It intentionally rejects
-wildcard local addresses and outgoing source changes: no pktinfo or
-multihoming implementation. It is NOT wired into public Server/Client yet.
-HTTP3 remains explicitly disabled. No actual QUIC/TLS/H3 loopback test
-has passed. Continue with Unblock::HTTP::QUIC integration, real H3 traffic
-and shutdown/credit recovery tests, then Stage E/F. The 11 h2spec cases
-remain open and the Stage B throughput gate has not passed.
-
-Then continue Stage B performance / Stage C remaining conformance and performance work, followed by Stages D-F. Do not repeat broad benchmark sweeps without a new change or specific question. Keep handoff.md current. No backward compatibility is required, but retain old private implementations until replacement coverage is adequate.
-
-If the workspace persists: /workspace/scratch/9be1ecae0d40/http. env.sh and env544.sh plus dependency paths/build instructions are documented in handoff.md. Shell Git fetch works but push lacks credentials; prior publication used the connected GitHub Git-data API, verified exact trees, and non-forced expected-SHA ref updates. Continue from the published source, not old local pre-publication SHAs.
+Source references and test commands in handoff.md. No upstream or main
+modifications authorized except explicit already-approved feature branches.

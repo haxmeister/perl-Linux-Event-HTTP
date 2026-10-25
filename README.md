@@ -8,8 +8,9 @@ The implemented slice provides HTTP/1 servers and clients over TCP and TLS,
 real Unblock transactions and Uniform messages, bounded buffering, streaming
 reception/responses, pooling, cancellation, timers and native borrowed input.
 Queued streaming uploads and graceful HTTP/1 service shutdown are implemented.
-Optional HTTP/2 over TLS now has an initial implementation with ALPN,
-multiplexing, flow control and GOAWAY draining. HTTP/3, WebSocket and generic
+Optional HTTP/2 over TLS uses ALPN, multiplexing, flow control and GOAWAY.
+Initial HTTP/3 Client and combined TCP/UDP Server integration is verified
+with real QUIC/TLS loopback. HTTP/3 lifecycle hardening, WebSocket and generic
 handoff remain pending.
 
 ## Server
@@ -42,7 +43,8 @@ on_drain => sub ($tx) { ... })`, followed by `write` and `end`. A false
 `on_drain`; never resend that chunk.
 
 `loop`, `listener`, `host`, `port`, `connection_count`, `pause`, `resume` and
-`close` expose service controls. `close` closes the listener only.
+`close` expose service controls. `close` closes TCP admission; with HTTP/3 enabled it also starts QUIC
+GOAWAY draining. It does not immediately discard admitted H3 streams.
 `shutdown(grace => 30, on_complete => sub ($server) { ... })` stops accepting,
 completes admitted requests and responses, and closes any remaining owned
 sockets after the grace deadline. Completion runs once after all owned
@@ -87,6 +89,27 @@ HTTPS verifies certificates and the original hostname by default. Use
 `tls => { ca_file => $path }` for a private trust root. The Client owns TLS
 hostname and ALPN selection. Server TLS options are passed as
 `tls => { cert_file => $cert, key_file => $key }`.
+
+## HTTP/3 (initial implementation)
+
+Install `Net::QUIC >= 0.06` and `Unblock::HTTP3 >= 0.13`, then enable
+`http3 => 1`. A strict Client request can use `http_version => '3'`.
+A client may pass `quic => { ca_file => $path }` for a private CA and
+uses Linux::Event's asynchronous UDP hostname resolution and Net::QUIC's
+verification of the original HTTPS origin. The existing Unblock pool owns
+the operation and H3 multiplexing.
+
+A Server with HTTP3 enabled binds a UDP socket on the same concrete host
+and port as its TCP listener, using `tls => { cert_file => ..., key_file => ... }`.
+`quic => { transport => { ... } }` forwards QUIC policy to Net::QUIC.
+The same `on_headers` and `on_request` callbacks receive actual H3
+transactions and Uniform messages.
+
+Current limits: wildcard UDP binding, H3-only listeners, comprehensive QUIC
+migration and packet-origin metadata are not supported yet. Graceful H3
+shutdown has initial real-loopback coverage; failure, cancellation,
+congestion and multi-connection stress tests remain Stage D work.
+Do not treat this feature branch as release ready.
 
 ## HTTP/2
 

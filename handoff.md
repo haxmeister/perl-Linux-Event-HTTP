@@ -36,6 +36,37 @@ Generic handoff in upper HTTP remains authorized but unimplemented.
 HTTP1/upper versions remain 0.12/0.02; their released versions do not contain
 these feature additions. Root CI pins the published feature source commits.
 
+## Stage D HTTP3 public Client/Server verification - 2026-10-24
+
+- Published source milestone: d0a1753c3edb9baf2351f9001fb876a26cbe5340.
+- Seven-lane CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40145261643
+  PASS on Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest and latest
+  threaded. Both native/Perl H1 input modes, H1-only isolation and
+  optional H2 tests remained green.
+- The required latest-Perl H3 step installed real Net::QUIC 0.06 and
+  Unblock::HTTP3 0.13. Passed three independent real QUIC/TLS tests:
+  t/rebuild/70-http3-loopback.t: 19 assertions;
+  t/rebuild/80-http3-client.t: 16 assertions;
+  t/rebuild/90-http3-server.t: 13 assertions.
+- Public Client uses the Unblock pool with async Linux Datagram address
+  resolution, the QUIC Driver, original-origin TLS authentication, and
+  actual engine Transaction objects. Four strict H3 requests multiplexed
+  over one connection and released all UDP/timer watchers.
+- Public combined TCP/UDP Server binds one concrete host and port, uses
+  the same Unblock Server definition for all protocols, and reuses its
+  configured TLS certificate/key for QUIC. Two H3 requests completed
+  on one QUIC connection through public on_headers/on_request callbacks.
+  Graceful shutdown test and socket/timer leak checks pass.
+- HTTP3 is not fully hardened: H3-only and wildcard listeners, alternate
+  source addresses/migration, comprehensive TLS failure, cancellation,
+  timeout, congestion, multi-connection stress and precise graceful-drain
+  timing still need explicit coverage. No conformance/performance gate
+  claim was made.
+- Stage B throughput remains OPEN. Stage C h2spec unchanged:
+  146 total, 134 pass, 1 skip, 11 fail, equal to baseline. Stage E
+  WebSocket/generic handoff, HTTP1 INPUT_SWITCH, and Stage F cleanup
+  remain undone. Do not accelerate Stage F; original plan still holds.
+
 ## Implemented
 
 Stage A/B:
