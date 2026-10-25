@@ -1,5 +1,57 @@
 # Reconstruction implementation checkpoint
 
+## Stage B independently benchmarked against established Perl servers (2026-10-25)
+
+VERIFIED same-runner Benchmark::Web comparison, feature commit
+00b48c843955d73d30f6b1ff603596da1ecb9e2c:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40211468264
+SUCCESS (strict all-five-server smoke, GET measurements, POST measurements).
+Full root CI on same source:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40211467996
+SUCCESS 7/7 jobs.
+
+Benchmark::Web main pinned at ceb8b2f9c4cd0764441844dd91dacc1240ebc4c7,
+using its UNMODIFIED shared raw TCP client and server runner. Added ONLY
+a benchmark-only root adapter at bench/benchmark-web-rebuild/* and a
+feature-branch workflow. Normal public Server API, on_request after full
+request, fresh Uniform Response via tx->respond, native input default.
+Original LinuxEvent uses Benchmark::Web's existing public adapter.
+Unblock::HTTP1 was pinned 4d19f59196481ae4460207c5b22c5125fdbfe186.
+Upper Unblock pinned e9efa51ee0110227945628f3f85a3feedba90558.
+Other targets installed as ordinary CPAN Feersum, Hyperman, Mojolicious.
+One server process, single application execution slot, 100 persistent
+HTTP/1.1 connections, no pipelining, loopback TCP, 32 response bytes,
+identical raw-client workload for all targets. Server order rotates.
+Smoke verified both GET and POST 4096 before measurements.
+
+REPORTED MEDIANS for THIS hosted runner ONLY:
+                       GET32 RPS   GET p99 us   POST4K RPS  POST p99 us
+Hyperman                  111289.1      1506.1     67542.5       2823.1
+Feersum                   108621.9      1013.0     99643.3       1884.0
+Legacy LinuxEvent          40412.8      4792.0     34617.3       5554.0
+LinuxEvent Unblock          9666.4     17487.0      7990.7      20075.1
+Mojolicious                 2482.6     45023.9      2334.2      44910.0
+
+GET uses 20,000 measured+2,000 warmup requests per repeat, five repeats;
+POST uses 10,000+1,000, three repeats and 4,096 request-body bytes.
+Machine-shared hosted-runner numbers are directional only; preserve the
+full JSON report uploaded as "stage-b-http1-perl-peers" in the Actions run.
+The workflow now offers a repeatable baseline without changing any
+upstream engine or introducing LinuxEvent-specific shortcuts.
+
+Interpretation: rebuild outperforms Mojolicious by ~3.9x GET and
+~3.4x POST throughput, but runs only ~8.9% of Feersum GET and ~8.0%
+of Feersum POST, and ~24% of original LinuxEvent throughput on GET.
+Keep Stage B open. This result DOES NOT prove an Unblock::HTTP1 defect:
+differences include the canonical Uniform object model and generic
+transaction semantics. DO NOT reopen the approved upstream architecture
+or modify Unblock from this comparison alone. Evaluate whether release
+requirements demand closer Feersum performance, then isolate any
+framework-neutral cost with standalone tests BEFORE proposing changes.
+Root main and all other repositories remain unchanged.
+
+
+
 ## Stage F verified runtime floor and automatic conformance CI (2026-10-25 UTC)
 
 Root production/test correction: 2cf4be58abaf75a3362bf8b612eafbef8ad1bfc7

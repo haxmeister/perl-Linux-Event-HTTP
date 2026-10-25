@@ -1,3 +1,26 @@
+# Continue Linux::Event::HTTP reconstruction
+
+LATEST (2026-10-25): Neutral FIVE-PEER HTTP1 performance benchmark DONE.
+Source feature: 00b48c843955d73d30f6b1ff603596da1ecb9e2c.
+Benchmark CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40211468264 SUCCESS.
+Full root rebuild CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40211467996 ALL 7 PASS.
+Same-runner Benchmark::Web, same raw client, 100 keepalive connections,
+32 response bytes, GET 5 repeats, POST 4096 request bytes 3 repeats:
+                         GET req/s     POST req/s
+Hyperman                 111,289        67,543
+Feersum                  108,622        99,643
+Legacy LinuxEvent         40,413        34,617
+Rebuilt LinuxEvent         9,666         7,991
+Mojolicious                2,483         2,334
+Hosted-runner medians directional only; JSON in benchmark CI artifact.
+Neutral runner/other servers unchanged; only root benchmark adapter/
+workflow added. No changes to Unblock engines, Benchmark::Web main or
+root main. This does NOT establish an engine defect. Stage B remains
+OPEN; Stage C h2spec strict 147/147 CLOSED using HTTP2 >=0.13.
+Read active root handoff.md first. DO NOT restart architectural changes,
+make upstream modifications or optimize for LinuxEvent alone. No releases,
+merges or pushes to main without explicit authorization.
+
 # Continue Linux::Event::HTTP
 
 LAST VERIFIED FEATURE:
