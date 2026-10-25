@@ -170,6 +170,15 @@ Stage C initial integration:
 - This needs focused real public Server tests and CI verification before
   the capability can be called verified. No main/upstream source changed.
 
+## Stage D public Server targeted test
+
+- New t/rebuild/90-http3-server.t exercises Linux::Event::HTTP::Server
+  with http3 => 1 and a real Unblock::HTTP::QUIC Client over Linux UDP.
+- It requires a real authenticated QUIC/TLS handshake, two HTTP3
+  transactions, public on_headers/on_request callback ordering, and
+  shutdown completion plus watcher release.
+- Pending CI verification; do not claim public H3 Server is green yet.
+
 ## Verified
 
 - Current root: 5 files / 28 subtests on Perl 5.38.2 threaded and 5.44.0

@@ -77,3 +77,4 @@ jobs:
           cpanm --notest 'Net::QUIC@0.06' 'Unblock::HTTP3@0.13'
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/70-http3-loopback.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/80-http3-client.t
+          REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/90-http3-server.t
