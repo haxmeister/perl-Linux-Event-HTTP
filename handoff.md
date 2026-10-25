@@ -100,6 +100,21 @@ these feature additions. Root CI pins the published feature source commits.
   reveals a lifecycle problem, and record the exact evidence here.
 - Stage B throughput, Stage C h2spec conformance, Stage E and F unchanged.
 
+## Stage D real H3 lifecycle and multi-connection progress
+
+- CI run 40146031133 passed all seven Perl jobs after adjusting the test
+  to await asynchronous zero-grace QUIC shutdown completion. Real H3
+  active cancellation with independent 512 KiB streaming sibling and
+  delayed admitted-response drain both passed. No protocol code change was
+  needed to meet these two test cases.
+- t/rebuild/97-http3-multiconnection.t now verifies two separate public
+  clients and QUIC connections on one Server. It holds both requests until
+  admitted, responds in reverse order, checks routing and independent
+  completion, and requires release of both sessions and all loop watchers.
+  This new test is pending real-QUIC CI verification.
+- Stage D credit recovery and malformed-UDP containment remain open.
+  Stages B/C gate exceptions, Stage E and Stage F remain unchanged.
+
 ## Implemented
 
 Stage A/B:
