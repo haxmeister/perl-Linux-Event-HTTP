@@ -7,9 +7,27 @@ use Linux::Event::Kernel::Timer;
 use Linux::Event::HTTP::Server;
 use Linux::Event::HTTP::Client;
 
-my $available = eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.12'); 1 };
+my $available = eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.13'); 1 };
 die "HTTP2 required by this test lane: $@" if !$available && $ENV{REBUILD_REQUIRE_HTTP2};
-plan skip_all => 'optional Unblock::HTTP2 >= 0.12 required' unless $available;
+plan skip_all => 'optional Unblock::HTTP2 >= 0.13 required' unless $available;
+subtest 'runtime HTTP2 minimum version matches package metadata' => sub {
+    require Linux::Event::HTTP::_Config;
+    # Localize the actual package version: the constructor must refuse an
+    # installed pre-conformance engine, even if a different layer loads it.
+    {
+        local $Unblock::HTTP2::VERSION = '0.12';
+        my %opt = (http2 => 1);
+        my $ok = eval { Linux::Event::HTTP::_Config::protocols(\%opt); 1 };
+        ok(!$ok, 'pre-conformance 0.12 engine cannot be selected');
+        like("$@", qr/http2 requires Unblock::HTTP2 >= 0\.13/,
+            'missing minimum is reported clearly');
+    }
+    my %opt = (http2 => 1);
+    my %actual = Linux::Event::HTTP::_Config::protocols(\%opt);
+    ok(exists $actual{http2}, '0.13 or newer engine is accepted');
+    ok(!exists $opt{http2}, 'protocol option is consumed once');
+};
+
 plan skip_all => 'openssl command required' unless -x '/usr/bin/openssl';
 my $dir = tempdir(CLEANUP => 1);
 my ($cert, $key) = ("$dir/cert.pem", "$dir/key.pem");

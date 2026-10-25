@@ -12,8 +12,8 @@ Optional HTTP/2 over TLS uses ALPN, multiplexing, flow control and GOAWAY.
 HTTP/3 Client and combined TCP/UDP Server integration is verified
 with real QUIC/TLS loopback, timeout, cancellation, congestion and
 multi-connection tests. HTTP/1 Upgrade and HTTP/2/3 WebSocket and generic
-CONNECT handoff are verified. HTTP/1 throughput and HTTP/2 protocol conformance
-remain open release gates.
+CONNECT handoff are verified. HTTP/1 throughput remains an open release gate. HTTP/2 strict
+h2spec conformance passes with Unblock::HTTP2 0.13 or newer.
 
 ## Server
 

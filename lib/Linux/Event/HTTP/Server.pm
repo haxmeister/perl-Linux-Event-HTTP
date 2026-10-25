@@ -276,7 +276,7 @@ C<unblock_send>, C<unblock_finish>, and C<unblock_abort>, with
 deferred bounded output. It invokes C<resume_output> for flow
 control. Generic handoff never replaces the multiplexed transport.
 
-C<http2 =E<gt> 1> enables optional Unblock::HTTP2 (at least 0.12). Server
+C<http2 =E<gt> 1> enables optional Unblock::HTTP2 (at least 0.13). Server
 HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>.
 A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains
 admitted streams. Cleartext HTTP/2 remains unimplemented.

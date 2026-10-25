@@ -189,7 +189,7 @@ requests can continue on newly pooled connections. C<on_finish> refers
 to the HTTP handshake, not the successor's eventual close.
 
 This reconstruction slice supports HTTP/1 over TCP/TLS and optional HTTP/2
-over TLS with C<http2 =E<gt> 1> (Unblock::HTTP2 0.12 or later). HTTPS verifies
+over TLS with C<http2 =E<gt> 1> (Unblock::HTTP2 0.13 or later). HTTPS verifies
 the certificate and original hostname by default. C<tls> accepts Linux::Event
 TLS options such as C<ca_file>. HTTP owns the hostname and ALPN selection.
 C<native_input =E<gt> 0> selects the Perl input path for diagnostics.

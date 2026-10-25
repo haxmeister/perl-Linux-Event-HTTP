@@ -34,8 +34,8 @@ sub protocols ($option) {
             } or croak "new(): http3 requires Unblock::HTTP3 >= 0.13 and Net::QUIC >= 0.06: $@";
         }
         if ($name eq 'http2') {
-            eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.12'); 1 }
-                or croak "new(): http2 requires Unblock::HTTP2 >= 0.12: $@";
+            eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.13'); 1 }
+                or croak "new(): http2 requires Unblock::HTTP2 >= 0.13: $@";
         }
         $protocols{$name} = ref($value) ? $value : {};
     }
