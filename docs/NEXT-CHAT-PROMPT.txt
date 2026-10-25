@@ -1,3 +1,24 @@
+# Continue Linux::Event::HTTP reconstruction
+
+LATEST VERIFIED CHECKPOINT (2026-10-25):
+- Stage C strict HTTP2 conformance gate CLOSED using repaired
+  Unblock::HTTP2 0.13 main release candidate
+  aa7992f173948464982728f8e68b9b3e7a681f98.
+- LinuxEvent feature c69124c9fda86c9719f3af8663356b1191134875:
+  h2spec v2.6.0 147 passed/0 skipped/0 failed independently
+  standalone, rebuilt native and rebuilt Perl; 4/4 exact parity.
+  Actions: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40205324889
+- Seven-lane rebuild with make disttest, HTTP1/H2 native+Perl,
+  real HTTP3/QUIC, WebSocket and Extended CONNECT: 7/7 PASS.
+  Actions: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40205324924
+- Optional HTTP2 minimum bumped to 0.13. It was still pending
+  CPAN publication at this checkpoint; CI pins tested source on main.
+- Stage B HTTP1 throughput remains OPEN and is the next large issue.
+  Do not re-diagnose the old 10/13 h2spec failures; those are fixed
+  generally in Unblock::HTTP2. Older results are historical only.
+- No main, release, tag, merge or upstream editing was done here.
+  Read handoff.md first and preserve feature-branch-only restrictions.
+
 # Continue Linux::Event::HTTP Unblock reconstruction
 
 LATEST VERIFIED STAGE C h2spec engine/adapter A/B:

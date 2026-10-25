@@ -1,5 +1,41 @@
 # Reconstruction implementation checkpoint
 
+## Stage C CLOSED on repaired HTTP2 0.13 (2026-10-25 UTC)
+
+Verified Unblock::HTTP2 main, release candidate:
+aa7992f173948464982728f8e68b9b3e7a681f98 (0.13).
+Its subsequent main handoff HEAD was 2110f272fc2db06c065c8444a189a30038f2724f.
+This source contains the general protocol-layer conformance repair;
+no LinuxEvent-only engine code or upstream change was needed.
+
+Linux::Event::HTTP feature commit c69124c9fda86c9719f3af8663356b1191134875
+passed BOTH downstream workflows:
+- Strict same-run h2spec v2.6.0 (all 147 cases, including strict):
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40205324889
+  direct independent standalone: 147 pass, 0 skipped, 0 failed;
+  rebuilt native input: 147 pass, 0 skipped, 0 failed;
+  rebuilt Perl input: 147 pass, 0 skipped, 0 failed;
+  repeated standalone: 147 pass, 0 skipped, 0 failed.
+  Zero individual outcome differences across all four.
+- Complete root CI including packaged disttest, native/Perl H1/2,
+  optional H3 real QUIC, WebSocket and generic CONNECT: ALL SEVEN PASS:
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40205324924
+
+This CLOSES the Stage C strict HTTP2 conformance release gate when
+Unblock::HTTP2 >= 0.13 is installed. Root Makefile.PL optional_features
+http2 now requires >=0.13. CI currently builds the exact tested main
+0.13 candidate; the 0.13 GitHub tag/CPAN upload is NOT yet published
+at this checkpoint. Once it is published, prefer the released version
+and check no regression. Do not weaken the >=0.13 requirement to 0.12.
+
+Stage B HTTP1 throughput versus the original LinuxEvent implementation
+remains OPEN, as do any remaining release-readiness gates. Do not
+start release/merge/tag/version bump without authorization. Main of
+Linux::Event::HTTP unchanged. Further Unblock optimization must
+benefit all integrations, not LinuxEvent-specific workarounds.
+
+
+
 ## Stage C repaired Unblock::HTTP2 integration validation (2026-10-25 UTC)
 
 User reports the HTTP/2 conformance repair is complete. Verified
