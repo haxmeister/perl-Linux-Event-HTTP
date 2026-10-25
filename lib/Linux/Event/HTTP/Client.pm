@@ -179,6 +179,15 @@ C<on_transaction =E<gt> sub ($tx) { $tx-E<gt>write(...); $tx-E<gt>end }>. This
 callback runs when queued work is admitted to the real engine. It may run
 synchronously for an available connection; use the supplied Transaction.
 
+Generic H1 C<request(on_handoff =E<gt> sub ($tx, $response, $host)
+{ ... })> with explicit C<http_version =E<gt> '1.1'> transfers a
+successful 101 Upgrade or CONNECT socket to the consumer returned
+by the callback. The consumer implements input, EOF, error and output
+resume. The original socket, TLS and ordered write queue are preserved.
+The upgraded socket is removed from the HTTP pool, so normal HTTP
+requests can continue on newly pooled connections. C<on_finish> refers
+to the HTTP handshake, not the successor's eventual close.
+
 This reconstruction slice supports HTTP/1 over TCP/TLS and optional HTTP/2
 over TLS with C<http2 =E<gt> 1> (Unblock::HTTP2 0.12 or later). HTTPS verifies
 the certificate and original hostname by default. C<tls> accepts Linux::Event

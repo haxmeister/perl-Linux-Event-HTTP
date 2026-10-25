@@ -41,6 +41,20 @@ VERIFIED:
   request unaffected, and zero watcher leaks.
 
 STAGE E CURRENT:
+- Generic HTTP1 on_handoff server (101/CONNECT) and client request
+  (strict HTTP1) implemented in Unblock::HTTP feature branch.
+  Upper source a850460a253937735f8cfe763a4afd3bf43ec147,
+  CI 40151043666 and 40151346692 PASS Perl 5.20/5.44.
+- Root t/rebuild/104 and 105 both PASS in native/Perl input; CI
+  40151423807 six ordinary Perl lanes green; the mandatory H3 test
+  still fails in latest nonthreaded Perl lane.
+- H3 bug now narrowed conclusively: at t+1s before timeout, Client
+  H3 tx active, callback_depth=0, response complete=1, reader=1,
+  writer=1, output_finished=1, stream closed_seen=1; all prerequisites
+  for completion are satisfied but callback never fires. CI 40150770545.
+  Correct fix belongs in read-only Unblock::HTTP3 lifecycle;
+  explicit user authorization required before touching that repo.
+
 - HTTP1 native INPUT_SWITCH->transition_to() WebSocket handoff, same-read
   tail and original socket/write queue verified. t/rebuild/100 H1 and
   public Client t/rebuild/101 both pass native/Perl input.
@@ -54,7 +68,8 @@ STAGE E CURRENT:
   integration against upstream t/36-client-websocket-h3.t.
 - H3/Net::QUIC/WebSocket/core source remain read-only, no changes
   without fresh authorization. Do not weaken the failing test.
-- Generic non-WebSocket handoff still remains.
+- Generic H1 handoff is implemented and verified. Stream-local H2/H3
+  generic CONNECT remains open.
 
 NEXT:
 - Begin Stage E opt-in WebSocket and generic Upgrade/CONNECT through
@@ -64,10 +79,9 @@ NEXT:
   new framework-neutral additions to that authorized feature branch
   are permitted, but core/HTTP2/3/WebSocket source changes require
   separate permission. Preserve socket-wide H1 vs stream-local H2/H3.
-- H1 native INPUT_SWITCH/remainder currently fails and must be handled
-  before claiming native Upgrade. Stage E gate requires same-read
-  post-upgrade tail exactly once, TLS preservation, multiplexing siblings,
-  close/shutdown ownership.
+- H1 native INPUT_SWITCH/same-read remainder is verified. Remaining
+  Stage E gate needs TLS Upgrade coverage, generic stream-local H2/H3
+  handling and the H3 Client close lifecycle fix.
 - Stage B throughput gate OPEN; Stage C 11 h2spec failures remain open,
   exact baseline parity but not clean compliance. Stage F cleanup deferred
   until replacement coverage. No backward compatibility required.

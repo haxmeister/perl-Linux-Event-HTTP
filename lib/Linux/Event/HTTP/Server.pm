@@ -256,6 +256,17 @@ connections when the grace period expires. TLS handshakes without admitted
 requests close immediately. Completion runs once after owned connections
 and their transactions have finished; it can run synchronously if idle.
 Repeated shutdown calls have no effect. C<grace> is non-negative seconds.
+C<on_handoff> enables generic HTTP1 101 Upgrade and successful CONNECT
+handoff for non-WebSocket protocols. It runs after HTTP accepts the
+switch response into the existing write queue and receives
+C<($tx, $request, $response, $transport)>. Return a successor protocol
+object implementing C<input>, C<input_eof>, C<transport_error>
+and C<resume_output>. The Linux::Event stream transitions in place;
+any same-read native input tail is preserved without duplication.
+The successor owns the socket after handoff. WebSocket handshakes take
+precedence when both callbacks are enabled. H2/H3 generic CONNECT is
+not yet supported by this callback.
+
 C<http2 =E<gt> 1> enables optional Unblock::HTTP2 (at least 0.12). Server
 HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>.
 A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains

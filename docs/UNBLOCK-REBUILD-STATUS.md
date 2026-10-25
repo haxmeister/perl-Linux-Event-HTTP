@@ -17,6 +17,46 @@ Stage F remains unimplemented. See the explicit H3-only/wildcard limitations bel
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
+## Stage E generic HTTP1 handoff and H3 completion diagnosis - 2026-10-25
+
+Authorized upper Unblock::HTTP feature-branch commits:
+- ba73dfd0f731620763ec3a0ba62c5d1262650ddf:
+  framework-neutral Server on_handoff; HTTP1 101 Upgrade and successful
+  CONNECT hand the same transport to a generic input consumer.
+- a850460a253937735f8cfe763a4afd3bf43ec147:
+  generic Client request(on_handoff => ...) for strict HTTP1;
+  detaches upgraded socket from the upper Client's connection pool.
+- Upper CI 40151043666 and 40151346692 both PASS Perl 5.20/5.44.
+
+Linux::Event::HTTP uses its already verified native HTTP1 INPUT_SWITCH
+and transition_to() class reblessing to deliver a same-read post-switch
+tail exactly once, preserving socket/TLS and queued writes. No parser or
+native ABI change was needed. t/rebuild/104-generic-handoff.t verifies
+both 101 Upgrade and 2xx CONNECT; t/rebuild/105-generic-client.t
+verifies public Client Upgrade, data exchange, pool transfer, later
+ordinary HTTP and complete teardown. Both pass native and Perl input
+on the 5.44 lane of CI 40151423807; six ordinary Perl lanes completed
+successfully. Latest Perl H3-required lane remains blocked by 102.
+
+Precise independent H3 defect evidence: CI 40150770545 captured a
+ONE-SECOND, pre-timeout snapshot of the real H3 Client Transaction:
+state=active, callback_depth=0, response.is_complete=1,
+incoming response reader.is_complete=1,
+request writer.is_complete=1, output_finished=1,
+stream_lifecycle.closed_seen=1, WebSocket Close exchange complete=1.
+Yet Client on_finish does not run; timeout cancels the stream at 5 sec.
+This is an HTTP3 lifecycle completion recheck defect after all
+completion prerequisites became true. Unblock::HTTP3 is READ-ONLY under
+the current authorization. Do NOT add a private-engine method call to
+Linux::Event::HTTP, and do NOT weaken or disable t/rebuild/102.
+Ask for explicit authorization before fixing Unblock::HTTP3 source in
+its own feature branch. No main, tags, releases or version changes.
+
+Generic H2/H3 non-WebSocket stream-local Extended CONNECT and a
+targeted TLS HTTP1 same-read Upgrade remain unfinished. Stage B HTTP1
+throughput gate and Stage C h2spec parity failures remain OPEN.
+Stage F cleanup remains deferred in the approved plan.
+
 ## Stage E WebSocket implementation and verified boundary — 2026-10-24 local
 
 Current tested implementation: dd902cc1015993b51ceed347110f76a5a3a88a59
