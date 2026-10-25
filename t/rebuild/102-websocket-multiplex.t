@@ -34,7 +34,7 @@ for my $version ('2', '3') {
         my $loop = Linux::Event::Loop->new;
         my $native = $ENV{REBUILD_NATIVE_INPUT} // 1;
         my ($ws_open, $ws_message, $ws_finish, $normal, $http_finish, $http_body);
-        my (@errors, @ws_transactions);
+        my (@errors, @ws_transactions, $server_ws, $client_ws);
         my $policy = $version eq '2' ? 'http2' : 'http3';
         my $server = Linux::Event::HTTP::Server->new(
             loop => $loop, native_input => $native,
@@ -74,6 +74,7 @@ for my $version ('2', '3') {
             backend => 'perl', timeout => 5,
             on_open => sub ($ws, $tx) {
                 ++$ws_open;
+                $client_ws = $ws;
                 $ws->send_text('hello');
             },
             on_message => sub ($ws, $bytes, $type) {
@@ -109,6 +110,21 @@ for my $version ('2', '3') {
         );
         $loop->run;
         $guard->cancel;
+        if (@errors) {
+            for my $label (['client', $client_ws], ['server', $server_ws]) {
+                my ($name, $ws) = @$label;
+                diag("$name websocket absent"), next unless $ws;
+                diag("$name ws: sent=" . $ws->close_sent
+                    . " received=" . $ws->close_received
+                    . " complete=" . $ws->close_complete
+                    . " closed=" . $ws->is_closed);
+            }
+            diag("client operation: " . $ws_op->state
+                . " tx: " . ($ws_op->transaction ? $ws_op->transaction->state : 'none'));
+            diag("server tx: " . (@ws_transactions
+                ? $ws_transactions[0]->state : 'none'));
+            diag("pool active: " . $client->pool_stats->{active});
+        }
         is_deeply(\@errors, [], 'no protocol error');
         is($ws_open, 1, 'one WebSocket opened');
         is_deeply($ws_message, ['echo:hello', 'text'], 'actual WebSocket echo');
