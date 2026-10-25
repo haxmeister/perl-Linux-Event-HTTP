@@ -26,8 +26,10 @@ t/57-bodyless-completion.t checks pipelined GET/GET/POST canonical
 lifecycle and one terminal notification per transaction. Full
 HTTP1 standalone cross-platform regression source CI 40155745915
 PASS on Ubuntu 5.16/latest, macOS/latest and Windows/5.40,
-and root all-seven-lane CI below PASS. Test-only commit CI 40156227917
-must be checked separately for final cross-platform results.
+and root all-seven-lane CI below PASS. Test-only commit CI 40156227917 PASSED all four standalone
+jobs: Linux Perl 5.16/latest, macOS latest, Windows Strawberry
+5.40. Framework examples CI 40156227919 PASSED both smoke jobs.
+Upstream HTTP1 Handoff.md is updated in e43dcd9cea917f194a3d98eb9d648e0e4fb1db2e.
 
 Focused NYTProf hot spots from root CI 40155412311:
 Server::_drive 7.97%, Server::_transaction_respond 7.14%,

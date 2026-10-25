@@ -43,7 +43,10 @@ STAGE B CURRENT CHECKPOINT (2026-10-25):
 - Unblock::HTTP1 feature/linux-event-integration core 4d19f59:
   bodyless Uniform request was already complete+frozen from trusted
   head; skip redundant receive-body finishing/mark_complete/freeze.
-  Add explicit pipelined GET/GET/POST regression test in a90cfef.
+  Dedicated pipelined GET/GET/POST regression t/57 added in
+  a90cfef; standalone CI 40156227917 all 4 jobs PASS and
+  framework examples CI 40156227919 both PASS.
+  Upstream HTTP1 feature head e43dcd9 (handoff-only follow-up).
 - Root all-seven-lane CI 40155946839 PASS, implementation pin
   4d19f59; root feature branch has later docs-only checkpoint.
 - Same-run unprofiled engine A/B on two hosts shows 7.5–8% less
