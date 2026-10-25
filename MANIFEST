@@ -178,3 +178,4 @@ t/rebuild/97-http3-multiconnection.t
 t/rebuild/98-http3-credit-malformed.t
 t/rebuild/99-http3-timeout.t
 lib/Linux/Event/HTTP/_UpgradedStream.pm
+t/rebuild/100-websocket-h1.t
