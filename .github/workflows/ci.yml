@@ -38,6 +38,12 @@ jobs:
           ref: 06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14
           path: .ci-deps/http1-before
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        with:
+          repository: haxmeister/perl-Linux-Event-HTTP
+          ref: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
+          path: .ci-deps/http-baseline
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: haxmeister/perl-Unblock-HTTP
           ref: e9efa51ee0110227945628f3f85a3feedba90558
@@ -94,6 +100,18 @@ jobs:
               perl -I .ci-deps/http1-before/lib -Mblib bench/run-unblock-engine.pl --requests 10000
             else
               perl -Mblib bench/run-unblock-engine.pl --requests 10000
+            fi
+          done
+      - name: Stage B matched legacy/rebuild HTTP1 socket gate
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          (cd .ci-deps/http-baseline && perl Makefile.PL && make -j2)
+          for variant in legacy rebuild rebuild legacy; do
+            echo "Stage B same-host GET32 end-to-end: $variant"
+            if [ "$variant" = legacy ]; then
+              (cd .ci-deps/http-baseline && perl -Mblib bench/run-http-end-to-end.pl --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2)
+            else
+              perl -Mblib bench/run-unblock-end-to-end.pl --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2
             fi
           done
       - name: Stage B HTTP1 engine CPU hotspots (diagnostic)
