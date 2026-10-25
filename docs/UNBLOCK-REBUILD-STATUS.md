@@ -2,6 +2,14 @@
 
 ## Stage C h2spec fixture-timing isolation (2026-10-25 UTC)
 
+The first CI diagnostic run 40162725724 failed during tool
+installation, before starting h2spec: modern Go rejected the legacy
+upstream v2.6.0 module tag without a /v2 module path. The ordinary
+six Perl lanes passed; this is an infrastructure issue, not an HTTP2
+protocol result. The revised runner checks out the exact h2spec v2.6.0
+source commit 70ac2294010887f48b18e2d64f5cccd48421fad1 and
+builds it locally against its own go.mod. Results remain PENDING.
+
 The recorded 11 h2spec failures occur on the untouched legacy baseline,
 the rebuilt native bridge, and the rebuilt Perl input path. Many failures
 include an unexpected response DATA frame after a protocol error. The
