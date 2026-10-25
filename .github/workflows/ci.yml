@@ -55,7 +55,7 @@ jobs:
       - name: System dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libssl-dev
+          sudo apt-get install --yes libssl-dev libnghttp2-dev
       - name: HTTP1 dependencies
         run: |
           cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06' URI HTTP::CookieJar 'Uniform::HTTP::Auth@0.02'
