@@ -114,6 +114,18 @@ jobs:
               perl -Mblib bench/run-unblock-end-to-end.pl --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2
             fi
           done
+      - name: Stage B constructor versus engine cost decomposition
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          perl -Mblib bench/run-unblock-cost-breakdown.pl --iterations 12000 --rounds 3
+          for input in native perl native perl; do
+            echo "Stage B input bridge measured on same host: $input"
+            if [ "$input" = native ]; then
+              perl -Mblib bench/run-unblock-end-to-end.pl --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 1
+            else
+              perl -Mblib bench/run-unblock-end-to-end.pl --no-native-input --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 1
+            fi
+          done
       - name: Stage B HTTP1 engine CPU hotspots (diagnostic)
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
