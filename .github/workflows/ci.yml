@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: haxmeister/perl-Unblock-HTTP
-          ref: 735f73afaea271d1d3c7504fe1a5f51653876b63
+          ref: 348c9b24b9d3672ed27af5b2d434c288dde4ada9
           path: .ci-deps/unblock
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         if: matrix.perl == '5' && matrix.multi_thread == false
