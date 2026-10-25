@@ -16,7 +16,8 @@ sub on_data ($self, $bytes) {
 
 sub on_eof ($self) {
     my $successor = $self->{http_successor};
-    $successor->input_eof if $successor && $successor->want_read;
+    $successor->input_eof
+        if $successor && (!$successor->can('want_read') || $successor->want_read);
     return;
 }
 
@@ -36,7 +37,7 @@ sub on_error ($self, $error) {
 sub on_close ($self) {
     my $successor = delete $self->{http_successor};
     $successor->transport_error('Upgraded transport closed')
-        if $successor && !$successor->is_closed;
+        if $successor && (!$successor->can('is_closed') || !$successor->is_closed);
     if (my $server = $self->data->{server}) {
         $server->_closed($self);
     }
