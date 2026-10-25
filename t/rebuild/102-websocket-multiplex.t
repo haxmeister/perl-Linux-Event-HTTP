@@ -1,0 +1,142 @@
+use v5.36;
+use Test::More;
+use File::Temp qw(tempdir);
+use Linux::Event::Loop;
+use Linux::Event::Kernel::Timer;
+use Linux::Event::HTTP::Server;
+use Linux::Event::HTTP::Client;
+
+my $available = eval {
+    require Unblock::WebSocket::Handshake;
+    require Unblock::HTTP2;
+    Unblock::HTTP2->VERSION('0.12');
+    require Unblock::HTTP3;
+    Unblock::HTTP3->VERSION('0.13');
+    require Net::QUIC;
+    Net::QUIC->VERSION('0.06');
+    1;
+};
+die "WebSocket/H2/H3 required: $@" if !$available && $ENV{REBUILD_REQUIRE_WEBSOCKET};
+plan skip_all => 'optional WebSocket, HTTP2, HTTP3 and QUIC required'
+    unless $available;
+plan skip_all => 'openssl required' unless -x '/usr/bin/openssl';
+
+my $dir = tempdir(CLEANUP => 1);
+my ($cert, $key) = ("$dir/cert.pem", "$dir/key.pem");
+system('/usr/bin/openssl', 'req', '-x509', '-newkey', 'ec',
+    '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
+    '-keyout', $key, '-out', $cert, '-subj', '/CN=localhost',
+    '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
+    '-days', '1') == 0 or die 'certificate generation failed';
+
+for my $version ('2', '3') {
+    subtest "HTTP$version WebSocket and ordinary request share connection" => sub {
+        my $loop = Linux::Event::Loop->new;
+        my $native = $ENV{REBUILD_NATIVE_INPUT} // 1;
+        my ($ws_open, $ws_message, $ws_finish, $normal, $http_finish, $http_body);
+        my (@errors, @ws_transactions);
+        my $policy = $version eq '2' ? 'http2' : 'http3';
+        my $server = Linux::Event::HTTP::Server->new(
+            loop => $loop, native_input => $native,
+            host => '127.0.0.1', port => 0,
+            http1 => $version eq '3' ? 1 : 0,
+            $policy => { websocket => 1 },
+            tls => { cert_file => $cert, key_file => $key },
+            on_request => sub ($tx, $req) {
+                ++$normal;
+                $tx->respond(status => 200, body => 'ordinary-ok');
+            },
+            on_websocket => sub ($tx, $req) {
+                push @ws_transactions, $tx;
+                return {
+                    backend => 'perl',
+                    on_message => sub ($ws, $bytes, $type) {
+                        $ws->send_text("echo:$bytes");
+                    },
+                };
+            },
+        );
+        my $client = Linux::Event::HTTP::Client->new(
+            loop => $loop, native_input => $native,
+            http1 => 0,
+            $policy => { websocket => 1 },
+            tls => { ca_file => $cert },
+            ($version eq '3' ? (quic => { ca_file => $cert }) : ()),
+            max_connections_per_origin => 1,
+        );
+        my $host = $version eq '2' ? 'localhost' : '127.0.0.1';
+        my $origin = "$host:" . $server->port;
+        my $finish_if_done = sub {
+            $loop->stop if $ws_finish && $http_finish;
+        };
+        my $ws_op = $client->connect_websocket(
+            url => "wss://$origin/ws", http_version => $version,
+            backend => 'perl', timeout => 5,
+            on_open => sub ($ws, $tx) {
+                ++$ws_open;
+                $ws->send_text('hello');
+            },
+            on_message => sub ($ws, $bytes, $type) {
+                $ws_message = [$bytes, $type];
+                $ws->close;
+            },
+            on_error => sub ($obj, $error) {
+                push @errors, "WebSocket: $error";
+                $loop->stop;
+            },
+            on_finish => sub {
+                ++$ws_finish;
+                $finish_if_done->();
+            },
+        );
+        my $http_op = $client->get("https://$origin/ordinary",
+            http_version => $version, timeout => 5,
+            on_response => sub ($tx, $res) { $http_body = $res->body },
+            on_error => sub ($obj, $error) {
+                push @errors, "HTTP: $error";
+                $loop->stop;
+            },
+            on_finish => sub {
+                ++$http_finish;
+                $finish_if_done->();
+            },
+        );
+        my $guard = Linux::Event::Kernel::Timer->new(
+            loop => $loop, after => 8,
+            on_timer => sub { push @errors, 'multiplexed timeout'; $loop->stop },
+        );
+        $loop->run;
+        $guard->cancel;
+        is_deeply(\@errors, [], 'no protocol error');
+        is($ws_open, 1, 'one WebSocket opened');
+        is_deeply($ws_message, ['echo:hello', 'text'], 'actual WebSocket echo');
+        is($ws_finish, 1, 'WebSocket stream finished exactly once');
+        is($normal, 1, 'only ordinary HTTP enters on_request');
+        is($http_finish, 1, 'ordinary HTTP finished once');
+        is($http_op->state, 'complete', 'ordinary HTTP operation complete');
+        is($http_body, 'ordinary-ok', 'HTTP body preserved');
+        is(scalar @ws_transactions, 1, 'one server extended CONNECT');
+        ok($ws_op->websocket, 'WebSocket session created');
+        is($server->connection_count, 1, 'one shared transport connection');
+        is($client->pool_stats->{connections}, 1, 'client reuses one connection');
+        is($client->pool_stats->{active}, 0, 'all stream credits returned');
+
+        $client->shutdown;
+        my $done = 0;
+        $server->shutdown(grace => 0, on_complete => sub {
+            ++$done; $loop->stop;
+        });
+        if (!$done) {
+            my $closing_guard = Linux::Event::Kernel::Timer->new(
+                loop => $loop, after => 5,
+                on_timer => sub { push @errors, 'shutdown timeout'; $loop->stop },
+            );
+            $loop->run;
+            $closing_guard->cancel;
+        }
+        is($done, 1, 'server shutdown completes once');
+        is($server->connection_count, 0, 'multiplexed session fully released');
+        is($loop->count, 0, 'no socket or timer watchers');
+    };
+}
+done_testing;
