@@ -1,0 +1,117 @@
+name: HTTP2 standalone versus LinuxEvent h2spec parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/unblock-http-rebuild]
+    paths:
+      - tools/http2-h2spec-standalone.pl
+      - tools/http2-h2spec-server.pl
+      - tools/h2spec-compare.py
+      - .github/workflows/h2spec-parity.yml
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Unblock-HTTP1
+          ref: 4d19f59196481ae4460207c5b22c5125fdbfe186
+          path: .ci-deps/http1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Unblock-HTTP
+          ref: e9efa51ee0110227945628f3f85a3feedba90558
+          path: .ci-deps/unblock
+      - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
+        with:
+          perl-version: '5'
+          multi-thread: false
+      - name: Install dependencies and build root adapter
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev libnghttp2-dev
+          cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06' IO::Socket::SSL 'Unblock::HTTP2@0.12'
+          cpanm --notest ./.ci-deps/http1
+          cpanm --notest ./.ci-deps/unblock
+          perl -MUnblock::HTTP2 -e 'die "wrong HTTP2 version" unless $Unblock::HTTP2::VERSION eq "0.12"'
+          perl Makefile.PL
+          make -j2
+          REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t
+      - name: Compare exact h2spec cases (no engine changes)
+        run: |
+          set -euo pipefail
+          export OPENSSL_CONF=/etc/ssl/openssl.cnf
+          test -r "$OPENSSL_CONF"
+          REPORTS="$RUNNER_TEMP/h2spec-parity"
+          mkdir -p "$REPORTS"
+          git clone --quiet --depth 1 --branch v2.6.0 https://github.com/summerwind/h2spec.git "$RUNNER_TEMP/h2spec-src"
+          test "$(git -C "$RUNNER_TEMP/h2spec-src" rev-parse HEAD)" = 70ac2294010887f48b18e2d64f5cccd48421fad1
+          (cd "$RUNNER_TEMP/h2spec-src" && go build -o "$RUNNER_TEMP/h2spec" ./cmd/h2spec)
+          /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$REPORTS/key.pem" -out "$REPORTS/cert.pem" \
+            -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            -days 1 > "$REPORTS/openssl.log" 2>&1
+          case_num=0
+          for variant in standalone rebuild-native rebuild-perl standalone-repeat; do
+            case_num=$((case_num + 1))
+            port=$((19400 + case_num))
+            if [[ "$variant" == standalone* ]]; then
+              perl tools/http2-h2spec-standalone.pl \
+                --port "$port" --cert "$REPORTS/cert.pem" --key "$REPORTS/key.pem" \
+                --response-mode headers > "$REPORTS/$variant.server.log" 2>&1 &
+            else
+              flag=''
+              if [[ "$variant" == rebuild-perl ]]; then flag='--no-native-input'; fi
+              perl -Mblib tools/http2-h2spec-server.pl \
+                --port "$port" --cert "$REPORTS/cert.pem" --key "$REPORTS/key.pem" \
+                --response-mode headers $flag > "$REPORTS/$variant.server.log" 2>&1 &
+            fi
+            pid=$!
+            trap 'kill "$pid" 2>/dev/null || true' EXIT
+            ready=0
+            for i in $(seq 1 100); do
+              if grep -q '^READY ' "$REPORTS/$variant.server.log"; then ready=1; break; fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "Fixture exited before READY: $variant"
+                cat "$REPORTS/$variant.server.log"
+                exit 1
+              fi
+              sleep 0.1
+            done
+            if [[ "$ready" != 1 ]]; then
+              echo "Fixture startup timeout: $variant"
+              cat "$REPORTS/$variant.server.log"
+              exit 1
+            fi
+            result=0
+            timeout 180s "$RUNNER_TEMP/h2spec" -t -k -h 127.0.0.1 -p "$port" \
+              -j "$REPORTS/$variant.xml" > "$REPORTS/$variant.h2spec.log" 2>&1 || result=$?
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            trap - EXIT
+            if [[ "$result" -gt 1 || ! -s "$REPORTS/$variant.xml" ]]; then
+              echo "h2spec infrastructure failure: $variant exit=$result"
+              tail -100 "$REPORTS/$variant.h2spec.log"
+              tail -100 "$REPORTS/$variant.server.log"
+              exit 1
+            fi
+            echo "h2spec completed $variant; test failures are compared below"
+          done
+          python3 tools/h2spec-compare.py "$REPORTS" "$REPORTS/comparison.json"
+          echo "Protocol errors are recorded, not declared passing."
+      - name: Preserve JUnit, fixture and comparison reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h2spec-standalone-versus-linuxevent
+          path: ${{ runner.temp }}/h2spec-parity/
+          if-no-files-found: warn
+          retention-days: 14

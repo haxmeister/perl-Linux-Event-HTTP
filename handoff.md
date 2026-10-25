@@ -1,5 +1,28 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Stage C standalone-versus-adapter h2spec A/B (2026-10-25 UTC)
+
+User explicitly requested a same-run standalone Unblock::HTTP2 versus
+rebuilt Linux::Event::HTTP comparison to avoid attributing failures
+to the wrong layer. Added root-repository diagnostic-only files:
+- tools/http2-h2spec-standalone.pl: independent blocking
+  IO::Socket::INET + IO::Socket::SSL transport, direct use of
+  Unblock::HTTP2::Server input/output/want_write. No Linux::Event.
+- tools/h2spec-compare.py: complete 146-case JUnit diff including
+  individual case status, JSON output, incomplete-run checks.
+- .github/workflows/h2spec-parity.yml: dedicated identical-runner
+  TLS+h2spec 2.6.0 comparisons in this order: standalone,
+  LinuxEvent native, LinuxEvent Perl input, standalone repeated.
+  Same CPU, pinned current Unblock::HTTP2 0.12, same cert, h2spec
+  source, status/body, initial request callback, and protocol tests.
+  The repeated standalone run bounds time-dependent variability.
+  Artifact preservation for failed-case analysis.
+No changes to Unblock::HTTP2 or other upstream production.
+Results PENDING. Even when the diagnostic runs, any h2spec failures
+remain conformance failures; CI success means the measurements completed.
+Investigate the exact set of differences, not just aggregate counts.
+
+
 ## Historical HTTP/2 h2spec provenance correction (2026-10-25 UTC)
 
 IMPORTANT: Before blaming Unblock::HTTP2 for the current h2spec failures,
