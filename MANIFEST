@@ -172,3 +172,4 @@ t/rebuild/60-quic-socket.t
 t/rebuild/70-http3-loopback.t
 t/rebuild/80-http3-client.t
 t/rebuild/90-http3-server.t
+t/rebuild/95-http3-errors.t

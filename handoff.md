@@ -210,6 +210,15 @@ Stage C initial integration:
   shutdown completion plus watcher release.
 - Pending CI verification; do not claim public H3 Server is green yet.
 
+## Stage D H3 identity and cancellation regression
+
+- Added t/rebuild/95-http3-errors.t to exercise mismatched hostname
+  verification on the public H3 Client against a real QUIC/TLS server,
+  plus immediate queued cancellation before the UDP connection is ready.
+- Checks no unauthorized HTTP admission, one terminal callback, and
+  absence of socket/timer watcher leaks after cleanup.
+- Required test runs in the latest Perl H3 CI lane. Verification pending.
+
 ## Verified
 
 - Current root: 5 files / 28 subtests on Perl 5.38.2 threaded and 5.44.0
