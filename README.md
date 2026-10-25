@@ -140,8 +140,10 @@ HTTP/2 native input uses its own checked ABI table; output uses the ordinary
 attached host, respecting congestion until on_drain. Malformed protocol input
 closes the affected connection without unwinding the reactor.
 
-Current requirements: Linux, Perl 5.36+, Linux::Event 0.117,
-Unblock::HTTP 0.02, Unblock::HTTP1 0.12 and Uniform::HTTP 0.06.
+Current direct runtime requirements: Linux, Perl 5.36+, Linux::Event 0.117,
+Unblock::HTTP 0.02 and Uniform::HTTP 0.06. Unblock::HTTP requires
+Unblock::HTTP1 and URI. HTTP::CookieJar and Uniform::HTTP::Auth are no
+longer direct dependencies of this Linux integration layer.
 This development checkpoint additionally needs the upstream feature commits
 listed in the [status document](docs/UNBLOCK-REBUILD-STATUS.md) for admission
 callbacks and server drain. Their version numbers are deliberately unchanged;

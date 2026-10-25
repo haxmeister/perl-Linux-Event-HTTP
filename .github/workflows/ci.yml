@@ -70,7 +70,7 @@ jobs:
           sudo apt-get install --yes libssl-dev libnghttp2-dev
       - name: HTTP1 dependencies
         run: |
-          cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06' URI HTTP::CookieJar 'Uniform::HTTP::Auth@0.02'
+          cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06'
           # Development feature commits; versions are deliberately unchanged.
           cpanm --notest ./.ci-deps/http1
           cpanm --notest ./.ci-deps/unblock

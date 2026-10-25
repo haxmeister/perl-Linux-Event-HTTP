@@ -1,5 +1,22 @@
 Revision history for Linux-Event-HTTP
 
+UNRELEASED - feature/unblock-http-rebuild (NOT FOR CPAN)
+
+    - Reconstruct Linux::Event::HTTP as native Linux transport integration
+      for Unblock::HTTP, exposing Unblock transactions and Uniform messages.
+    - Support HTTP/1, optional HTTP/2 (TLS ALPN), optional HTTP/3 (QUIC/TLS),
+      WebSocket transitions and generic Upgrade/Extended CONNECT handoff.
+    - Retain the checked XS borrowed-input ABI adapter for HTTP/1 and HTTP/2.
+    - Remove the previous private parsers, HTTP/2 executors, public wrappers,
+      obsolete tests and benchmark executables. No compatibility API exists.
+    - Remove unused top-level CookieJar, Auth and URI direct prerequisites;
+      protocol-engine dependencies are owned by Unblock and remain required
+      transitively where applicable.
+    - Verify reconstructed distribution packaging with make disttest.
+    - HTTP/1 legacy throughput parity and 11 h2spec failures remain open;
+      this branch is not a release candidate.
+
+
 0.003  2026-09-26
 
     - Require Linux::Event 0.117 for the current raw-consumer, transition,

@@ -1,5 +1,28 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Stage F dependency and executable cleanup (2026-10-25 UTC)
+
+The post-reconstruction source audit found 14 executable benchmark/fixture
+files that still referenced deleted HTTP/1 parser, old Server::Connection,
+Client::Connection, Request and Response implementations. They were
+removed from this feature branch and MANIFEST; historical scripts remain
+unchanged on main and the benchmark JSON evidence is retained. The five
+Unblock-based benchmark executables remain in the distribution.
+
+Root Makefile.PL no longer declares direct HTTP::CookieJar,
+Uniform::HTTP::Auth or URI runtime prerequisites: the rebuilt Linux
+adapter imports none of them, and Unblock::HTTP already requires URI
+and HTTP1 as appropriate. CI setup no longer installs these extra
+modules explicitly; it will exercise the metadata with only the
+remaining direct prerequisites and feature-branch Unblock installs.
+Unreleased Changes and README were brought into line with the rebuild.
+
+**Verification pending**: seven-lane root CI, optional H2/H3 and
+WebSocket/generic CONNECT, plus latest nonthreaded make disttest.
+Stage B measured throughput and Stage C h2spec failures remain OPEN.
+No upstream changes, main edits, version bump, tag or release.
+
+
 ## Stage F verified cleanup and packaging gate - 2026-10-25 UTC
 
 Root source removal: 51dc44d01f84848346a16bad9d6c1a0bd2541c8f.

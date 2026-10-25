@@ -6,19 +6,6 @@ MANIFEST
 Makefile.PL
 README.md
 SECURITY.md
-bench/run-http-comparison.pl
-bench/run-http-client-receive.pl
-bench/run-http-end-to-end.pl
-bench/run-http-final-response.pl
-bench/run-http-transaction-ladder.pl
-bench/servers/aiohttp-http.py
-bench/servers/feersum-http.pl
-bench/servers/go-http.go
-bench/servers/libh2o-http.c
-bench/servers/linuxevent-http.pl
-bench/servers/mojo-http.pl
-bench/servers/node-http.js
-bench/servers/twiggy-http.pl
 docs/ARCHITECTURE.md
 docs/BENCHMARKING.md
 docs/HTTP2-ARCHITECTURE.md
@@ -26,7 +13,6 @@ docs/CONNECT.md
 lib/Linux/Event/HTTP.pm
 lib/Linux/Event/HTTP/Client.pm
 lib/Linux/Event/HTTP/Server.pm
-bench/servers/linuxevent-production-stage.pl
 tools/http2-h2spec-server.pl
 bench/results/unblock-stage-a/baseline-current-get16k.json
 bench/results/unblock-stage-a/baseline-current-get32.json
@@ -100,6 +86,5 @@ t/rebuild/106-websocket-tls.t
 docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md
 t/rebuild/107-generic-multiplex.t
 bench/run-unblock-cost-breakdown.pl
-
 bench/results/unblock-stage-b/20261025-cost-boundary.json
 xsbridge/stream_consumer_abi.h

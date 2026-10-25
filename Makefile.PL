@@ -41,12 +41,9 @@ WriteMakefile(
         'Test::More' => 0,
     },
     PREREQ_PM => {
-        'HTTP::CookieJar'     => '0.014',
         'Linux::Event'        => '0.117',
         'Unblock::HTTP'       => '0.02',
         'Uniform::HTTP'       => '0.06',
-        'Uniform::HTTP::Auth' => '0.02',
-        'URI'                 => 0,
     },
     META_MERGE => {
         optional_features => {
