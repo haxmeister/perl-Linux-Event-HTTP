@@ -12,8 +12,7 @@ gate has NOT passed. Stage C initial integration is implemented; focused Stage C
 conformance remains open. Stage D's planned real QUIC/TLS loopback, timeout,
 credit recovery, cancellation and multi-connection gate is verified for the
 supported concrete-address, combined TCP/UDP Server API. Stage E's core H1/H2/H3 WebSocket and generic handoff contract is
-verified in native/Perl input and real TLS/QUIC integration; final
-supplemental rejection regression is in CI.
+verified in native/Perl input and real TLS/QUIC integration; supplemental rejected-CONNECT fallthrough is verified.
 Stage F remains unimplemented. See the explicit H3-only/wildcard limitations below. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
@@ -44,8 +43,12 @@ input modes with real H2 TLS and H3 QUIC:
 - existing H3 stream-credit/malformed UDP and H2/H3 WebSocket tests
   also PASS.
 
-Extra assertion that 403-rejected CONNECT cannot fall through to
-ordinary on_request was added in root 1590a770 (follow-up CI pending).
+Supplemental rejection-fallthrough assertion root 1590a770b8ff8b4a7ab6f837afac75559a3ff386
+VERIFIED in CI 40154733648: all SEVEN Perl lanes PASS,
+including latest nonthreaded t/rebuild/107 in both native and
+Perl input. No rejected H2/H3 CONNECT enters on_request.
+This closes the core Stage E regression gate.
+
 This is a focused Stage E stream contract; it does not claim that
 HTTP2 or HTTP3 protocol conformance gates have passed.
 

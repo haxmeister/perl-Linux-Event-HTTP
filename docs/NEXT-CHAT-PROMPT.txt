@@ -2,10 +2,10 @@
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Feature branch: feature/unblock-http-rebuild
-Last fully VERIFIED code checkpoint: cc250e7a33a76e205c3f2066e3254956f1a94549
-Full CI 40154550676: PASS all 7 Perl jobs, including required
-real H2/H3 generic CONNECT t/rebuild/107 in BOTH native/Perl modes.
-Additional rejection-fallthrough assertion root 1590a770 has pending CI.
+Last fully VERIFIED implementation: 1590a770b8ff8b4a7ab6f837afac75559a3ff386
+Full CI 40154733648: PASS all 7 Perl jobs, including real
+H2/H3 generic CONNECT t/rebuild/107 in BOTH native/Perl modes.
+Rejected CONNECT does not enter ordinary on_request.
 Inspect current branch HEAD and latest workflow before proceeding.
 Main untouched: c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
 
@@ -40,17 +40,15 @@ Stage E CORE gate verified:
   dependency source read-only. Feature-branch pushes authorized.
 
 NEXT under original approved plan:
-1. Verify latest supplemental rejection test CI. Update checkpoints
-   without weakening strict tests.
-2. Return to Stage B HTTP1 throughput gate. Investigate concrete
+1. Return to Stage B HTTP1 throughput gate. Investigate concrete
    end-to-end overhead against retained baseline, make targeted
    fixes, verify before/after with equal workloads (avoid broad
    profiler loops without specific hypotheses).
-3. Address Stage C h2spec: 146 total / 134 pass / 1 skip / 11 failures,
+2. Address Stage C h2spec: 146 total / 134 pass / 1 skip / 11 failures,
    identical to old baseline but NOT a passed protocol conformance
    gate. Prefer scoped engine fixes, request authorization for
    read-only Unblock::HTTP2 before changing it.
-4. Stage F cleanup only when required replacement coverage and gates
+3. Stage F cleanup only when required replacement coverage and gates
    are adequate, then distribution docs/tests/disttest. No release.
 
 H3-only and wildcard UDP Servers remain unsupported; do not advertise.
