@@ -2,7 +2,7 @@
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Feature branch: feature/unblock-http-rebuild
-Last fully VERIFIED implementation: 1590a770b8ff8b4a7ab6f837afac75559a3ff386
+Last Stage E verified implementation: 1590a770b8ff8b4a7ab6f837afac75559a3ff386
 Full CI 40154733648: PASS all 7 Perl jobs, including real
 H2/H3 generic CONNECT t/rebuild/107 in BOTH native/Perl modes.
 Rejected CONNECT does not enter ordinary on_request.
@@ -38,6 +38,25 @@ Stage E CORE gate verified:
 - No main changes, merges, tags, version bumps, releases.
 - Linux::Event core, Net::QUIC, Uniform::HTTP, HTTP2, WebSocket
   dependency source read-only. Feature-branch pushes authorized.
+
+STAGE B CURRENT CHECKPOINT (2026-10-25):
+- Unblock::HTTP1 feature/linux-event-integration core 4d19f59:
+  bodyless Uniform request was already complete+frozen from trusted
+  head; skip redundant receive-body finishing/mark_complete/freeze.
+  Add explicit pipelined GET/GET/POST regression test in a90cfef.
+- Root all-seven-lane CI 40155946839 PASS, implementation pin
+  4d19f59; root feature branch has later docs-only checkpoint.
+- Same-run unprofiled engine A/B on two hosts shows 7.5–8% less
+  per-request CPU for this particular bodyless workload.
+- Matched real TCP GET32 100 sockets/pipeline1/10000 measured:
+  legacy main 49,591/49,085 req/s versus rebuilt 24,906/24,602.
+  This is ~50% throughput parity; Stage B still FAILS release gate.
+- Raw values: bench/results/unblock-stage-b/20261025-bodyless.json.
+- NYTProf 40155412311 top exclusive hotspots request-drive,
+  respond, Uniform response construction/body/status, finalization.
+- Next isolate constructor versus transaction/response planning in a
+  single precisely matched benchmark, retaining Uniform validation.
+- No framework/API redesign or Linux::Event core changes.
 
 NEXT under original approved plan:
 1. Return to Stage B HTTP1 throughput gate. Investigate concrete

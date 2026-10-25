@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-25",
+  "workload": {
+    "client": "100 persistent TCP sockets",
+    "method": "GET",
+    "response_bytes": 32,
+    "measured_requests": 10000,
+    "warmup_requests": 1000,
+    "pipeline": 1,
+    "repeats_per_run": 2,
+    "shared_runner": true
+  },
+  "source": {
+    "http1_before": "06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14",
+    "http1_after": "4d19f59196481ae4460207c5b22c5125fdbfe186",
+    "legacy_main": "c0bf714e0f08f9031684e2eb4fd70dea3c68449f",
+    "root_ci": "https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40155946839",
+    "engine_first_ci": "https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40155785500"
+  },
+  "engine_cpu_us_per_iteration": {
+    "ci_40155785500": {
+      "before": [
+        24.39,
+        23.01
+      ],
+      "after": [
+        22.02,
+        21.606
+      ]
+    },
+    "ci_40155946839": {
+      "before": [
+        35.912,
+        33.475
+      ],
+      "after": [
+        31.665,
+        32.547
+      ]
+    }
+  },
+  "socket_measured_run_medians": [
+    {
+      "variant": "legacy",
+      "median_requests_per_second": 49591.4,
+      "server_cpu_us_per_request": 22.013
+    },
+    {
+      "variant": "rebuild",
+      "median_requests_per_second": 24906.2,
+      "server_cpu_us_per_request": 41.022
+    },
+    {
+      "variant": "rebuild",
+      "median_requests_per_second": 24601.5,
+      "server_cpu_us_per_request": 41.572
+    },
+    {
+      "variant": "legacy",
+      "median_requests_per_second": 49085,
+      "server_cpu_us_per_request": 22.197
+    }
+  ],
+  "conclusion": "Engine CPU reduced about 7.5-8% for bodyless workload; rebuilt end-to-end TCP still only about half legacy throughput. Stage B release gate remains open."
+}

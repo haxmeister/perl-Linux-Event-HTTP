@@ -9,6 +9,72 @@ Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
 Detailed evidence: docs/UNBLOCK-REBUILD-STATUS.md
 
+## Stage B measured no-body HTTP1 fast-path experiment — 2026-10-25
+
+Feature-branch HTTP1 change:
+haxmeister/perl-Unblock-HTTP1 feature/linux-event-integration
+implementation 4d19f59196481ae4460207c5b22c5125fdbfe186;
+dedicated test and MANIFEST follow-up
+a90cfef10ca7eccde941493eaf9ffa520309f271.
+Unmodified HTTP1 main remains 826fb5733daac62d9f5b51538dffbe1dc189c6d9.
+Change: skip _finish_receive() and mark_complete()/freeze() only for
+body_mode='none' validated requests. Both portable FastPath and native
+C trusted head builders already construct those Requests complete,
+immutable and with an empty buffered body. Record receive_done on the
+Transaction. The general body/POST/streamed path is unchanged.
+t/57-bodyless-completion.t checks pipelined GET/GET/POST canonical
+lifecycle and one terminal notification per transaction. Full
+HTTP1 standalone cross-platform regression source CI 40155745915
+PASS on Ubuntu 5.16/latest, macOS/latest and Windows/5.40,
+and root all-seven-lane CI below PASS. Test-only commit CI 40156227917
+must be checked separately for final cross-platform results.
+
+Focused NYTProf hot spots from root CI 40155412311:
+Server::_drive 7.97%, Server::_transaction_respond 7.14%,
+Uniform::HTTP::Response::new 6.82%, Uniform::HTTP::Message::body
+5.55%, Message::new 5.29%, Server::_complete_request 4.55%,
+Response::status 4.12%, Message::body_is_mutable 2.84% of the
+profiled inclusive multi-case script's EXCLUSIVE ticks.
+The profiler itself distorts absolute CPU measurements; these
+percentages prioritize hypotheses, not expected speedups.
+
+Paired UNPROFILED socket-free engine diagnostic on SAME CI job:
+- CI 40155785500 before 24.390/23.010 us per full GET/response;
+  after 22.020/21.606 us (about 8% lower median engine CPU).
+- CI 40155946839 before 35.912/33.475 us; after
+  31.665/32.547 us (about 7.5% lower median engine CPU).
+No body constructor or transport change in either A/B. Variations
+between runners forbid cross-run absolute performance comparisons.
+
+Original-baseline-versus-rebuild SAME HOST real TCP benchmark in root
+CI 40155946839 (all SEVEN Perl lanes PASS): Linux::Event 0.117,
+Perl 5.44 latest nonthreaded, 100 persistent sockets, pipelining 1,
+10,000 measured GET->32 B after 1,000 warmup, two repeats per
+variant, measurement order legacy/rebuild/rebuild/legacy:
+- Legacy main c0bf714: run medians 49,591.4 and 49,085.0 req/s;
+  22.013 and 22.197 server CPU us/req.
+- Rebuilt feature: run medians 24,906.2 and 24,601.5 req/s;
+  41.022 and 41.572 server CPU us/req.
+Rebuilt throughput is ~50% of the untouched legacy baseline;
+the Stage B PERFORMANCE GATE REMAINS OPEN.
+This is more representative than socket-free CPU but still a
+shared-host diagnostic, not a production capacity forecast.
+
+Reproduction/data: bench/results/unblock-stage-b/20261025-bodyless.json
+and .github/workflows/ci.yml (latest Perl benchmark steps).
+Current root latest run: 40155946839 all seven Perl lanes PASS,
+including both H1 input paths, H2/H3 real transports, H3 stream
+credit, WebSocket and generic CONNECT handoff.
+
+Next Stage B work should test a single specific remaining hypothesis:
+isolate per-response Uniform constructor cost versus parser/transaction
+state management with equivalent validation. Do NOT skip Uniform
+canonical message checks, invent cache semantics, or change
+Linux::Event core to paper over HTTP-layer overhead. Compare actual
+end-to-end before/after on the same runner. Stage C h2spec still
+11 failures (baseline parity, not conformance); Stage F deferred.
+No main changes, merges, tags, version bumps or releases.
+
 ## Stage E generic multiplexed CONNECT verified — 2026-10-25
 
 Upper Unblock::HTTP feature/linux-event-integration source:
