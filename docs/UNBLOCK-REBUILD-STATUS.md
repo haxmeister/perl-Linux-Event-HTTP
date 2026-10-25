@@ -1,5 +1,67 @@
 # Reconstruction implementation checkpoint
 
+## Stage C VERIFIED standalone engine vs LinuxEvent same-run h2spec (2026-10-25 UTC)
+
+This is the requested attribution A/B. A dedicated diagnostic workflow
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40166951263
+on feature source 45d397f63adc8e51c7b8304ea9d5ccccb3a276e3
+PASSED. No upstream sources modified.
+
+All four tests used h2spec v2.6.0 source pin
+70ac2294010887f48b18e2d64f5cccd48421fad1, Unblock::HTTP2
+0.12, same CI runner, same TLS certificate, same on-headers
+application response (200, content-type text/plain, body "ok\n").
+The standalone target uses IO::Socket::INET + IO::Socket::SSL and
+Unblock::HTTP2::Server public input/output methods, NO Linux::Event.
+The rebuilt native/Perl targets use the normal Linux::Event::HTTP
+server adapter and exactly the same Unblock::HTTP2 version. The
+standalone repeated test follows them to check timing drift.
+Full individual JUnit outputs, fixture logs, and comparison JSON
+were uploaded as the workflow artifact.
+
+                     pass skip fail total
+standalone            132   1    13  146
+rebuild native        135   1    10  146
+rebuild Perl          135   1    10  146
+standalone repeated   132   1    13  146
+
+The ten shared failing cases are IDENTICAL in all four runs:
+- http2/5.1 half-closed(remote) extra DATA
+- http2/5.1 half-closed(remote) extra HEADERS
+- http2/5.1 closed DATA after RST_STREAM
+- http2/5.1 closed HEADERS after RST_STREAM
+- http2/5.1 closed DATA
+- http2/5.1 closed HEADERS
+- http2/5.1.1 decreasing new stream identifier
+- http2/5.3.1 PRIORITY depends on itself
+- http2/6.1 DATA on invalid stream state
+- http2/6.3 PRIORITY with stream 0
+
+The direct/manual socket driver alone failed 3 EXTRA cases
+that passed in BOTH rebuilt paths, and did so in BOTH standalone
+runs:
+- generic/3.8 GOAWAY received
+- http2/5.4.1 invalid PING for connection close
+- http2/7 unknown GOAWAY error code.
+These could reflect closure/draining differences in the blocking
+standalone diagnostic transport. They are NOT evidence of a specific
+engine bug or LinuxEvent fix without further analysis.
+
+CONCLUSION: Linux::Event adapter is NOT a sufficient explanation for
+the ten shared failures, which independently reproduce via the
+standalone direct Unblock::HTTP2 input/output API. Neither the
+native input bridge nor the Perl fallback accounts for them.
+DO NOT claim the engine alone conclusively caused them either:
+there is still a common nghttp2/lib version, callback contract,
+test harness and request response policy. The older experimental
+September private nghttp2 binding had an explicitly different
+strict-stream-ID guard and achieved 145/1/0; it is not the present
+production engine. Stage C h2spec conformance remains OPEN. An
+improvement must preserve framework-neutrality and standalone API.
+Do not modify Unblock::HTTP2 without fresh permission.
+
+
+
 ## Historical HTTP/2 h2spec provenance correction (2026-10-25 UTC)
 
 IMPORTANT: Before blaming Unblock::HTTP2 for the current h2spec failures,

@@ -1,5 +1,18 @@
 # Continue Linux::Event::HTTP Unblock reconstruction
 
+LATEST VERIFIED STAGE C h2spec engine/adapter A/B:
+Same-run independent TCP/TLS direct Unblock::HTTP2 0.12
+132 pass / 1 skip / 13 fail; rebuilt native and Perl both
+135 pass / 1 skip / 10 fail. Standalone repeated exactly 132/1/13.
+All 10 rebuilt failures also occur in direct standalone engine.
+Standalone-only 3 are GOAWAY, PING-close and unknown GOAWAY code,
+possibly simple direct driver's close semantics; unproven.
+GitHub Actions 40166951263 PASS, JUnit/comparison JSON artifacts.
+Feature source 45d397f63adc8e51c7b8304ea9d5ccccb3a276e3.
+NO changes to Unblock::HTTP2 or any upstream. Stage C release gate
+still OPEN. Do not claim Linux::Event caused these ten errors, nor
+that engine defect is proved. See handoff.md first for full detail.
+
 Repo: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Feature branch: feature/unblock-http-rebuild
 Latest verified source checkpoint: 60644da63ee6c6b1b5e19d7a5c7234dd8ffeb9cc
