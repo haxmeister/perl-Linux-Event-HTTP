@@ -1,5 +1,51 @@
 # Reconstruction implementation checkpoint
 
+## Historical HTTP/2 h2spec provenance correction (2026-10-25 UTC)
+
+IMPORTANT: Before blaming Unblock::HTTP2 for the current h2spec failures,
+reconcile the genuine ZERO-FAILURE September 26, 2026 result.
+
+Archived root experiment PR #40 (closed, unmerged):
+https://github.com/haxmeister/perl-Linux-Event-HTTP/pull/40
+Historical head: 3d2e528a2be33a67c766229faca77feeaca8afcc
+Read that revision's handoff.md and .github/workflows/ci.yml.
+That experiment installed a PRIVATE Linux::Event::HTTP::_HTTP2::Native
+nghttp2 XS binding underneath the OLD Linux::Event::HTTP executors.
+It achieved h2spec v2.6.0 146 total / 145 pass / 1 skip / ZERO fail.
+It explicitly inserted an early lower-peer-stream-ID rejection using
+nghttp2_on_begin_frame; without that patch the September production
+Net::HTTP2::nghttp2 0.011 binding achieved 144 pass / 1 skip / 1 fail
+(the decreasing-stream-ID case). A temporary patch to the external
+binding likewise reached 145/1/0. The historic private patch was not
+merged or released: its strict check required care for legal late
+HEADERS/RST_STREAM races after a reset. Do NOT describe the zero-fail
+result as the standalone Unblock::HTTP2 test result.
+
+Unblock::HTTP2 current main: 7bc0b6ccd653a74ad1e7399d27aa9d94c941b513
+has independent test.yml and interop.yml workflows. The interop workflow
+uses nghttp and nghttpd, NOT h2spec. No standalone Unblock::HTTP2
+h2spec baseline was established by the 0.12 release audit. The normal
+green CI does not establish 145/1/0 conformance.
+
+The new rebuild h2spec fixture uses real Linux::Event TCP/TLS and
+Unblock::HTTP2. October results are 135/1/10 (both native/Perl-adapter
+timing configurations) versus September's different binding, fixture
+and installation. The October parity experiment also reported 134/1/11
+on the untouched root main baseline USING OCTOBER'S environment,
+alongside rebuilt native and Perl input. Thus the rebuilt adapter
+is NOT YET PROVEN to have introduced the ten additional failures,
+and blaming the standalone engine is equally unjustified.
+
+Next isolate both variables: same-version/same-run standalone
+Unblock::HTTP2 server with an event-loop-independent byte transport
+AND rebuilt Linux::Event transport, equivalent request/response timing
+and TLS fixture; also compare the original September server fixture.
+Investigate Linux::Event lifecycle/flush and the test harness before
+proposing general changes in Unblock::HTTP2. Keep the upstream read-only
+until separately authorized. Stage C conformance remains OPEN.
+
+
+
 ## Stage C controlled h2spec fixture comparison (2026-10-25 UTC)
 
 Stage C follow-up CI 40163552273 VERIFIED feature source

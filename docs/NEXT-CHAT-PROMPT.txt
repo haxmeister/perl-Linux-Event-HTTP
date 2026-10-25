@@ -29,6 +29,21 @@ removed unused top-level direct CookieJar, Auth and URI prerequisites.
 The five Unblock benchmark executables and historical JSON evidence
 remain. CI 40161695154 all seven jobs PASS, including packaged tests.
 
+REVIEWED HISTORICAL H2SPEC EVIDENCE:
+- September 26, 2026 old Linux::Event::HTTP PR #40, private native
+  nghttp2 XS, did achieve 146 total/145 pass/1 skip/ZERO failed.
+  It was an experimental lower-stream-ID rejection in the OLD HTTP2
+  executor, not a verified standalone Unblock::HTTP2 result.
+  Production Net::HTTP2::nghttp2 0.011 was 144/1/1 on that fixture.
+- Unblock::HTTP2 0.12 standalone CI runs nghttp/nghttpd interop, NOT
+  h2spec. Do not blame this engine without an independent h2spec A/B.
+- October new h2spec 135/1/10 differs from September experiment.
+  October legacy MAIN and rebuilt both showed 134/1/11 under the
+  October fixture/environment. Response timing did not remove ten
+  failures. A same-run standalone HTTP2 engine versus rebuild HTTP2
+  transport comparison is still needed. Review archived PR #40
+  handoff and original h2spec fixture before deciding responsibility.
+
 RELEASE GATES OPEN:
 - Stage B HTTP1 real TCP throughput remains substantially below
   legacy main. Same-host examples: legacy ~49k vs rebuilt ~25k req/s.
