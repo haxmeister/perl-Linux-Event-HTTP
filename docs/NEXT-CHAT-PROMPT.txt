@@ -3,7 +3,7 @@
 Repo: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Feature branch: feature/unblock-http-rebuild
 Latest verified source checkpoint: f0f44edda0c8eb6a430625feb7285d175dc6cebd
-Root CI 40161695154: ALL SEVEN Perl jobs PASS. Latest nonthreaded
+Root CI 40163258469: ALL SEVEN Perl jobs PASS. Latest nonthreaded
 make disttest PASS, plus native/Perl H1/2, real QUIC H3, WebSocket and
 generic H1/H2/H3 CONNECT regression coverage.
 Main baseline untouched: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
@@ -38,10 +38,15 @@ RELEASE GATES OPEN:
   Native borrowed-input path is faster than Perl fallback (~27% in
   one paired runner). Do NOT bypass Uniform validation or cache
   canonical responses internally. Keep comparisons same-host ABBA.
-- Stage C h2spec 146: 134 pass, 1 skip, 11 fail, exactly matching
-  the legacy baseline. This is NOT conformance. Investigate the
-  general HTTP2 engine/fixture contract; HTTP2 upstream is read-only
-  unless user authorizes feature-branch changes.
+- Stage C h2spec remains NOT conformant: new same-host fixture A/B
+  (headers vs complete request, unchanged generic HTTP2 engine):
+  both 146 total / 135 pass / 1 skip / 10 fail; same ten cases.
+  Earlier baseline and rebuilt report: 134/1/11. One extra failure
+  (stream WINDOW_UPDATE overflow) was absent in current pair;
+  treat this as unverified run variance, not an optimization.
+  Response-timing hypothesis is falsified. h2spec diagnostic is
+  manual workflow_dispatch only. Upstream HTTP2 remains read-only
+  without explicit permission; do not work around it in LinuxEvent.
 - Complete remaining Stage F release-readiness evaluation (security,
   leak/reentrancy, docs, dependency/release compatibility) only
   without pretending those release gates passed.

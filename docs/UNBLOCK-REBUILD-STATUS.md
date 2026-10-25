@@ -1,5 +1,53 @@
 # Reconstruction implementation checkpoint
 
+## Stage C controlled h2spec fixture comparison (2026-10-25 UTC)
+
+The root-only diagnostic built pinned h2spec v2.6.0 at source commit
+70ac2294010887f48b18e2d64f5cccd48421fad1 and compared two
+identical-response fixtures on one CI host. The Unblock::HTTP2 engine
+and Linux::Event native bridge were unchanged. Completed root CI:
+40163258469, all SEVEN Perl lanes PASS, including make disttest, real
+H3/QUIC, WebSocket, generic CONNECT and both h2spec diagnostic runs.
+
+h2spec v2.6.0, same runner, 146 cases each:
+  on_headers response: 135 pass / 1 skip / 10 fail
+  on_request response: 135 pass / 1 skip / 10 fail
+The complete failing-case name set was identical:
+  http2/5.1: half closed (remote) DATA
+  http2/5.1: half closed (remote) HEADERS
+  http2/5.1: closed DATA after RST_STREAM
+  http2/5.1: closed HEADERS after RST_STREAM
+  http2/5.1: closed DATA
+  http2/5.1: closed HEADERS
+  http2/5.1.1: decreasing stream identifier
+  http2/5.3.1: self-dependent PRIORITY
+  http2/6.1: DATA on invalid stream state
+  http2/6.3: PRIORITY on stream 0
+
+Result: delaying normal application response does NOT remove these
+failures. The original archived baseline/Perl/native h2spec report
+had 134 pass, 1 skip, 11 fail. The earlier stream WINDOW_UPDATE
+overflow case (http2/6.9.1) passed in both current runs; there is
+no same-host baseline repeat proving this is a true fix rather
+than environment/timing variability. Therefore do not claim an
+HTTP2 correctness improvement or a passed conformance gate.
+
+The fixture keeps --response-mode headers (historical default) and
+adds --response-mode request for diagnostic reproduction. To avoid
+building an old Go-based test program on every regular push, the
+h2spec matrix is now available only through CI workflow_dispatch,
+on the latest nonthreaded Perl lane. It remains explicitly
+non-gating for existing h2spec case failures, but does fail for
+broken harness or missing JUnit output.
+
+NEXT: analyze these ten stream/protocol error cases in the generic
+Unblock::HTTP2/nghttp2 engine separately. Do not put HTTP2 parser
+logic or Linux-only exceptions into this adapter. Unblock::HTTP2
+source is READ ONLY until explicitly authorized. Stage B HTTP1
+throughput remains OPEN; Stage C conformance remains OPEN.
+
+
+
 ## Stage C h2spec fixture-timing isolation (2026-10-25 UTC)
 
 A third CI attempt (40163081118) compiled h2spec, but

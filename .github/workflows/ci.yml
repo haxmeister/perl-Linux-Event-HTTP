@@ -167,8 +167,8 @@ jobs:
           cpanm --notest 'Unblock::HTTP2@0.12'
           REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t
           REBUILD_REQUIRE_HTTP2=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/50-http2.t
-      - name: Stage C h2spec fixture timing diagnostic (non-gating)
-        if: matrix.perl == '5' && matrix.multi_thread == false
+      - name: Stage C h2spec fixture timing diagnostic (manual only, non-gating)
+        if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         run: |
           # Perl setup points OPENSSL_CONF to a nonexistent installed path.
           test -r /etc/ssl/openssl.cnf
