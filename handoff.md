@@ -1,5 +1,27 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Stage C h2spec fixture-timing isolation (2026-10-25 UTC)
+
+The recorded 11 h2spec failures occur on the untouched legacy baseline,
+the rebuilt native bridge, and the rebuilt Perl input path. Many failures
+include an unexpected response DATA frame after a protocol error. The
+existing conformance fixture responds immediately on on_headers while
+discarding the request body, even when h2spec deliberately keeps a
+request stream open. This suggests a precise fixture-timing hypothesis,
+NOT a proven explanation or an HTTP2 conformance fix.
+
+The root-only tools/http2-h2spec-server.pl now accepts
+--response-mode headers (historical default) or request (respond after
+the full request). Both modes send identical 200/ok response bytes.
+A latest-nonthreaded CI diagnostic runs pinned h2spec v2.6.0 against
+both variants on the same runner and prints exact counts/failing names.
+Expected protocol test failures do not block other regression jobs;
+a broken fixture or incomplete report still fails the diagnostic.
+The results are PENDING; Stage C release gate remains OPEN and baseline
+parity is not conformance. No Unblock::HTTP2, TLS or core source was
+changed. Do not infer any improvement before the measurements.
+
+
 ## Stage F dependency and executable cleanup (2026-10-25 UTC)
 
 The post-reconstruction source audit found 14 executable benchmark/fixture

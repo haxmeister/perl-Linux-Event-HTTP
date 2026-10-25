@@ -12,6 +12,7 @@ my $host = '127.0.0.1';
 my $port = 18443;
 my ($cert, $key);
 my $native = 1;
+my $response_mode = 'headers';
 
 GetOptions(
     'host=s' => \$host,
@@ -19,8 +20,11 @@ GetOptions(
     'cert=s' => \$cert,
     'key=s'  => \$key,
     'native-input!' => \$native,
+    'response-mode=s' => \$response_mode,
 ) or die "usage: $0 --cert FILE --key FILE [--host HOST] [--port PORT]\n";
 
+die "--response-mode must be headers or request\n"
+    unless $response_mode eq 'headers' || $response_mode eq 'request';
 die "--cert is required\n" if !defined($cert) || $cert eq '';
 die "--key is required\n" if !defined($key) || $key eq '';
 die "--port must be between 1 and 65535\n"
@@ -38,14 +42,21 @@ my $server = Linux::Event::HTTP::Server->new(
         cert_file => $cert,
         key_file  => $key,
     },
-    # Match the original conformance fixture: respond at headers while
-    # draining any incoming body. Some tests deliberately leave it open.
+    # Compare early response against response after the full request.
+    # Both modes retain identical status/body; no engine behavior changes.
     on_headers => sub ($tx, $request) {
         $tx->on_data(sub { });
-        $tx->respond(status => 200,
-            headers => [['content-type', 'text/plain']], body => "ok\n");
+        if ($response_mode eq 'headers') {
+            $tx->respond(status => 200,
+                headers => [['content-type', 'text/plain']], body => "ok\n");
+        }
     },
-    on_request => sub { },
+    on_request => sub ($tx, $request) {
+        if ($response_mode eq 'request') {
+            $tx->respond(status => 200,
+                headers => [['content-type', 'text/plain']], body => "ok\n");
+        }
+    },
 );
 
 $| = 1;

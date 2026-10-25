@@ -167,6 +167,31 @@ jobs:
           cpanm --notest 'Unblock::HTTP2@0.12'
           REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t
           REBUILD_REQUIRE_HTTP2=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/50-http2.t
+      - name: Stage C h2spec fixture timing diagnostic (non-gating)
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          go install github.com/summerwind/h2spec@v2.6.0
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$RUNNER_TEMP/h2-key.pem" -out "$RUNNER_TEMP/h2-cert.pem" -subj /CN/localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1 -days 1 >/dev/null 2>&1
+          for mode in headers request; do
+            port=19371
+            if [ "$mode" = request ]; then port=19372; fi
+            perl -Mblib tools/http2-h2spec-server.pl --port "$port" --cert "$RUNNER_TEMP/h2-cert.pem" --key "$RUNNER_TEMP/h2-key.pem" --response-mode "$mode" > "$RUNNER_TEMP/h2-$mode.server.log" 2>&1 &
+            pid=$!
+            ready=0
+            for i in $(seq 1 100); do
+              if grep -q '^READY ' "$RUNNER_TEMP/h2-$mode.server.log"; then ready=1; break; fi
+              if ! kill -0 "$pid" 2>/dev/null; then cat "$RUNNER_TEMP/h2-$mode.server.log"; exit 1; fi
+              sleep 0.1
+            done
+            if [ "$ready" -ne 1 ]; then cat "$RUNNER_TEMP/h2-$mode.server.log"; exit 1; fi
+            result=0
+            timeout 180s "$HOME/go/bin/h2spec" -t -k -h 127.0.0.1 -p "$port" -j "$RUNNER_TEMP/h2-$mode.xml" > "$RUNNER_TEMP/h2-$mode.log" 2>&1 || result=$?
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            if [ "$result" -gt 1 ]; then tail -50 "$RUNNER_TEMP/h2-$mode.log"; exit 1; fi
+            python3 -c 'import sys, xml.etree.ElementTree as E; root=E.parse(sys.argv[1]).getroot(); cases=root.findall(".//testcase"); failures=[c for c in cases if c.find("failure") is not None or c.find("error") is not None]; skipped=[c for c in cases if c.find("skipped") is not None]; print("STAGE C", sys.argv[2], "total", len(cases), "pass", len(cases)-len(failures)-len(skipped), "skip", len(skipped), "fail", len(failures), flush=True); [print("  FAIL", c.get("classname",""), c.get("name",""), flush=True) for c in failures]; sys.exit(0 if len(cases)>=100 else 2)' "$RUNNER_TEMP/h2-$mode.xml" "$mode"
+          done
+          echo "h2spec remains a release blocker even if diagnostic jobs pass."
       - name: Optional HTTP3 real QUIC loopback
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
