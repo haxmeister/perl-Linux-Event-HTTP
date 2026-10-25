@@ -27,7 +27,7 @@ my $server = Linux::Event::HTTP::Server->new(
     http1 => { websocket => 1 },
     tls => { cert_file => $cert, key_file => $key },
     on_headers => sub { push @trace, 'server-headers' },
-    on_request => sub ($tx) {
+    on_request => sub ($tx, $request) {
         push @trace, 'server-request';
         $tx->respond(status => 200, body => 'ordinary');
     },
