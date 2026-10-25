@@ -1,5 +1,46 @@
 # Reconstruction implementation checkpoint
 
+## Stage F verified runtime floor and automatic conformance CI (2026-10-25 UTC)
+
+Root production/test correction: 2cf4be58abaf75a3362bf8b612eafbef8ad1bfc7
+fixes _Config.pm's stale Unblock::HTTP2 runtime minimum from 0.12
+to 0.13; explicit regression emulates old installed 0.12 VERSION
+and verifies rejection, then accepts repaired 0.13. Server and Client
+POD, README corrected. Complete root CI 40208752461: 7/7 PASS.
+
+Root cleanup/CI commit: 6a90c5f26fcf6bc3fd0d8df97470d3bfbe677e3e
+deletes unused early standalone h2spec fixture from Git (it was never
+in MANIFEST); the currently verified standalone fixture is supplied
+by Unblock::HTTP2 itself. The strict h2spec workflow now automatically
+runs on HTTP adapter source, XS bridge, Makefile, H2 test and fixture
+changes, not just manual dispatch.
+VERIFIED:
+- https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40209116003
+  strict h2spec 147 passed / ZERO skipped / ZERO failures for direct
+  Unblock::HTTP2 standalone, LinuxEvent native input, LinuxEvent
+  Perl input and repeated standalone; zero case-outcome differences.
+- https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40209116012
+  complete Perl build/regression and disttest matrix 7/7 PASS;
+  latest includes real QUIC HTTP3, WebSocket, Extended CONNECT.
+
+Most recent same-run paired legacy-vs-rebuild HTTP1 throughput on this
+CI runner (two medians each, 10k requests, 100 persistent connections,
+32-byte response, pipeline depth 1):
+  legacy: 33212.0 and 33438.1 req/s, ~32.3 CPU us/request;
+  rebuild: 11533.7 and 11702.8 req/s, ~88 CPU us/request.
+These are RUNNER-SPECIFIC paired figures, not cross-host benchmark
+comparisons. Stage B HTTP1 throughput remains a major release blocker;
+earlier NYTProf confirms dominant generic engine/Uniform response
+construction cost, not a demonstrated LinuxEvent-only bottleneck.
+No performance optimization has been claimed here. An improvement in
+Unblock or Uniform needs independent, framework-neutral benefit,
+canonical validation and separate authorization/scope.
+
+Stage C HTTP2 conformance remains CLOSED with Unblock::HTTP2 >=0.13.
+No upstream repositories or root main modified. No merge/tag/release.
+
+
+
 ## Stage F dead fixture cleanup and persistent HTTP2 gate (2026-10-25 UTC)
 
 Root runtime HTTP2 option check was corrected from >=0.12 to >=0.13,

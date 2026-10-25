@@ -1,3 +1,24 @@
+# Continue Linux::Event::HTTP
+
+LAST VERIFIED FEATURE:
+6a90c5f26fcf6bc3fd0d8df97470d3bfbe677e3e
+Full CI https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40209116012 ALL SEVEN PASS.
+Strict HTTP2 h2spec https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40209116003
+Four comparisons, each 147 pass, 0 skip, 0 fail.
+
+Runtime Unblock::HTTP2 floor 0.13 enforced in _Config.pm, optional
+metadata, test, POD and README. Unused old standalone fixture removed.
+h2spec workflow automatically checks native/Perl adapter source changes.
+Stage C CLOSED, but Stage B HTTP1 throughput remains OPEN:
+paired latest same-run legacy ~33.3k vs rebuilt ~11.6k req/s,
+~32 vs ~88 CPU us/request (runner-specific). Do not claim improvement.
+Only root feature branch writable, main and upstream unchanged.
+Read handoff.md and docs/UNBLOCK-REBUILD-PLAN.md FIRST.
+Next action: user-approved framework-neutral protocol performance
+improvement on a suitable upstream feature branch if justified, or
+root Stage F release-readiness work. Never tailor Unblock to LinuxEvent.
+No merge/release/tag/version without explicit approval.
+
 # Continue Linux::Event::HTTP Unblock reconstruction
 
 CURRENT NEXT STEPS after strict HTTP2 integration completion:
