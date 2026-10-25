@@ -29,7 +29,8 @@ system('/usr/bin/openssl', 'req', '-x509', '-newkey', 'ec',
 my $loop = Linux::Event::Loop->new;
 my (%pending, %bodies, @errors, @order, @ops);
 my ($seen_connections, $finished);
-my $server = Linux::Event::HTTP::Server->new(
+my $server;
+$server = Linux::Event::HTTP::Server->new(
     loop => $loop, host => '127.0.0.1', port => 0, http3 => 1,
     tls => { cert_file => $cert, key_file => $key },
     on_request => sub ($tx, $request) {
