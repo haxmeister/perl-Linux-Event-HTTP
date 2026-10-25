@@ -74,7 +74,7 @@ subtest 'H3 queued cancellation abandons the UDP connector' => sub {
     $op->cancel;
     $client->shutdown;
     is($finished, 1, 'queued cancellation finishes exactly once');
-    ok($op->is_cancelled, 'operation is cancelled before QUIC authentication');
+    is($op->state, 'cancelled', 'operation is cancelled before QUIC authentication');
     is($loop->count, 0, 'cancelled UDP resolution/connector has no live watchers');
 };
 
