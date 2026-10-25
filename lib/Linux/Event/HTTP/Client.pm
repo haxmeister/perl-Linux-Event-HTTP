@@ -192,7 +192,16 @@ Unblock::HTTP3 0.13. C<quic =E<gt> { ca_file =E<gt> ... }> configures
 QUIC-specific trust and transport options. Origin hostnames are resolved
 asynchronously by Linux::Event UDP, and QUIC authenticates the original
 HTTPS origin, even when an alternative endpoint is used.
-Protocol handoff remains a subsequent stage.
+Opt-in C<http1 =E<gt> { websocket =E<gt> 1 }> enables the inherited
+C<connect_websocket()> entry point. It transfers the whole HTTP1 socket
+to the established Unblock::WebSocket session without introducing a second
+pool; a normal HTTP request can continue on another socket. The same-read
+native input handoff is verified. Optional C<http2 =E<gt>
+{ websocket =E<gt> 1 }> uses multiplexed Extended CONNECT, verified
+alongside ordinary H2 requests. HTTP3 Extended CONNECT messages also
+work, but graceful Client-side response-stream EOF after WebSocket
+Close remains a failing required regression. Generic non-WebSocket
+handoff remains unfinished.
 No redirects, cookies, authentication retries or response wrappers are added.
 
 =cut
