@@ -9,9 +9,11 @@ real Unblock transactions and Uniform messages, bounded buffering, streaming
 reception/responses, pooling, cancellation, timers and native borrowed input.
 Queued streaming uploads and graceful HTTP/1 service shutdown are implemented.
 Optional HTTP/2 over TLS uses ALPN, multiplexing, flow control and GOAWAY.
-Initial HTTP/3 Client and combined TCP/UDP Server integration is verified
-with real QUIC/TLS loopback. HTTP/3 lifecycle hardening, WebSocket and generic
-handoff remain pending.
+HTTP/3 Client and combined TCP/UDP Server integration is verified
+with real QUIC/TLS loopback, timeout, cancellation, congestion and
+multi-connection tests. HTTP/1 Upgrade and HTTP/2/3 WebSocket and generic
+CONNECT handoff are verified. HTTP/1 throughput and HTTP/2 protocol conformance
+remain open release gates.
 
 ## Server
 
@@ -90,7 +92,7 @@ HTTPS verifies certificates and the original hostname by default. Use
 hostname and ALPN selection. Server TLS options are passed as
 `tls => { cert_file => $cert, key_file => $key }`.
 
-## HTTP/3 (initial implementation)
+## HTTP/3
 
 Install `Net::QUIC >= 0.06` and `Unblock::HTTP3 >= 0.13`, then enable
 `http3 => 1`. A strict Client request can use `http_version => '3'`.
@@ -107,8 +109,8 @@ transactions and Uniform messages.
 
 Current limits: wildcard UDP binding, H3-only listeners, comprehensive QUIC
 migration and packet-origin metadata are not supported yet. Graceful H3
-shutdown has initial real-loopback coverage; failure, cancellation,
-congestion and multi-connection stress tests remain Stage D work.
+shutdown, failure, cancellation, congestion and multi-connection coverage
+pass their required Stage D integration regressions.
 Do not treat this feature branch as release ready.
 
 ## HTTP/2
@@ -145,8 +147,9 @@ listed in the [status document](docs/UNBLOCK-REBUILD-STATUS.md) for admission
 callbacks and server drain. Their version numbers are deliberately unchanged;
 the published 0.02/0.12 releases do not contain these additions. On the feature
 branch HTTP2/HTTP3 dependencies are optional, with an explicit error when an
-enabled engine is unavailable. Legacy dependencies and private code remain
-temporarily for reconstruction comparisons.
+enabled engine is unavailable. The superseded private HTTP parsers, executors and public Request/Response
+wrappers have been removed from this feature branch; the untouched main
+baseline retains the historical implementation and tests.
 
 The measured server path is currently substantially slower than the original.
 The performance gate has not passed. See
@@ -162,9 +165,9 @@ make test
 REBUILD_NATIVE_INPUT=0 make test
 ```
 
-`make test` runs `t/rebuild/*.t`, the new contract's suite. The original
-`t/*.t` tests remain historical references for capabilities to port; they
-expect the replaced public API and are not a claimed passing rebuild suite.
+`make test` runs `t/rebuild/*.t`, the new contract's suite. The old
+`t/*.t` suite has been removed from this feature branch; the complete old
+suite and its pre-rebuild implementation remain on untouched main.
 The untouched baseline passed 57 files / 1,489 tests before reconstruction.
 
 CI is configured for Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest and latest

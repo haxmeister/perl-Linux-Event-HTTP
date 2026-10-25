@@ -1,5 +1,23 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Stage F initial legacy source and test removal (2026-10-25 UTC)
+
+A root-only Stage F cleanup removes the former Linux::Event::HTTP-specific
+Request/Response/Transaction/Operation classes, private HTTP1 parser and
+HTTP2 executors, legacy client policy/upgrade helpers, 57 obsolete t/*.t
+tests, and the superseded picohttpparser XS/vendor sources. The former
+native stream consumer ABI header is copied unchanged into xsbridge and the
+build now compiles ONLY the Unblock native input bridge. Public metadata
+advertises only Linux::Event::HTTP, ::Server and ::Client; MANIFEST follows
+the replacement layout. All 21 rebuilt protocol regressions are retained.
+The legacy baseline and old tests remain available unchanged on main.
+Benchmark evidence and historical research documents are preserved.
+
+This change is pending new CI verification. It does NOT close Stage B
+throughput or Stage C h2spec gates. Upstream Unblock/Uniform/QUIC and
+Linux::Event core sources remain untouched; no version bump or release.
+
+
 This section supersedes historical release/development instructions below.
 Repository: haxmeister/perl-Linux-Event-HTTP
 Branch: feature/unblock-http-rebuild

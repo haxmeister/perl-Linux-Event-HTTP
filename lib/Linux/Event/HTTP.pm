@@ -31,13 +31,13 @@ Linux::Event::HTTP - Linux-native integration of Unblock HTTP
 
 This development branch reconstructs the distribution around Unblock::HTTP.
 Server and Client support HTTP/1 over TCP/TLS, optional HTTP/2 over TLS,
-and an initial optional HTTP/3 implementation over QUIC/TLS. They expose
+and optional HTTP/3 over QUIC/TLS. They expose
 real Unblock transactions and Uniform messages. Linux::Event owns sockets, TLS,
 timers and backpressure; Unblock owns protocol behavior and client pooling.
 
 No compatibility with the former public API is promised. HTTP/3 requires a
 concrete listener address and is not yet supported as an H3-only server.
-WebSocket and generic Upgrade/CONNECT remain planned. Server shutdown
+WebSocket and generic Upgrade/CONNECT handoff are implemented. Server shutdown
 drains admitted requests and enforces a seconds-based grace deadline.
 The native HTTP/1 input bridge is implemented, but the original server's
 performance has not yet been recovered. This is not a release candidate.
