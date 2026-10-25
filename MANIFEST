@@ -176,3 +176,4 @@ t/rebuild/95-http3-errors.t
 t/rebuild/96-http3-active-drain.t
 t/rebuild/97-http3-multiconnection.t
 t/rebuild/98-http3-credit-malformed.t
+t/rebuild/99-http3-timeout.t

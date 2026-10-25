@@ -72,6 +72,26 @@ main change has occurred. Feature-branch publication is authorized.
   gate closed until both upstream and root CI pass.
 - Unblock::HTTP1, Net::QUIC, core, Uniform, H2/3, WebSocket and main unchanged.
 
+## Stage D H3 credit recovery, malformed input, and timeout isolation
+
+- Upper Unblock::HTTP source f15638ec1cb35f95e0b1f4eb4138298fccb5fc85
+  fixes the credit-recovery speculative-connector race. Its H1-only CI
+  40147073797 PASS on Perl 5.20 and 5.44.
+- Linux Event::HTTP source 5eb520adf7c151db2244f58889589f3735ac051f
+  pins that upper dependency; CI 40147115577 PASS all seven Perl lanes.
+  The latest non-threaded lane required real QUIC and passed
+  t/rebuild/98-http3-credit-malformed.t: two subtests. Both H3 operations
+  recovered credit, all watchers were released, and junk UDP did not
+  disturb a valid authenticated HTTP3 request.
+- Removed temporary Data::Dumper diagnostics used to identify the stale
+  QUIC socket and timer; the strict zero-watcher test remains.
+- Added t/rebuild/99-http3-timeout.t to verify that an ACTIVE H3 request
+  times out, invokes terminal callbacks once, and does not poison a later
+  healthy request on the same public Client, followed by full cleanup.
+  Required real QUIC CI verification is pending.
+- Stage B throughput gate and Stage C 11 h2spec parity failures remain
+  OPEN. Stage E and F have not started. No main, tag, merge or release.
+
 ## Stage D verified TLS identity and queued cancellation - 2026-10-24
 
 - Source checkpoint: 8a48d6aed17e13fa0a57d6dbce772397a79c9cf2.
