@@ -1,4 +1,4 @@
-# ACTIVE REBUILD HANDOFF - 2026-10-24
+# ACTIVE REBUILD HANDOFF - 2026-10-25
 
 This section supersedes historical release/development instructions below.
 Repository: haxmeister/perl-Linux-Event-HTTP
@@ -165,6 +165,47 @@ these feature additions. Root CI pins the published feature source commits.
   Required real QUIC CI verification is pending.
 - Stage B throughput gate and Stage C 11 h2spec parity failures remain
   OPEN. Stage E and F have not started. No main, tag, merge or release.
+
+## Stage D verified gate — 2026-10-25
+
+Source implementation checkpoint: 4243b0a676d9027ef185a08bfb7052d45704340c.
+Unblock::HTTP admission/connector fix:
+f15638ec1cb35f95e0b1f4eb4138298fccb5fc85 (documentation head 8c84553).
+The Linux::Event::HTTP CI workflow 40147345109 PASSED seven Perl jobs
+(5.36, 5.38, 5.40, 5.42, 5.44, latest and latest threaded).
+The required latest Perl H3 lane installed real Net::QUIC 0.06 and
+Unblock::HTTP3 0.13 and passed ALL targeted real QUIC/TLS tests:
+- 70-http3-loopback.t: 19 checks
+- 80-http3-client.t: 16 checks
+- 90-http3-server.t: 13 checks
+- 95-http3-errors.t: 2 subtests
+- 96-http3-active-drain.t: 2 subtests
+- 97-http3-multiconnection.t: 13 checks
+- 98-http3-credit-malformed.t: 2 subtests
+- 99-http3-timeout.t: 14 checks
+
+The H3 timeout test verified an admitted operation expires with one
+error/finish and a subsequent independent request on the same Client
+succeeds, followed by zero surviving UDP/TCP/timer watchers.
+The credit test verified real QUIC stream-credit wakeup, malformed UDP
+isolation and cleanup after fixing a genuine upper-layer speculative
+connection race. Upper Unblock H1-only CI 40147073797 also passed on
+Perl 5.20 and 5.44. H1-only root isolation and both native/Perl H1
+input paths remain green without importing optional QUIC engines.
+
+Stage D gate is therefore met for the currently supported, explicitly
+concrete IP-bound HTTP3 Client and combined TCP/UDP Server integration.
+H3-only Server, wildcard/multihoming/pktinfo binding, independent QUIC
+migration features and release-level performance/conformance claims are
+NOT implied. The approved plan has NOT changed.
+
+Remaining release blockers:
+- Stage B baseline/rebuild HTTP1 throughput gate OPEN.
+- Stage C h2spec parity: 146 total / 134 passed / 1 skipped /
+  11 failed — identical to untouched baseline, NOT clean conformance.
+- Native HTTP1 INPUT_SWITCH still explicitly fails.
+- Stage E optional WebSocket and generic socket/stream handoff unimplemented.
+- Stage F legacy code removal/documentation/package disttest unstarted.
 
 ## Implemented
 

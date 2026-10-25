@@ -1,6 +1,6 @@
 # Reconstruction implementation checkpoint
 
-Updated: 2026-10-24 (America/Chicago)
+Updated: 2026-10-25 (America/Chicago)
 Measurements: Stage A 2026-10-22; Stage B 2026-10-23/24
 Branch: `feature/unblock-http-rebuild`
 Starting checkpoint: `634228c90070e0136175a4611e7079f33370a7d9`
@@ -8,9 +8,11 @@ Untouched baseline: `c0bf714e0f08f9031684e2eb4fd70dea3c68449f`
 
 Stage A's executable HTTP1 GET/POST gate passes. Stage B is in progress;
 HTTP1 lifecycle and service draining are implemented, but the performance
-gate has NOT passed. Stage C initial integration is implemented; Stage D has initial verified
-HTTP3 public Client/Server loopback, but remains incomplete. Stages E-F
-are not implemented. The user authorized
+gate has NOT passed. Stage C initial integration is implemented; focused Stage C h2spec
+conformance remains open. Stage D's planned real QUIC/TLS loopback, timeout,
+credit recovery, cancellation and multi-connection gate is verified for the
+supported concrete-address, combined TCP/UDP Server API. Stage E/F remain
+unimplemented. See the explicit H3-only/wildcard limitations below. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
@@ -71,6 +73,47 @@ main change has occurred. Feature-branch publication is authorized.
   real H3 credit/malformed regression. Verification pending; do not call the
   gate closed until both upstream and root CI pass.
 - Unblock::HTTP1, Net::QUIC, core, Uniform, H2/3, WebSocket and main unchanged.
+
+## Stage D verified gate — 2026-10-25
+
+Source implementation checkpoint: 4243b0a676d9027ef185a08bfb7052d45704340c.
+Unblock::HTTP admission/connector fix:
+f15638ec1cb35f95e0b1f4eb4138298fccb5fc85 (documentation head 8c84553).
+The Linux::Event::HTTP CI workflow 40147345109 PASSED seven Perl jobs
+(5.36, 5.38, 5.40, 5.42, 5.44, latest and latest threaded).
+The required latest Perl H3 lane installed real Net::QUIC 0.06 and
+Unblock::HTTP3 0.13 and passed ALL targeted real QUIC/TLS tests:
+- 70-http3-loopback.t: 19 checks
+- 80-http3-client.t: 16 checks
+- 90-http3-server.t: 13 checks
+- 95-http3-errors.t: 2 subtests
+- 96-http3-active-drain.t: 2 subtests
+- 97-http3-multiconnection.t: 13 checks
+- 98-http3-credit-malformed.t: 2 subtests
+- 99-http3-timeout.t: 14 checks
+
+The H3 timeout test verified an admitted operation expires with one
+error/finish and a subsequent independent request on the same Client
+succeeds, followed by zero surviving UDP/TCP/timer watchers.
+The credit test verified real QUIC stream-credit wakeup, malformed UDP
+isolation and cleanup after fixing a genuine upper-layer speculative
+connection race. Upper Unblock H1-only CI 40147073797 also passed on
+Perl 5.20 and 5.44. H1-only root isolation and both native/Perl H1
+input paths remain green without importing optional QUIC engines.
+
+Stage D gate is therefore met for the currently supported, explicitly
+concrete IP-bound HTTP3 Client and combined TCP/UDP Server integration.
+H3-only Server, wildcard/multihoming/pktinfo binding, independent QUIC
+migration features and release-level performance/conformance claims are
+NOT implied. The approved plan has NOT changed.
+
+Remaining release blockers:
+- Stage B baseline/rebuild HTTP1 throughput gate OPEN.
+- Stage C h2spec parity: 146 total / 134 passed / 1 skipped /
+  11 failed — identical to untouched baseline, NOT clean conformance.
+- Native HTTP1 INPUT_SWITCH still explicitly fails.
+- Stage E optional WebSocket and generic socket/stream handoff unimplemented.
+- Stage F legacy code removal/documentation/package disttest unstarted.
 
 ## Stage D H3 credit recovery, malformed input, and timeout isolation
 
