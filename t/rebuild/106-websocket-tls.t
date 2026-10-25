@@ -19,26 +19,41 @@ system('/usr/bin/openssl', 'req', '-x509', '-newkey', 'ec',
     '-days', '1') == 0 or die "openssl certificate generation failed";
 
 my $loop = Linux::Event::Loop->new;
-my (@errors, $server_tls, $client_tls, $echo, $opened, $ws);
+my (@errors, @trace, $server_tls, $client_tls, $echo, $opened, $ws);
 my $native = $ENV{REBUILD_NATIVE_INPUT} // 1;
 my $server = Linux::Event::HTTP::Server->new(
     loop => $loop, host => '127.0.0.1', port => 0,
     native_input => $native,
     http1 => { websocket => 1 },
     tls => { cert_file => $cert, key_file => $key },
-    on_request => sub ($tx) { $tx->respond(status => 200, body => 'ordinary') },
+    on_headers => sub { push @trace, 'server-headers' },
+    on_request => sub ($tx) {
+        push @trace, 'server-request';
+        $tx->respond(status => 200, body => 'ordinary');
+    },
+    on_error => sub ($tx, $error) {
+        push @trace, 'server-http-error';
+        push @errors, "server HTTP: $error";
+    },
     on_websocket => sub ($tx, $req) {
+        push @trace, 'server-websocket';
         return {
             backend => 'perl',
             on_open => sub ($websocket) {
-                my $host = $websocket->{transport};
-                $server_tls = $host && $host->transport_name eq 'tls'
-                    && defined($host->tls_cipher) ? 1 : 0;
+                push @trace, 'server-open';
+                my $ok = eval {
+                    my $host = $websocket->{transport};
+                    $server_tls = $host && $host->transport_name eq 'tls'
+                        && defined($host->tls_cipher) ? 1 : 0;
+                    1;
+                };
+                push @errors, "server TLS inspection: $@" unless $ok;
             },
             on_message => sub ($websocket, $bytes, $type) {
                 $websocket->send_text("tls:$bytes");
             },
             on_error => sub ($websocket, $error) {
+                push @trace, 'server-ws-error';
                 push @errors, "server: $error"; $loop->stop;
             },
         };
@@ -55,17 +70,24 @@ my $op = $client->connect_websocket(
     on_open => sub ($websocket, $tx) {
         $ws = $websocket;
         ++$opened;
-        my $host = $websocket->{transport};
-        $client_tls = $host && $host->transport_name eq 'tls'
-            && defined($host->tls_cipher) ? 1 : 0;
+        push @trace, 'client-open';
+        my $ok = eval {
+            my $host = $websocket->{transport};
+            $client_tls = $host && $host->transport_name eq 'tls'
+                && defined($host->tls_cipher) ? 1 : 0;
+            1;
+        };
+        push @errors, "client TLS inspection: $@" unless $ok;
         $websocket->send_text('hello');
     },
     on_message => sub ($websocket, $payload, $type) {
+        push @trace, 'client-message';
         $echo = [$payload, $type];
         $websocket->close;
         $loop->stop;
     },
     on_error => sub ($obj, $error) {
+        push @trace, 'client-error';
         push @errors, "client: $error"; $loop->stop;
     },
 );
@@ -76,6 +98,8 @@ my $timeout = Linux::Event::Kernel::Timer->new(
 $loop->run;
 $timeout->cancel;
 
+diag("TLS WebSocket callback trace: " . join(' -> ', @trace))
+    if @errors || !$opened;
 is_deeply(\@errors, [], 'real TLS WebSocket handshake and exchange have no errors');
 is($opened, 1, 'client WebSocket opens once after verified TLS');
 is($server_tls, 1, 'Server successor retains TLS transport and cipher');
