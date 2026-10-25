@@ -14,6 +14,18 @@ are not implemented. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
 
+## Stage D active H3 cancellation and delayed drain - pending validation
+
+- Added t/rebuild/96-http3-active-drain.t, a required real-QUIC CI test
+  covering cancellation of one admitted H3 operation while a 512 KiB streamed
+  response continues independently, and shutdown started before a delayed
+  admitted response has been sent.
+- The test verifies terminal callback uniqueness, response integrity,
+  graceful completion and watcher/timer cleanup, without modifying Unblock
+  or Net::QUIC. Results are not yet verified; adjust implementation if CI
+  reveals a lifecycle problem, and record the exact evidence here.
+- Stage B throughput, Stage C h2spec conformance, Stage E and F unchanged.
+
 ## Stage D verified TLS identity and queued cancellation - 2026-10-24
 
 - Source checkpoint: 8a48d6aed17e13fa0a57d6dbce772397a79c9cf2.

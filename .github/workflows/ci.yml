@@ -79,3 +79,4 @@ jobs:
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/80-http3-client.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/90-http3-server.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/95-http3-errors.t
+          REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/96-http3-active-drain.t
