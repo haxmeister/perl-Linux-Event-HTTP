@@ -445,7 +445,7 @@ sub median (@values) {
 
 sub usage ($status) {
     print <<'USAGE';
-usage: bench/run-http-end-to-end.pl [options]
+usage: bench/run-unblock-end-to-end.pl [options]
 
   --requests=N             measured requests per repeat (default 20000)
   --warmup=N               warmup requests per repeat (default 2000)
@@ -456,6 +456,7 @@ usage: bench/run-http-end-to-end.pl [options]
   --repeats=N              benchmark repeats (default 5)
   --timeout=SECONDS        timeout for each phase/result (default 15)
   --profile                 enable Linux::Event native timing collection
+  --diagnostic-prebuilt-response  reuse a frozen response (diagnostic only)
   --json=PATH               write machine-readable report
   --smoke                   tiny CI/sanity workload
   --help                    show this help
