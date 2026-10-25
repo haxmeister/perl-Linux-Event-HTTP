@@ -117,12 +117,30 @@ for my $version ('2', '3') {
                 diag("$name ws: sent=" . $ws->close_sent
                     . " received=" . $ws->close_received
                     . " complete=" . $ws->close_complete
-                    . " closed=" . $ws->is_closed);
+                    . " closed=" . $ws->is_closed
+                    . " finished=" . ($ws->{transport_finished} // 'undef')
+                    . " blocked=" . ($ws->{transport_blocked} // 'undef')
+                    . " syncing=" . ($ws->{transport_syncing} // 'undef'));
+                my $bridge = $ws->{transport};
+                diag("$name bridge: " . join(' ', map {
+                    "$_=" . ($bridge->{$_} // 'undef')
+                } qw(ending ended waiting scheduled detached queued)))
+                    if $bridge;
             }
             diag("client operation: " . $ws_op->state
                 . " tx: " . ($ws_op->transaction ? $ws_op->transaction->state : 'none'));
             diag("server tx: " . (@ws_transactions
                 ? $ws_transactions[0]->state : 'none'));
+            my $client_tx = $ws_op->transaction;
+            if ($client_tx) {
+                my $body = $client_tx->_request_body_object;
+                diag("client writer: " . ($body
+                    ? ("state=" . ($body->can('state') ? $body->state : 'n/a')
+                        . " complete=" . $body->is_complete)
+                    : 'absent'));
+                diag("client tx response complete: "
+                    . ($client_tx->response ? $client_tx->response->is_complete : 'no response'));
+            }
             diag("pool active: " . $client->pool_stats->{active});
         }
         is_deeply(\@errors, [], 'no protocol error');
