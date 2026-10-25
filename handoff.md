@@ -28,8 +28,8 @@ h2spec baseline was established by the 0.12 release audit. The normal
 green CI does not establish 145/1/0 conformance.
 
 The new rebuild h2spec fixture uses real Linux::Event TCP/TLS and
-Unblock::HTTP2. October results are 135/1/10 (both native/Perl-adapter
-timing configurations) versus September's different binding, fixture
+Unblock::HTTP2. October results are 135/1/10 in both response-timing
+configurations (headers versus completed request) versus September's different binding, fixture
 and installation. The October parity experiment also reported 134/1/11
 on the untouched root main baseline USING OCTOBER'S environment,
 alongside rebuilt native and Perl input. Thus the rebuilt adapter
