@@ -29,10 +29,17 @@ requests and the shared TLS connection.
 
 `t/rebuild/50-http2.t`, `102-websocket-multiplex.t`,
 `106-websocket-tls.t` and `107-generic-multiplex.t` exercise the actual
-TCP/TLS path. The current h2spec comparison recorded 146 cases:
-134 pass, one skip, 11 fail. These failures match the untouched
-legacy baseline but are still unresolved conformance defects.
-The h2spec gate is therefore **open**.
+TCP/TLS path. With Unblock::HTTP2 0.13 or newer, the strict h2spec
+v2.6.0 gate passed 147 of 147 cases with zero skips and zero failures
+on the standalone Unblock engine, Linux::Event native input and
+Linux::Event Perl input. All 147 case outcomes match across those paths.
+This closes the HTTP/2 protocol conformance gate for the repaired engine,
+without making any Linux::Event-specific change to Unblock.
+
+Verified same-run CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40209116003
+The current runtime and optional-dependency minimum is
+`Unblock::HTTP2 >= 0.13`. Earlier results with 0.12 are historical,
+not current conformance claims.
 
 Refer to `docs/UNBLOCK-REBUILD-PLAN.md` and
 `docs/UNBLOCK-REBUILD-STATUS.md` for authoritative gates and evidence.

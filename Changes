@@ -18,8 +18,14 @@ UNRELEASED - feature/unblock-http-rebuild (NOT FOR CPAN)
       native input, and LinuxEvent Perl input parity; no skips.
     - Require Unblock::HTTP2 >= 0.13 for optional HTTP/2 so older
       0.12 protocol errors are not advertised as passing conformance.
-    - HTTP/1 legacy throughput parity remains open; this feature
-      branch is not yet a release candidate.
+    - Independently compare HTTP/1 throughput with Feersum, Hyperman and
+      Mojolicious through Benchmark::Web's shared client; retain the data
+      and development adapters in Git rather than in CPAN artifacts.
+    - Correct stale HTTP/2 conformance documentation, and exclude 33
+      historical benchmark JSON files plus an internal handoff prompt
+      from the source distribution while preserving them in Git.
+    - HTTP/1 throughput remains an open gate; this feature branch is
+      not yet a release candidate.
 
 
 0.003  2026-09-26

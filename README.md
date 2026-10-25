@@ -153,10 +153,14 @@ enabled engine is unavailable. The superseded private HTTP parsers, executors an
 wrappers have been removed from this feature branch; the untouched main
 baseline retains the historical implementation and tests.
 
-The measured server path is currently substantially slower than the original.
-The performance gate has not passed. See
+In a shared-client, single-execution-slot HTTP/1.1 comparison using
+Benchmark::Web, this rebuild exceeded Mojolicious throughput but trailed
+Feersum, Hyperman and the original Linux::Event::HTTP significantly.
+The performance gate remains open; see `docs/BENCHMARKING.md` for
+matched workloads and caveats. See
 [implementation status and measurements](docs/UNBLOCK-REBUILD-STATUS.md),
-[approved plan](docs/UNBLOCK-REBUILD-PLAN.md), and [active handoff](handoff.md).
+[approved plan](docs/UNBLOCK-REBUILD-PLAN.md). The development handoff is
+tracked in the Git repository, not in the packaged distribution.
 
 ## Development checks
 
