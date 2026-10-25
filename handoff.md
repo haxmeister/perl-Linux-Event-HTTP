@@ -115,6 +115,20 @@ these feature additions. Root CI pins the published feature source commits.
 - Stage D credit recovery and malformed-UDP containment remain open.
   Stages B/C gate exceptions, Stage E and Stage F remain unchanged.
 
+## Stage D credit and malformed UDP checks - pending CI
+
+- The real QUIC test t/rebuild/97-http3-multiconnection.t passed 13
+  assertions in workflow 40146260213, and all seven Perl lanes passed.
+- Added t/rebuild/98-http3-credit-malformed.t. The first subtest sets
+  QUIC server max_bidi_streams => 1, holds the first admitted response,
+  and requires a second queued public Client operation to be admitted
+  after stream credit recovers. It checks both transaction identities and
+  bodies. The second subtest injects three malformed raw UDP datagrams,
+  then requires an authenticated public H3 request and response to succeed
+  with no unwound event-loop error. Both require real dependencies in CI.
+- These new checks are pending CI verification. No Stage B/C gate waiver,
+  Stage E/F work, or dependency/main source modification occurred.
+
 ## Implemented
 
 Stage A/B:
