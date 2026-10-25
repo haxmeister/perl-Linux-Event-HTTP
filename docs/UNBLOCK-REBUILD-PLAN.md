@@ -1,6 +1,6 @@
 # Linux::Event::HTTP - Unblock Reconstruction Plan
 
-Status: Stage A implemented; Stage B throughput gate open; Stage C initial HTTP2 integration (h2spec conformance gate open); Stage D supported HTTP3 loopback/lifecycle gate verified; Stage E in progress (H1 WebSocket/generic handoff and H2/H3 WebSocket verified; generic H2/H3 handoff remains); Stage F pending
+Status: Stage A implemented; Stage B throughput gate open; Stage C initial HTTP2 integration (h2spec conformance gate open); Stage D supported HTTP3 loopback/lifecycle gate verified; Stage E core WebSocket and generic H1/H2/H3 handoff gates verified; Stage F pending
 Date: 2026-10-22
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Working branch: `feature/unblock-http-rebuild`

@@ -9,6 +9,45 @@ Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
 Detailed evidence: docs/UNBLOCK-REBUILD-STATUS.md
 
+## Stage E generic multiplexed CONNECT verified — 2026-10-25
+
+Upper Unblock::HTTP feature/linux-event-integration source:
+e9efa51ee0110227945628f3f85a3feedba90558,
+follow-up terminal observer source 79aa4904ba756d72d409e285d00f5c260a5f56eb
+and H3 SETTINGS-scoped source dc4848cbd05555fffc0af0bf6ae0e8cdc73b5dd3.
+Upper CI 40154517724 PASSED Perl 5.20/5.44.
+Upper handoff updated on authorized feature branch.
+
+Root full CI 40154550676 PASSED all SEVEN Perl jobs.
+Required t/rebuild/107-generic-multiplex.t PASSED in native and Perl
+input modes with real H2 TLS and H3 QUIC:
+- first generic Extended CONNECT waits for peer SETTINGS automatically,
+  with no warmup request or WebSocket dependency;
+- Server on_handoff($tx,$request,$bridge) and Client
+  request(on_handoff=>...) accept protocol-neutral byte consumers;
+- outgoing DATA is bounded/deferred over each independent H2/H3
+  transaction, never replacing the whole TLS/QUIC connection;
+- bidirectional PING/PONG raw tunnel, reciprocal EOF and terminal
+  completion exactly once; concurrent ordinary HTTP sibling intact;
+- rejection with undef returns HTTP 403, installs no Client consumer,
+  closes unused request producer and returns pooled stream credit;
+- one shared transport and zero remaining socket/timer watchers;
+- existing H3 stream-credit/malformed UDP and H2/H3 WebSocket tests
+  also PASS.
+
+Extra assertion that 403-rejected CONNECT cannot fall through to
+ordinary on_request was added in root 1590a770 (follow-up CI pending).
+This is a focused Stage E stream contract; it does not claim that
+HTTP2 or HTTP3 protocol conformance gates have passed.
+
+Current core Stage E requirements from the approved plan are covered:
+native same-read H1 Upgrade, TLS-preserving whole-stream handoff,
+H2/H3 WebSocket and generic stream-local CONNECT, ordinary sibling
+independence, close/shutdown ownership. Stage F cleanup remains
+deferred. Stage B HTTP1 throughput comparison and Stage C h2spec
+(146 total / 134 pass / 1 skip / 11 fail, baseline parity) still
+FAIL release gates. Do not merge/tag/bump/release. Main unchanged.
+
 ## Stage E HTTP3 CONNECT fix — independently and downstream verified (2026-10-25)
 
 User explicitly authorized feature-branch work on Unblock::HTTP3.

@@ -264,13 +264,22 @@ object implementing C<input>, C<input_eof>, C<transport_error>
 and C<resume_output>. The Linux::Event stream transitions in place;
 any same-read native input tail is preserved without duplication.
 The successor owns the socket after handoff. WebSocket handshakes take
-precedence when both callbacks are enabled. H2/H3 generic CONNECT is
-not yet supported by this callback.
+precedence when both callbacks are enabled. For HTTP2/HTTP3, C<on_handoff($tx, $request, $bridge)> returns a
+stream-local consumer for a CONNECT request (not a whole socket).
+The Server responds with status 200, forwards DATA and EOF to the
+consumer, and preserves ordinary sibling streams. Return undef to
+reject with 403. Configure C<http2 =E<gt>
+{ enable_connect_protocol =E<gt> 1 }> or C<http3 =E<gt>
+{ enable_extended_connect =E<gt> 1 }> for Extended CONNECT; no
+WebSocket advertisement is required. The bridge accepts
+C<unblock_send>, C<unblock_finish>, and C<unblock_abort>, with
+deferred bounded output. It invokes C<resume_output> for flow
+control. Generic handoff never replaces the multiplexed transport.
 
 C<http2 =E<gt> 1> enables optional Unblock::HTTP2 (at least 0.12). Server
 HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>.
 A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains
-admitted streams. Cleartext HTTP/2 and generic non-WebSocket handoff are not implemented.
+admitted streams. Cleartext HTTP/2 remains unimplemented.
 HTTP/2 C<on_error> may include a third protocol error-code argument.
 Optional C<http3 =E<gt> 1> uses Unblock::HTTP3 and Net::QUIC on UDP
 alongside the TCP listener at the same concrete host and port. Its

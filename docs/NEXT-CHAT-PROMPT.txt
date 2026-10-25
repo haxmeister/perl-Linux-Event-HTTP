@@ -1,57 +1,56 @@
 # Continue Linux::Event::HTTP Unblock Reconstruction
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
-Branch: feature/unblock-http-rebuild
-Full verified integration commit: 673584eed55fff7553190c5edc8c52b5c463aa03
-Documentation-only branch HEAD may be later: inspect current remote.
-Main baseline UNCHANGED: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
+Feature branch: feature/unblock-http-rebuild
+Last fully VERIFIED code checkpoint: cc250e7a33a76e205c3f2066e3254956f1a94549
+Full CI 40154550676: PASS all 7 Perl jobs, including required
+real H2/H3 generic CONNECT t/rebuild/107 in BOTH native/Perl modes.
+Additional rejection-fallthrough assertion root 1590a770 has pending CI.
+Inspect current branch HEAD and latest workflow before proceeding.
+Main untouched: c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
 
-Authoritative plan: docs/UNBLOCK-REBUILD-PLAN.md
-Latest evidence: docs/UNBLOCK-REBUILD-STATUS.md and handoff.md.
-H3 bug/verified fix forensic: docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md.
+Read first handoff.md, docs/UNBLOCK-REBUILD-PLAN.md (approved),
+docs/UNBLOCK-REBUILD-STATUS.md (verified evidence). Avoid rearchitecture.
 
-Do implementation, no architecture reset or release prep. All feature
-branch pushes authorized; no merges, tags, version bumps, releases, or
-main changes without fresh permission. Linux::Event core, Uniform::HTTP,
-Net::QUIC, HTTP2, Unblock::WebSocket are READ-ONLY. User authorized
-narrow scope changes on feature/connect-completion-recheck in
-haxmeister/perl-Unblock-HTTP3 and earlier generic handoff on
-haxmeister/perl-Unblock-HTTP feature/linux-event-integration.
+Stage E CORE gate verified:
+- H1 native/Perl generic Upgrade/CONNECT and WebSocket same-read tail
+  exactly once through Linux::Event transition_to(). Original socket
+  and authenticated TLS continue unchanged and ordered writes survive.
+- H2/H3 WebSocket Extended CONNECT, independent ordinary stream,
+  close/FIN and pool ownership verified.
+- H2/H3 GENERIC Extended CONNECT Server/Client on_handoff callbacks,
+  strict explicit Client HTTP version 2/3, bounded deferred stream DATA,
+  automatic wait for peer SETTINGS, successful 200 and rejected 403,
+  bidirectional EOF and cleanup without taking over QUIC/TLS socket.
+  Root t/rebuild/107 covers both native/Perl modes. Real QUIC/TLS.
+- Unblock::HTTP upper authorized feature branch
+  feature/linux-event-integration, implementation source
+  dc4848cbd05555fffc0af0bf6ae0e8cdc73b5dd3,
+  subsequent 403 stream finish source
+  e9efa51ee0110227945628f3f85a3feedba90558,
+  terminal observer ownership correction
+  79aa4904ba756d72d409e285d00f5c260a5f56eb.
+  Root CI pins e9efa51e for successful downstream verification,
+  and latest upper Handoff.md records outcomes.
+- Unblock::HTTP3 source b0585f6083c91a7bdfea0ddbccfefea76ab92362
+  on feature/connect-completion-recheck fixes post-writer-complete
+  CONNECT lifecycle. Standalone CI 40152896247 four Perl lanes green.
+- No main changes, merges, tags, version bumps, releases.
+- Linux::Event core, Net::QUIC, Uniform::HTTP, HTTP2, WebSocket
+  dependency source read-only. Feature-branch pushes authorized.
 
-CRITICAL NEW VERIFIED CHECKPOINT:
-Unblock::HTTP3 feature/connect-completion-recheck
-implementation b0585f6083c91a7bdfea0ddbccfefea76ab92362
-(main remains aa810d0b80dd4b3f94850b8ca95a4b5e6d7737a7).
-Standalone CI 40152896247 PASS 4 Perl lanes 5.20/28/36/44.
-Fix: after Body::Stream->complete() commits the writer-complete bit,
-internal Transaction->_outgoing_body_complete() rechecks the existing
-Connection::_maybe_complete_transaction(). No Linux-specific shim.
-New real-QUIC regression t/28-connect-completion.t verifies response
-and incoming reader finish before CONNECT request writer FIN, then
-callbacks occur once without another network event.
+NEXT under original approved plan:
+1. Verify latest supplemental rejection test CI. Update checkpoints
+   without weakening strict tests.
+2. Return to Stage B HTTP1 throughput gate. Investigate concrete
+   end-to-end overhead against retained baseline, make targeted
+   fixes, verify before/after with equal workloads (avoid broad
+   profiler loops without specific hypotheses).
+3. Address Stage C h2spec: 146 total / 134 pass / 1 skip / 11 failures,
+   identical to old baseline but NOT a passed protocol conformance
+   gate. Prefer scoped engine fixes, request authorization for
+   read-only Unblock::HTTP2 before changing it.
+4. Stage F cleanup only when required replacement coverage and gates
+   are adequate, then distribution docs/tests/disttest. No release.
 
-Root CI 40152960105 PASS all SEVEN Perl jobs, latest lane checks H3
-feature source pinned in .github/workflows/ci.yml. Required
-t/rebuild/102-websocket-multiplex.t PASS in native/Perl modes:
-H2/H3 WebSocket Extended CONNECT, echo, sibling ordinary HTTP, Close
-handshake and stream FIN complete, pool/watcher cleanup.
-All Stage D real QUIC checks 70/80/90/95/96/97/98/99 remain GREEN.
-Native and Perl H1 same-read WebSocket tests 100/101, generic H1
-Server 101/CONNECT t/104, generic Client socket handoff t/105, and
-authenticated TLS H1 WebSocket t/106 all PASS.
-Upstream Unblock::HTTP on feature/linux-event-integration HEAD
-56c6ab44829de3c59a1a3f4c940533ce67c63a64, implementation
-a850460a253937735f8cfe763a4afd3bf43ec147, no new version.
-
-NEXT in approved Stage E: generic non-WebSocket H2/H3 *stream-local*
-Extended CONNECT handoff via minimal event-loop-neutral Unblock API,
-NOT socket-wide transition_to(), preserving sibling streams, flow
-control, callback/error/close ownership. Determine what incremental
-contract is necessary in upper Unblock::HTTP; do not duplicate protocol
-engines or WebSocket codec. User dislikes unnecessary abstraction and
-async/await. H3-only/wildcard UDP listeners remain unsupported.
-
-Release gates STILL OPEN: Stage B HTTP1 throughput comparison;
-Stage C h2spec 146 total / 134 pass / 1 skip / 11 fail (baseline
-parity but not clean conformance). Stage F legacy cleanup deferred.
-No backward compatibility required under reconstruction charter.
+H3-only and wildcard UDP Servers remain unsupported; do not advertise.

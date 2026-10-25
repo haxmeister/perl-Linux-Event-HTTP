@@ -210,8 +210,17 @@ native input handoff is verified. Optional C<http2 =E<gt>
 alongside ordinary H2 requests. HTTP3 Extended CONNECT messages and
 graceful WebSocket Close/FIN are verified by real QUIC loopback, with
 the Unblock::HTTP3 completion-recheck feature commit installed.
-Generic non-WebSocket HTTP1 on_handoff is implemented; generic
-H2/H3 stream-local CONNECT handoff remains unfinished.
+Generic H2/H3 CONNECT uses C<request(method =E<gt> 'CONNECT',
+protocol =E<gt> 'raw-tunnel', http_version =E<gt> '2' or '3',
+on_handoff =E<gt> sub ($tx, $response, $bridge) { ... })>.
+The callback returns a byte consumer supporting C<input>,
+C<input_eof>, C<transport_error> and C<resume_output>.
+C<$bridge-E<gt>unblock_send> and C<unblock_finish> write/end the
+stream without closing its TLS/QUIC parent. The Client waits for
+peer Extended CONNECT SETTINGS automatically; normal H2/H3 sibling
+HTTP operations continue through the pool. A non-2xx response
+does not invoke C<on_handoff>; the unused outgoing CONNECT writer
+is finished and the HTTP response is returned normally.
 No redirects, cookies, authentication retries or response wrappers are added.
 
 =cut
