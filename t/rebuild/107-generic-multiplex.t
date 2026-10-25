@@ -105,6 +105,25 @@ for my $version (2, 3) {
         );
         my $host = $version == 2 ? 'localhost' : '127.0.0.1';
         my $origin = "$host:" . $server->port;
+        # Extended CONNECT is only permitted after the peer's SETTINGS.
+        # First establish the reusable H2/H3 connection through normal HTTP.
+        my $probe = $client->get(
+            "https://$origin/probe", http_version => "$version", timeout => 5,
+            on_error => sub ($tx, $error) {
+                push @errors, "probe: $error"; $loop->stop;
+            },
+            on_finish => sub { $loop->stop },
+        );
+        my $probe_guard = Linux::Event::Kernel::Timer->new(
+            loop => $loop, after => 7,
+            on_timer => sub { push @errors, 'probe timed out'; $loop->stop },
+        );
+        $loop->run;
+        $probe_guard->cancel;
+        is($probe->state, 'complete', 'negotiated reusable connection');
+        is($client->pool_stats->{connections}, 1,
+            'initial H2/H3 connection remains pooled');
+        $normal = 0;
         my $done = sub {
             $loop->stop if $tunnel_finished && $normal_finished;
         };
