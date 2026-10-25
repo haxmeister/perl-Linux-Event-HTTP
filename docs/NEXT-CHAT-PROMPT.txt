@@ -1,3 +1,28 @@
+# Resume Linux::Event::HTTP (Stage B open, Stage C and F checks passing)
+
+Latest source: feature/unblock-http-rebuild commit
+8742e88729664b997bca493ad0a6d67d9055d5a9
+Stage F documentation and CPAN-source cleanup verified via
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40212449302
+ALL SEVEN Perl lanes PASS including latest make disttest, real HTTP2/H3,
+WebSocket and CONNECT. MANIFEST now 57 files (was 90): 33 archived
+benchmark-result files and one internal next-chat prompt excluded
+but kept in Git, MANIFEST.SKIP prevents archive regrowth.
+HTTP2 public architecture doc now reflects repaired 0.13 147/147
+h2spec with zero skips/failures. README no dead packaged handoff link.
+Benchmarking docs contain verified five-server peer comparisons.
+
+Stage B HTTP1 remains OPEN: same runner GET32 req/s
+Hyperman ~111k, Feersum ~109k, original LinuxEvent ~40k,
+rebuild ~9.7k, Mojolicious ~2.5k. No upstream change justified by
+these results alone. Stage C CLOSED with HTTP2 >=0.13.
+
+Keep project architecture and branch restrictions: only root feature
+editable without additional approval, never root main, no upstream
+Unblock/Uniform/LinuxEvent/BM Web changes, no release/merge/tag.
+Read root handoff.md first, then reconstruction plan/status.
+Do implementation and tests, not new design discussions.
+
 # Continue Linux::Event::HTTP reconstruction
 
 LATEST (2026-10-25): Neutral FIVE-PEER HTTP1 performance benchmark DONE.

@@ -1,5 +1,45 @@
 # Reconstruction implementation checkpoint
 
+## Stage F public documentation and source package audit VERIFIED (2026-10-25)
+
+Checkpoint source commit 8742e88729664b997bca493ad0a6d67d9055d5a9.
+Complete root CI https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40212449302
+SUCCESS all 7 Perl lanes; latest nonthreaded lane independently ran:
+- clean source MANIFEST-based make disttest: PASS;
+- HTTP2 repaired engine optional tests: PASS;
+- HTTP3 real QUIC loopback suite: PASS;
+- HTTP1/H2/H3 WebSocket and generic handoff coverage: PASS.
+No regressions from packaging/documentation changes.
+
+Actual change:
+- Restored docs/HTTP2-ARCHITECTURE.md to reflect current strict 147/147
+  h2spec ZERO skips/failures across standalone, rebuilt native/Perl
+  (earlier 134/1/11 was obsolete HTTP2 0.12 data, not current).
+- Added five-peer Benchmark::Web GET32/POST4K medians plus precise
+  workload contract/limitations to docs/BENCHMARKING.md.
+- Removed README's link to a handoff file absent from the CPAN archive.
+- Trimmed MANIFEST from 90 to 57 entries by excluding 33 archived
+  bench/results/*.json and internal docs/NEXT-CHAT-PROMPT.txt.
+  Their Git history and branch files were NOT deleted. Retain
+  runtime libraries, 21 rebuilt test files, XS ABI headers, public docs,
+  development benchmark scripts and existing packaging metadata.
+- Added MANIFEST.SKIP to keep historical result files, internal handoff,
+  GitHub CI and benchmark-only peer adapters out of future archives.
+- Recorded the changes in Changes; no version bump/tag/release.
+CI disttest verified a freshly copied source tree from MANIFEST.
+Root main remains c0bf714e0f08f9031684e2eb4fd70dea3c68449f
+and Unblock, Uniform, Linux::Event core, Benchmark::Web remain untouched.
+
+Stage B high-throughput HTTP1 still OPEN; five-peer figures are
+unchanged: rebuild GET32 ~9.7k req/s vs legacy ~40.4k,
+Feersum ~108.6k, Hyperman ~111.3k, Mojolicious ~2.5k on the
+same runner. The benchmark is not evidence that Unblock is defective.
+Stage C HTTP2 strict conformance remains CLOSED for >=0.13.
+Do not start main/release or change upstream architecture without
+the user's explicit instructions.
+
+
+
 ## Stage B independently benchmarked against established Perl servers (2026-10-25)
 
 VERIFIED same-runner Benchmark::Web comparison, feature commit
