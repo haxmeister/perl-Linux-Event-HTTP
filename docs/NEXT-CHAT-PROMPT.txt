@@ -41,6 +41,15 @@ VERIFIED:
   request unaffected, and zero watcher leaks.
 
 STAGE E CURRENT:
+- CI 40152181082 6/7 lanes green. Required authenticated TLS
+  H1 WebSocket test 106 PASSED in native and Perl modes with real
+  cipher, 101 Upgrade, WebSocket exchange, pool transfer and zero
+  watchers. Only the REQUIRED H3 t/102 remains red.
+- H3 issue note: docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md.
+  Root snapshot proves missing completion recheck after all H3
+  CONNECT preconditions became true. Only an authorized H3
+  feature-branch fix is acceptable; no private adapter workaround.
+
 - Generic HTTP1 on_handoff server (101/CONNECT) and client request
   (strict HTTP1) implemented in Unblock::HTTP feature branch.
   Upper source a850460a253937735f8cfe763a4afd3bf43ec147,

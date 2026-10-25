@@ -57,6 +57,34 @@ targeted TLS HTTP1 same-read Upgrade remain unfinished. Stage B HTTP1
 throughput gate and Stage C h2spec parity failures remain OPEN.
 Stage F cleanup remains deferred in the approved plan.
 
+## Stage E TLS WebSocket handoff gate verified — 2026-10-25
+
+- Root source for test fixture: be1434476b614214b30b5bdcc8a370b1b20642ad.
+- CI https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40152181082:
+  6/7 Perl lanes PASS (5.36, 5.38, 5.40, 5.42, 5.44 and latest
+  threaded). Latest Perl nonthreaded lane FAILS ONLY because of the
+  already-required H3 WebSocket completion regression in t/rebuild/102.
+- The new required real TLS loopback t/rebuild/106-websocket-tls.t
+  PASSED both native borrowed-input and Perl input modes on latest Perl.
+  Validated established authenticated TLS transport/cipher on both
+  reblessed successors, real encrypted WebSocket exchange, detached
+  HTTP Client pool connection, shutdown and zero watchers.
+- The initial TLS fixture mistakenly supplied too few callback parameters
+  for Server on_request and Server WebSocket on_open, which Perl 5.44
+  correctly rejected. Both fixture signatures corrected; no protocol or
+  Linux::Event core change was necessary.
+- t/rebuild/100 HTTP1 same-read Upgrade, t/rebuild/101 public WebSocket
+  Client, 104 generic Server 101/CONNECT, and 105 generic Client
+  continue passing native and Perl input.
+- H2 part of t/rebuild/102 passes; H3 Client still misses its final
+  transaction completion recheck despite response+reader+writer complete.
+  Exact issue and proposed engine-only correction are recorded in
+  docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md.
+- The approved Stage E plan remains. Generic H2/H3 non-WebSocket
+  stream-local handoff and H3 close fix remain uncompleted. DO NOT
+  change read-only Unblock::HTTP3, Net::QUIC or core without explicit
+  authorization; do not weaken the H3 test.
+
 ## Stage E WebSocket implementation and verified boundary — 2026-10-24 local
 
 Current tested implementation: dd902cc1015993b51ceed347110f76a5a3a88a59

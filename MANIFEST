@@ -184,3 +184,4 @@ t/rebuild/102-websocket-multiplex.t
 t/rebuild/104-generic-handoff.t
 t/rebuild/105-generic-client.t
 t/rebuild/106-websocket-tls.t
+docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md
