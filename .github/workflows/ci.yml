@@ -42,6 +42,12 @@ jobs:
           repository: haxmeister/perl-Unblock-WebSocket
           ref: 6f27677e176a3010355e1db5d135895baa3d8128
           path: .ci-deps/websocket
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        with:
+          repository: haxmeister/perl-Unblock-HTTP3
+          ref: b0585f6083c91a7bdfea0ddbccfefea76ab92362
+          path: .ci-deps/http3
       - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
         with:
           perl-version: ${{ matrix.perl }}
@@ -81,6 +87,9 @@ jobs:
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
           cpanm --notest 'Net::QUIC@0.06' 'Unblock::HTTP3@0.13'
+          # Coordinated Stage E feature under test, not the released CPAN build.
+          cpanm --notest ./.ci-deps/http3
+          perl -MUnblock::HTTP3::Body::Stream -e 'my $path = $INC{"Unblock/HTTP3/Body/Stream.pm"}; die "feature source not installed: $path\n" unless $path =~ /site_perl/'
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/70-http3-loopback.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/80-http3-client.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/90-http3-server.t
