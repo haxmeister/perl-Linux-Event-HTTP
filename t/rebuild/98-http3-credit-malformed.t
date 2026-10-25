@@ -60,6 +60,11 @@ sub stop_server ($loop, $server, $client) {
     }
     is($shutdown_done, 1, 'forced shutdown completes once');
     is($server->connection_count, 0, 'no remaining QUIC sessions');
+    if ($loop->count) {
+        require Data::Dumper;
+        diag('remaining resources: ' . Data::Dumper::Dumper($loop->why_alive));
+        diag('remaining classes: ' . join(', ', map { ref($_) } @{ $loop->objects }));
+    }
     is($loop->count, 0, 'no remaining UDP/TCP/timer watchers');
 }
 
