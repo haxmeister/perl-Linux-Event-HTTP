@@ -1,100 +1,53 @@
-# Continue Linux::Event::HTTP Unblock Reconstruction
+# Continue Linux::Event::HTTP Unblock reconstruction
 
-Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
+Repo: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Feature branch: feature/unblock-http-rebuild
-Last Stage E verified implementation: 1590a770b8ff8b4a7ab6f837afac75559a3ff386
-Full CI 40154733648: PASS all 7 Perl jobs, including real
-H2/H3 generic CONNECT t/rebuild/107 in BOTH native/Perl modes.
-Rejected CONNECT does not enter ordinary on_request.
-Inspect current branch HEAD and latest workflow before proceeding.
-Main untouched: c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+Latest verified source checkpoint: f0f44edda0c8eb6a430625feb7285d175dc6cebd
+Root CI 40161695154: ALL SEVEN Perl jobs PASS. Latest nonthreaded
+make disttest PASS, plus native/Perl H1/2, real QUIC H3, WebSocket and
+generic H1/H2/H3 CONNECT regression coverage.
+Main baseline untouched: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 
-Read first handoff.md, docs/UNBLOCK-REBUILD-PLAN.md (approved),
-docs/UNBLOCK-REBUILD-STATUS.md (verified evidence). Avoid rearchitecture.
+Inspect HEAD and remote refs before editing. Read handoff.md first,
+then docs/UNBLOCK-REBUILD-PLAN.md and docs/UNBLOCK-REBUILD-STATUS.md.
+Do implementation and verification, not another architecture discussion.
 
-Stage E CORE gate verified:
-- H1 native/Perl generic Upgrade/CONNECT and WebSocket same-read tail
-  exactly once through Linux::Event transition_to(). Original socket
-  and authenticated TLS continue unchanged and ordered writes survive.
-- H2/H3 WebSocket Extended CONNECT, independent ordinary stream,
-  close/FIN and pool ownership verified.
-- H2/H3 GENERIC Extended CONNECT Server/Client on_handoff callbacks,
-  strict explicit Client HTTP version 2/3, bounded deferred stream DATA,
-  automatic wait for peer SETTINGS, successful 200 and rejected 403,
-  bidirectional EOF and cleanup without taking over QUIC/TLS socket.
-  Root t/rebuild/107 covers both native/Perl modes. Real QUIC/TLS.
-- Unblock::HTTP upper authorized feature branch
-  feature/linux-event-integration, implementation source
-  dc4848cbd05555fffc0af0bf6ae0e8cdc73b5dd3,
-  subsequent 403 stream finish source
-  e9efa51ee0110227945628f3f85a3feedba90558,
-  terminal observer ownership correction
-  79aa4904ba756d72d409e285d00f5c260a5f56eb.
-  Root CI pins e9efa51e for successful downstream verification,
-  and latest upper Handoff.md records outcomes.
-- Unblock::HTTP3 source b0585f6083c91a7bdfea0ddbccfefea76ab92362
-  on feature/connect-completion-recheck fixes post-writer-complete
-  CONNECT lifecycle. Standalone CI 40152896247 four Perl lanes green.
-- No main changes, merges, tags, version bumps, releases.
-- Linux::Event core, Net::QUIC, Uniform::HTTP, HTTP2, WebSocket
-  dependency source read-only. Feature-branch pushes authorized.
+Architecture: Linux::Event::HTTP is a thin native Linux transport/adapter
+around event-loop-independent Unblock::HTTP. Real Unblock Transactions
+and Uniform Request/Response objects form the public boundary. No old
+Request/Response/Transaction/Operation wrappers or legacy parser remains.
+HTTP/1, TLS HTTP/2, combined TCP+QUIC/TLS HTTP/3, WebSocket and generic
+stream-local Extended CONNECT are implemented. H3-only and wildcard UDP
+listeners remain unsupported.
 
-STAGE B NEW BENCHMARK 2026-10-25 UTC:
-- IMPORTANT user direction: preserve Unblock's framework-neutrality.
-  Never tune its behavior specifically for Linux::Event. An Unblock
-  source change requires independent, general benefit. No upstream
-  production change was made in this profiling pass.
-- Root CI 40156778214 and 40157039519 PASS all 7 lanes.
-- New root-only bench/run-unblock-cost-breakdown.pl separates
-  Uniform constructor (~4.49us), wire plan (~1.21us),
-  direct HTTP1 fresh engine (~23.46us), Unblock facade fresh
-  (~23.40us). The upper facade has negligible per-request penalty.
-- Diagnostic-only frozen prebuilt Uniform response direct engine
-  ~17.99us, facade ~17.85us. Reuse is a measurement upper bound,
-  NOT production caching or justification to bypass validation.
-- TCP native bridge 33.8k vs Perl input 26.7k req/s in matched CI.
-  Native input is faster, not the bottleneck fix.
-- Matched TCP fresh/prebuilt diagnostic shows constructor cost is
-  real, but absolute CI capacity varies strongly; Stage B still
-  FAILS the legacy throughput gate.
-- All raw samples:
-  bench/results/unblock-stage-b/20261025-cost-boundary.json
-- A truly general canonical constructor optimization belongs to
-  Uniform::HTTP's OWN project, not a Linux-specific Unblock path.
-  Uniform is READ-ONLY without separate authorization.
+Completed Stage F: source commit 51dc44d removed 85 obsolete files,
+including 57 old tests; 21 rebuilt tests retained. Docs commit 21f0ec6
+replaced stale architecture and policy docs. CI 40158734512 seven jobs
+PASS including source-tarball make disttest. Source cleanup f0f44ed
+removed 14 obsolete benchmark executables (old parsers/wrappers) and
+removed unused top-level direct CookieJar, Auth and URI prerequisites.
+The five Unblock benchmark executables and historical JSON evidence
+remain. CI 40161695154 all seven jobs PASS, including packaged tests.
 
-STAGE B CURRENT CHECKPOINT (2026-10-25):
-- Unblock::HTTP1 feature/linux-event-integration core 4d19f59:
-  bodyless Uniform request was already complete+frozen from trusted
-  head; skip redundant receive-body finishing/mark_complete/freeze.
-  Dedicated pipelined GET/GET/POST regression t/57 added in
-  a90cfef; standalone CI 40156227917 all 4 jobs PASS and
-  framework examples CI 40156227919 both PASS.
-  Upstream HTTP1 feature head e43dcd9 (handoff-only follow-up).
-- Root all-seven-lane CI 40155946839 PASS, implementation pin
-  4d19f59; root feature branch has later docs-only checkpoint.
-- Same-run unprofiled engine A/B on two hosts shows 7.5–8% less
-  per-request CPU for this particular bodyless workload.
-- Matched real TCP GET32 100 sockets/pipeline1/10000 measured:
-  legacy main 49,591/49,085 req/s versus rebuilt 24,906/24,602.
-  This is ~50% throughput parity; Stage B still FAILS release gate.
-- Raw values: bench/results/unblock-stage-b/20261025-bodyless.json.
-- NYTProf 40155412311 top exclusive hotspots request-drive,
-  respond, Uniform response construction/body/status, finalization.
-- Next isolate constructor versus transaction/response planning in a
-  single precisely matched benchmark, retaining Uniform validation.
-- No framework/API redesign or Linux::Event core changes.
+RELEASE GATES OPEN:
+- Stage B HTTP1 real TCP throughput remains substantially below
+  legacy main. Same-host examples: legacy ~49k vs rebuilt ~25k req/s.
+  CPU decomposition isolates fresh Uniform canonical Response
+  construction (~4.49us), direct engine (~23.46us), and upper
+  Unblock facade (~23.40us); upper facade not the problem.
+  Native borrowed-input path is faster than Perl fallback (~27% in
+  one paired runner). Do NOT bypass Uniform validation or cache
+  canonical responses internally. Keep comparisons same-host ABBA.
+- Stage C h2spec 146: 134 pass, 1 skip, 11 fail, exactly matching
+  the legacy baseline. This is NOT conformance. Investigate the
+  general HTTP2 engine/fixture contract; HTTP2 upstream is read-only
+  unless user authorizes feature-branch changes.
+- Complete remaining Stage F release-readiness evaluation (security,
+  leak/reentrancy, docs, dependency/release compatibility) only
+  without pretending those release gates passed.
 
-NEXT under original approved plan:
-1. Return to Stage B HTTP1 throughput gate. Investigate concrete
-   end-to-end overhead against retained baseline, make targeted
-   fixes, verify before/after with equal workloads (avoid broad
-   profiler loops without specific hypotheses).
-2. Address Stage C h2spec: 146 total / 134 pass / 1 skip / 11 failures,
-   identical to old baseline but NOT a passed protocol conformance
-   gate. Prefer scoped engine fixes, request authorization for
-   read-only Unblock::HTTP2 before changing it.
-3. Stage F cleanup only when required replacement coverage and gates
-   are adequate, then distribution docs/tests/disttest. No release.
-
-H3-only and wildcard UDP Servers remain unsupported; do not advertise.
+Never tailor Unblock/Uniform engines to Linux::Event-specific overhead.
+Any upstream optimization must be framework-neutral and independently
+verified. Keep changes to Linux::Event::HTTP feature branch unless
+explicit upstream authorization applies. Do not edit main, merge,
+tag, version bump, or release. Keep handoff.md updated frequently.

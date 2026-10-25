@@ -17,10 +17,14 @@ modules explicitly; it will exercise the metadata with only the
 remaining direct prerequisites and feature-branch Unblock installs.
 Unreleased Changes and README were brought into line with the rebuild.
 
-**Verification pending**: seven-lane root CI, optional H2/H3 and
-WebSocket/generic CONNECT, plus latest nonthreaded make disttest.
-Stage B measured throughput and Stage C h2spec failures remain OPEN.
-No upstream changes, main edits, version bump, tag or release.
+**Verified**: root feature commit
+f0f44edda0c8eb6a430625feb7285d175dc6cebd passed GitHub
+Actions 40161695154, all SEVEN Perl jobs, including latest nonthreaded
+make disttest, HTTP/1 native and Perl input, optional H2/H3 with real
+TLS/QUIC, WebSocket and generic CONNECT. Direct prerequisite cleanup
+was exercised by CI without explicit old CookieJar/Auth installs.
+No main, upstream, version or release change was made.
+Stage B throughput and Stage C h2spec conformance remain OPEN.
 
 
 ## Stage F verified cleanup and packaging gate - 2026-10-25 UTC
