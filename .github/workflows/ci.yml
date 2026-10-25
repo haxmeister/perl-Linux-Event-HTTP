@@ -36,6 +36,12 @@ jobs:
           repository: haxmeister/perl-Unblock-HTTP
           ref: f15638ec1cb35f95e0b1f4eb4138298fccb5fc85
           path: .ci-deps/unblock
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        with:
+          repository: haxmeister/perl-Unblock-WebSocket
+          ref: 6f27677e176a3010355e1db5d135895baa3d8128
+          path: .ci-deps/websocket
       - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
         with:
           perl-version: ${{ matrix.perl }}
@@ -83,3 +89,9 @@ jobs:
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/97-http3-multiconnection.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/98-http3-credit-malformed.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/99-http3-timeout.t
+      - name: Required HTTP1 WebSocket Upgrade
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          cpanm --notest ./.ci-deps/websocket
+          REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/100-websocket-h1.t
+          REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/100-websocket-h1.t
