@@ -73,7 +73,7 @@ ok($ws_finished >= 1, 'handshake operation finished');
 $client->shutdown;
 my $complete = 0;
 $server->shutdown(grace => 0, on_complete => sub { ++$complete; $loop->stop });
-if (!$complete {
+if (!$complete) {
     $watchdog = Linux::Event::Kernel::Timer->new(
         loop => $loop, after => 3,
         on_timer => sub { push @errors, 'shutdown timeout'; $loop->stop },
