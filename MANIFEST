@@ -181,3 +181,4 @@ lib/Linux/Event/HTTP/_UpgradedStream.pm
 t/rebuild/100-websocket-h1.t
 t/rebuild/101-websocket-client.t
 t/rebuild/102-websocket-multiplex.t
+t/rebuild/104-generic-handoff.t
