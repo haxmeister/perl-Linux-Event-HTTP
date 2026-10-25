@@ -215,6 +215,7 @@ for my $version (2, 3) {
         is($denied_finished, 1, 'rejected HTTP stream finishes exactly once');
         is($denied->state, 'complete', 'rejection is a completed HTTP response');
         is($server_handoff, 2, 'Server examined both CONNECT attempts');
+        is($normal, 1, 'rejected CONNECT bypasses ordinary on_request');
         is_deeply(\@errors, [], 'rejection does not damage the connection');
         is($client->pool_stats->{connections}, 1, 'shared transport survives denial');
         is($client->pool_stats->{active}, 0, 'rejected stream returns pool credit');
