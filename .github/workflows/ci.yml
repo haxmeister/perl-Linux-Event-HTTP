@@ -95,3 +95,5 @@ jobs:
           cpanm --notest ./.ci-deps/websocket
           REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/100-websocket-h1.t
           REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/100-websocket-h1.t
+          REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/101-websocket-client.t
+          REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/101-websocket-client.t
