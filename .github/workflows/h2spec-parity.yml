@@ -47,7 +47,7 @@ jobs:
           cpanm --notest ./.ci-deps/http2
           cpanm --notest ./.ci-deps/http1
           cpanm --notest ./.ci-deps/unblock
-          perl -MUnblock::HTTP2 -e 'die "wrong HTTP2 version" unless $Unblock::HTTP2::VERSION eq "0.12"'
+          perl -MUnblock::HTTP2 -e 'die "wrong HTTP2 version" unless $Unblock::HTTP2::VERSION eq "0.13"'
           perl Makefile.PL
           make -j2
           REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t
