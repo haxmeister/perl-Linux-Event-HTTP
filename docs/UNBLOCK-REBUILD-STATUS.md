@@ -11,9 +11,13 @@ Docs replacement: 21f0ec61808de7cb3a506faa7dc1a6613bdbe245.
 Architecture/HTTP2/CONNECT/benchmark docs no longer present the deleted
 client policy wrappers or old parsers as current production APIs.
 
-New CI packaging gate: latest nonthreaded Perl will run make disttest,
-building and exercising a distribution from MANIFEST rather than only
-from the checkout. This gate is PENDING the new CI result.
+New CI packaging gate PASSED: commit
+e43be4eca0d8c2d406d3cd6bd2063d92da225a06,
+GitHub Actions 40158734512, all SEVEN Perl jobs PASS. Latest
+nonthreaded Perl successfully ran make disttest against the generated
+distribution, compiling and testing its XS bridge and rebuilt API
+from the MANIFEST tarball. Both ordinary and native/perl input,
+H2/H3 and protocol transition checks remained green.
 
 Stage B performance and Stage C h2spec remain OPEN, with no performance
 claims from source cleanup. No upstream/main/version/release changes.
@@ -31,8 +35,9 @@ the replacement layout. All 21 rebuilt protocol regressions are retained.
 The legacy baseline and old tests remain available unchanged on main.
 Benchmark evidence and historical research documents are preserved.
 
-This change is pending new CI verification. It does NOT close Stage B
-throughput or Stage C h2spec gates. Upstream Unblock/Uniform/QUIC and
+Source cleanup and packaging are verified by root CI 40158416159
+and 40158734512. This does NOT close Stage B throughput or
+Stage C h2spec gates. Upstream Unblock/Uniform/QUIC and
 Linux::Event core sources remain untouched; no version bump or release.
 
 
