@@ -1,0 +1,93 @@
+name: Stage B neutral HTTP1 Perl peer comparison
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/unblock-http-rebuild]
+    paths:
+      - '.github/workflows/http1-peer-benchmark.yml'
+      - 'bench/benchmark-web-rebuild/**'
+
+permissions:
+  contents: read
+
+jobs:
+  peers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Unblock-HTTP1
+          ref: 4d19f59196481ae4460207c5b22c5125fdbfe186
+          path: .ci-deps/http1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Unblock-HTTP
+          ref: e9efa51ee0110227945628f3f85a3feedba90558
+          path: .ci-deps/unblock
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Linux-Event-HTTP
+          ref: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
+          path: .ci-deps/http-baseline
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Benchmark-Web
+          ref: ceb8b2f9c4cd0764441844dd91dacc1240ebc4c7
+          path: .ci-deps/benchmark-web
+      - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
+        with:
+          perl-version: '5'
+          multi-thread: false
+      - name: Install ordinary HTTP1 runtime and peer servers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential libssl-dev libev-dev zlib1g-dev
+          cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06'
+          cpanm --notest ./.ci-deps/http1
+          cpanm --notest ./.ci-deps/unblock
+          cpanm --notest Hyperman Feersum Mojolicious
+      - name: Build both LinuxEvent HTTP implementations
+        run: |
+          perl Makefile.PL
+          make -j2
+          (cd .ci-deps/http-baseline && perl Makefile.PL && make -j2)
+          REBUILD_NATIVE_INPUT=1 make test TEST_FILES=t/rebuild/10-http1.t
+      - name: Connect benchmark-only adapter to unchanged Benchmark::Web runner
+        shell: bash
+        run: |
+          mkdir -p .ci-deps/benchmark-web/benchmarks/http/servers/linuxevent-rebuild
+          cp bench/benchmark-web-rebuild/server.pl bench/benchmark-web-rebuild/rebuilt-http.pl              .ci-deps/benchmark-web/benchmarks/http/servers/linuxevent-rebuild/
+          printf '%s\n' "$GITHUB_WORKSPACE/.ci-deps/http-baseline"             > .ci-deps/benchmark-web/benchmarks/http/servers/linuxevent/source-root
+          perl -c bench/benchmark-web-rebuild/server.pl
+          perl -c bench/benchmark-web-rebuild/rebuilt-http.pl
+      - name: Shared-driver five-server correctness smoke
+        working-directory: .ci-deps/benchmark-web/benchmarks/http
+        env:
+          BENCH_REBUILD_ROOT: ${{ github.workspace }}
+        run: |
+          perl run.pl --servers=linuxevent,linuxevent-rebuild,hyperman,feersum,mojo             --smoke --strict
+          perl run.pl --servers=linuxevent,linuxevent-rebuild,hyperman,feersum,mojo             --smoke --request-body-bytes=4096 --strict
+      - name: Persistent GET 32-byte peer throughput and latency
+        working-directory: .ci-deps/benchmark-web/benchmarks/http
+        env:
+          BENCH_REBUILD_ROOT: ${{ github.workspace }}
+        run: |
+          perl run.pl --servers=linuxevent,linuxevent-rebuild,hyperman,feersum,mojo             --requests=20000 --warmup=2000 --connections=100 --pipeline=1             --response-bytes=32 --repeats=5 --timeout=120 --strict             --json="$RUNNER_TEMP/http1-get32.json"
+      - name: Persistent POST 4K-body peer throughput and latency
+        working-directory: .ci-deps/benchmark-web/benchmarks/http
+        env:
+          BENCH_REBUILD_ROOT: ${{ github.workspace }}
+        run: |
+          perl run.pl --servers=linuxevent,linuxevent-rebuild,hyperman,feersum,mojo             --requests=10000 --warmup=1000 --connections=100 --pipeline=1             --request-body-bytes=4096 --response-bytes=32 --repeats=3             --timeout=120 --strict --json="$RUNNER_TEMP/http1-post4096.json"
+      - name: Preserve neutral benchmark records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-http1-perl-peers
+          path: |
+            ${{ runner.temp }}/http1-get32.json
+            ${{ runner.temp }}/http1-post4096.json
+          if-no-files-found: ignore
