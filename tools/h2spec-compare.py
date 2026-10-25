@@ -20,18 +20,42 @@ for name in names:
     path = folder / f"{name}.xml"
     if not path.is_file() or not path.stat().st_size:
         raise SystemExit(f"missing or empty h2spec JUnit report: {path}")
-    root = ET.parse(path).getroot()
+
+    # h2spec 2.6.0 emits malformed XML when an HTTP/2 frame diagnostic
+    # contains raw protocol control bytes or XML metacharacters inside
+    # its <failure> innerxml. Parse only Go's structurally produced
+    # testsuite/testcase tags and attributes; do not parse diagnostic
+    # text as XML or alter the preserved original report.
+    import html
+    import re
+
+    source = path.read_text(encoding="utf-8", errors="replace")
+    suite_tag = re.compile(r"<testsuite\b(?P<attrs>[^>]*)>(?P<body>.*?)</testsuite>", re.S)
+    case_tag = re.compile(
+        r"<testcase\b(?P<attrs>[^>]*?)(?:\s*/>|>(?P<body>.*?)</testcase>)", re.S
+    )
+    attrs_re = re.compile(r'([a-zA-Z_][a-zA-Z_0-9]*)="([^"]*)"')
+
+    def attributes(text):
+        return {key: html.unescape(value) for key, value in attrs_re.findall(text)}
+
     cases = {}
-    for suite in root.findall(".//testsuite"):
-        section = suite.get("package", suite.get("name", ""))
-        for test in suite.findall("testcase"):
-            title = test.get("classname") or test.get("name") or "(unnamed)"
+    suites = list(suite_tag.finditer(source))
+    if not suites:
+        raise SystemExit(f"{name}: no h2spec test suites in JUnit output")
+
+    for suite in suites:
+        section = attributes(suite.group("attrs")).get("package", "")
+        for match in case_tag.finditer(suite.group("body")):
+            attrs = attributes(match.group("attrs"))
+            title = attrs.get("classname") or attrs.get("name") or "(unnamed)"
             key = f"{section} :: {title}"
             if key in cases:
-                raise SystemExit(f"{name}: duplicate test case: {key}")
+                raise SystemExit(f"{name}: duplicate h2spec test case: {key}")
+            body = match.group("body") or ""
             result = (
-                "failed" if test.find("failure") is not None or test.find("error") is not None
-                else "skipped" if test.find("skipped") is not None
+                "failed" if "<failure" in body or "<error" in body
+                else "skipped" if "<skipped" in body
                 else "passed"
             )
             cases[key] = result

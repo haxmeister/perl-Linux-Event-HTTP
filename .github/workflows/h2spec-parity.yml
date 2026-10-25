@@ -112,6 +112,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: h2spec-standalone-versus-linuxevent
-          path: ${{ runner.temp }}/h2spec-parity/
+          path: |
+            ${{ runner.temp }}/h2spec-parity/*.xml
+            ${{ runner.temp }}/h2spec-parity/*.log
+            ${{ runner.temp }}/h2spec-parity/*.json
           if-no-files-found: warn
           retention-days: 14
