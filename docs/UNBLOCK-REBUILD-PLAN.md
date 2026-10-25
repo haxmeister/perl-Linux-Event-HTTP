@@ -56,6 +56,20 @@ factories, timer callbacks, or native consumer plumbing.
 Preserve the independence of Unblock and Net::QUIC. Do not put framework
 adapters in Unblock distributions. The Linux::Event adapters belong here.
 
+Performance boundary (reaffirmed 2026-10-25):
+- Never change Unblock's parsers, response lifecycle, callback contract or
+  internal API to compensate for a Linux::Event-specific transport cost.
+- An optimization in Unblock is acceptable only if it is a defensible
+  framework-neutral HTTP improvement, preserves canonical Uniform semantics,
+  benefits other attached transports as well, and has standalone regressions.
+- Linux reactor, native consumer and socket ownership optimizations must
+  remain in Linux::Event::HTTP or Linux::Event as appropriate.
+- A benchmark-only diagnostic may use a frozen prebuilt canonical response
+  to bound construction overhead; it does not authorize production response
+  caching, weakened validation or alternate per-framework protocol modes.
+- Measure matched throughput/CPU and correctness before claiming performance
+  wins. Baseline parity for h2spec is not clean conformance.
+
 ## 3. Agreed public Server API
 
 Illustrative proposed API; not yet implemented:
