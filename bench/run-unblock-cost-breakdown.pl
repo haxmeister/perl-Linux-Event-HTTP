@@ -51,6 +51,7 @@ my $upper_cached_sink = BenchCostSink->new;
 my $direct = Unblock::HTTP1::Server->new(
     transport => $direct_sink,
     receive_body => 'buffered',
+    max_buffered_body_bytes => 1_048_576,
     on_request => sub { return },
     on_request_end => sub ($tx, $req) {
         $tx->respond(status => 200, body => $body);
@@ -59,19 +60,20 @@ my $direct = Unblock::HTTP1::Server->new(
 my $direct_cached = Unblock::HTTP1::Server->new(
     transport => $cached_sink,
     receive_body => 'buffered',
+    max_buffered_body_bytes => 1_048_576,
     on_request => sub { return },
     on_request_end => sub ($tx, $req) {
         $tx->respond($template);
     },
 );
 my $upper = Unblock::HTTP::Server->new(
-    http1 => { receive_body => 'buffered' },
+    http1 => {},
     on_request => sub ($tx, $req) {
         $tx->respond(status => 200, body => $body);
     },
 )->attach_stream(transport => $upper_sink);
 my $upper_cached = Unblock::HTTP::Server->new(
-    http1 => { receive_body => 'buffered' },
+    http1 => {},
     on_request => sub ($tx, $req) {
         $tx->respond($template);
     },
