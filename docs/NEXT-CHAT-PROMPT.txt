@@ -40,6 +40,22 @@ VERIFIED:
   Last added timeout regression confirmed active stream timeout, next
   request unaffected, and zero watcher leaks.
 
+STAGE E CURRENT:
+- HTTP1 native INPUT_SWITCH->transition_to() WebSocket handoff, same-read
+  tail and original socket/write queue verified. t/rebuild/100 H1 and
+  public Client t/rebuild/101 both pass native/Perl input.
+- CI 40149010878 and 40149284214: 7/7 lanes green.
+- t/rebuild/102 H2 Extended CONNECT + ordinary sibling pass.
+- Required H3 test t/rebuild/102 is RED: client WebSocket Close has
+  sent=1, received=1, complete=1, closed=0; Server H3 Transaction
+  complete, Client H3 Transaction only ends by 5sec timeout.
+  CI diagnostic 40149783042. Deferring client Close does not fix it.
+  Investigate missing Client H3 response EOF/finish in Linux QUIC
+  integration against upstream t/36-client-websocket-h3.t.
+- H3/Net::QUIC/WebSocket/core source remain read-only, no changes
+  without fresh authorization. Do not weaken the failing test.
+- Generic non-WebSocket handoff still remains.
+
 NEXT:
 - Begin Stage E opt-in WebSocket and generic Upgrade/CONNECT through
   existing Unblock APIs and approved Linux::Event transition_to(),
