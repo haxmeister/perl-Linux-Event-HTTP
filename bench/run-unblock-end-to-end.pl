@@ -17,6 +17,7 @@ use Linux::Event::Kernel::Timer;
 use Linux::Event::HTTP;
 
 use Linux::Event::HTTP::Server;
+use Uniform::HTTP::Response;
 
 
 my $requests = 20_000;
@@ -32,6 +33,7 @@ my $json_path;
 my $smoke = 0;
 my $help = 0;
 my $native_input = 1;
+my $prebuilt_response = 0;
 
 GetOptions(
     'requests=i'           => \$requests,
@@ -47,6 +49,7 @@ GetOptions(
     'smoke'                => \$smoke,
     'help'                 => \$help,
     'native-input!'        => \$native_input,
+    'diagnostic-prebuilt-response!' => \$prebuilt_response,
 ) or usage(2);
 
 usage(0) if $help;
@@ -75,13 +78,14 @@ my @records;
 
 say 'Linux::Event::HTTP Unblock end-to-end benchmark';
 say "http_version=$Linux::Event::HTTP::VERSION linux_event=$Linux::Event::Loop::VERSION perl=$^V";
-say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats profile=$profile";
+say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats profile=$profile prebuilt_response=$prebuilt_response";
 
 for my $repeat (1 .. $repeats) {
     my ($pid, $result_fh, $port) = spawn_server(
         expected => $warmup + $requests,
         response_bytes => $response_bytes,
         profile => $profile,
+        diagnostic_prebuilt => $prebuilt_response,
     );
 
     my @socket = open_clients($port, $connections);
@@ -159,6 +163,7 @@ if (defined $json_path) {
         },
         configuration => {
             native_input => $native_input,
+            diagnostic_prebuilt_response => $prebuilt_response ? JSON::PP::true : JSON::PP::false,
             requests => $requests,
             warmup => $warmup,
             connections => $connections,
@@ -201,6 +206,13 @@ sub spawn_server (%opt) {
             started => 0,
         };
 
+        # This branch is only a constructor-cost diagnostic. Never cache
+        # responses automatically in the production Server/Unblock engine.
+        my $prebuilt = $opt{diagnostic_prebuilt}
+            ? Uniform::HTTP::Response->new(status => 200, body => $state->{payload})
+            : undef;
+        $prebuilt->freeze if $prebuilt;
+
         my $server = Linux::Event::HTTP::Server->new(
             loop => $loop,
             host => '127.0.0.1',
@@ -215,7 +227,11 @@ sub spawn_server (%opt) {
             },
             on_request => sub ($tx, $request) {
                 ++$state->{seen};
-                $tx->respond(status => 200, body => $state->{payload});
+                if ($prebuilt) {
+                    $tx->respond($prebuilt);
+                } else {
+                    $tx->respond(status => 200, body => $state->{payload});
+                }
                 if ($state->{seen} == $state->{expected}) {
                     Linux::Event::Kernel::Timer->new(
                         loop => $loop, after => 0.02,
