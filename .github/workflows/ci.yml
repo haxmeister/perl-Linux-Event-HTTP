@@ -78,6 +78,27 @@ jobs:
           perl -Mblib bench/run-rebuild-client.pl --requests 100 --warmup 10 --repeats 1
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role server
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role client
+      - name: Stage B HTTP1 engine CPU hotspots (diagnostic)
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          cpanm --notest Devel::NYTProf
+          NYTPROF=file=/tmp/http1-stage-b.nytprof:stmts=0:calls=1 perl -Mblib -d:NYTProf bench/run-unblock-engine.pl --requests 4000
+          nytprofcalls /tmp/http1-stage-b.nytprof | perl -ne '
+            next unless /\A(.+) (\d+)\s*\z/;
+            my ($path, $ticks) = ($1, $2);
+            my @names = split /;/, $path;
+            my $name = $names[-1];
+            $sum{$name} += $ticks;
+            $total += $ticks;
+            END {
+              print "Stage B exclusive CPU call-tree hotspots (NYTProf ticks):\n";
+              my @keys = sort { $sum{$b} <=> $sum{$a} } keys %sum;
+              for my $i (0 .. ($#keys < 39 ? $#keys : 39)) {
+                my $name = $keys[$i];
+                printf "%6.2f%%  %11d  %s\n", 100*$sum{$name}/($total || 1), $sum{$name}, $name;
+              }
+            }
+          '
       - name: Optional HTTP2 integration
         run: |
           cpanm --notest 'Unblock::HTTP2@0.12'
