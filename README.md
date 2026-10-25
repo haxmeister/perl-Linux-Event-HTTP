@@ -115,7 +115,7 @@ Do not treat this feature branch as release ready.
 
 ## HTTP/2
 
-Install `Unblock::HTTP2 >= 0.12` and set `http2 => 1` on Client and Server.
+Install `Unblock::HTTP2 >= 0.13` and set `http2 => 1` on Client and Server.
 Server HTTP/2 requires `tls => { cert_file => ..., key_file => ... }`; ALPN
 selects HTTP/2 while HTTP/1 stays available by default. Set `http1 => 0` to
 disable it. Cleartext HTTP/2 prior knowledge and h2c are not implemented.

@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: haxmeister/perl-Unblock-HTTP2
-          ref: aca84baf6f55fad7d6f5aaaaa6f0505b2ff3d165
+          ref: aa7992f173948464982728f8e68b9b3e7a681f98
           path: .ci-deps/http2
       - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
         with:

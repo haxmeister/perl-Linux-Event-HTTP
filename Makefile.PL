@@ -61,7 +61,7 @@ WriteMakefile(
             },
             http2 => {
                 description => 'HTTP/2 over TLS with ALPN',
-                prereqs => { runtime => { requires => { 'Unblock::HTTP2' => '0.12' } } },
+                prereqs => { runtime => { requires => { 'Unblock::HTTP2' => '0.13' } } },
             },
         },
         'meta-spec' => {

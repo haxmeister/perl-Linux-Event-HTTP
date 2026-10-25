@@ -13,8 +13,13 @@ UNRELEASED - feature/unblock-http-rebuild (NOT FOR CPAN)
       protocol-engine dependencies are owned by Unblock and remain required
       transitively where applicable.
     - Verify reconstructed distribution packaging with make disttest.
-    - HTTP/1 legacy throughput parity and 11 h2spec failures remain open;
-      this branch is not a release candidate.
+    - Strict HTTP/2 h2spec conformance passes all 147 cases on the
+      repaired Unblock::HTTP2 0.13 engine, with standalone, LinuxEvent
+      native input, and LinuxEvent Perl input parity; no skips.
+    - Require Unblock::HTTP2 >= 0.13 for optional HTTP/2 so older
+      0.12 protocol errors are not advertised as passing conformance.
+    - HTTP/1 legacy throughput parity remains open; this feature
+      branch is not yet a release candidate.
 
 
 0.003  2026-09-26

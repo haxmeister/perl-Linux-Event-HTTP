@@ -74,8 +74,10 @@ input paths run the same rebuilt regression contract in `t/rebuild/`.
 
 The Stage B HTTP1 throughput gate remains open: the rebuilt native path
 has not reached the original baseline under paired real-socket testing.
-Stage C HTTP2 h2spec conformance also remains open: 134 pass, one skip and
-11 failures, matching the baseline but not constituting conformance.
+Stage C HTTP2 strict h2spec conformance is verified on the repaired
+Unblock::HTTP2 0.13 engine: all 147 cases pass on standalone and
+Linux::Event native/Perl input paths without skips. This does not
+close the independent Stage B HTTP1 throughput release gate.
 Do not bypass Uniform canonical validation, cache response objects behind
 applications or change Unblock for a Linux::Event-only performance benefit.
 The approved plan, measurements and current restrictions are recorded in
