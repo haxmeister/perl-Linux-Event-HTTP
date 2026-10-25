@@ -64,6 +64,12 @@ WriteMakefile(
                     'Unblock::HTTP3' => '0.13', 'Net::QUIC' => '0.06',
                 } } },
             },
+            websocket => {
+                description => 'Optional WebSocket protocol transition',
+                prereqs => { runtime => { requires => {
+                    'Unblock::WebSocket' => '0.02',
+                } } },
+            },
             http2 => {
                 description => 'HTTP/2 over TLS with ALPN',
                 prereqs => { runtime => { requires => { 'Unblock::HTTP2' => '0.12' } } },
@@ -77,6 +83,7 @@ WriteMakefile(
                 Linux::Event::HTTP::_Config
                 Linux::Event::HTTP::_Stream
                 Linux::Event::HTTP::_Transport
+                Linux::Event::HTTP::_UpgradedStream
                 Linux::Event::HTTP::_QUICSocket
                 Linux::Event::HTTP::_NativeStream
                 Linux::Event::HTTP::_NativeBridge
