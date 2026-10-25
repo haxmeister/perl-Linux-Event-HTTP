@@ -126,6 +126,17 @@ jobs:
               perl -Mblib bench/run-unblock-end-to-end.pl --no-native-input --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 1
             fi
           done
+      - name: Stage B diagnostic constructor upper bound on real sockets
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        run: |
+          for variant in fresh prebuilt prebuilt fresh; do
+            echo "Stage B identical TCP response data: $variant"
+            if [ "$variant" = fresh ]; then
+              perl -Mblib bench/run-unblock-end-to-end.pl --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2
+            else
+              perl -Mblib bench/run-unblock-end-to-end.pl --diagnostic-prebuilt-response --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2
+            fi
+          done
       - name: Stage B HTTP1 engine CPU hotspots (diagnostic)
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
