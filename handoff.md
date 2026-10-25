@@ -1,5 +1,50 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Stage B integration ownership audit and dependency capability correction (2026-10-25)
+
+IMPLEMENTED root source commit 7265f410a51caa66864836181d14e7ed08750a96.
+Verified CI:
+- https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40234606768
+  full root rebuild CI, ALL SEVEN Perl jobs PASS, including native and
+  Perl fallback H1 regression, optional H2/H3, WebSocket, and make disttest.
+- https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40234606741
+  independent strict h2spec v2.6.0, standalone/rebuild-native/
+  rebuild-perl/standalone-repeat all 147/147 PASS, no skips, errors
+  or case discrepancies.
+
+Root production change (Server.pm constructor ONLY):
+- Unblock::HTTP1's main 0.12 currently has no Server->drain() API;
+  the approved feature/linux-event-integration branch does have
+  Server->drain() but its published version constant is still 0.12.
+- A version-only prereq is therefore INSUFFICIENT for the approved
+  graceful shutdown behavior. Construction now checks the required
+  Server->can('drain') before it binds sockets, with an actionable
+  error for an incompatible backend. This check does not run per request.
+- Added t/rebuild/15-backend-compat.t to emulate a loaded older engine
+  without drain, assert clear refusal/no watcher leak, then verify
+  standard startup and idle shutdown with a compatible engine.
+  Test is included in source MANIFEST; Changes and README updated.
+
+This is a fail-fast correctness fix, NOT a claim of complete compatibility
+with presently published Unblock::HTTP/HTTP1 versions. The high-level
+Unblock::HTTP main 0.02 also lacks integration features such as client
+on_transaction and on_handoff, and remains pending a coordinated
+framework-neutral upstream release. Upstream libraries and main branches
+were not changed. Do not mark release-ready until upstream integration
+API work is published/versioned and tested under actual published
+dependency requirements.
+
+Stage B HTTP1 throughput still OPEN. Re-analysis confirms native
+borrowed-input bridge is already direct and the bulk of measured cost
+comes from canonical Uniform message creation and engine transaction
+work. Do not invent a LinuxEvent-specific bypass or claim root adapter
+changes will close the throughput gap. Independent peers remain
+GET32 ~9.7k rebuilt vs 40.4k legacy, 108.6k Feersum,
+111.3k Hyperman, 2.5k Mojolicious (hosted CI, directional only).
+Keep upstream architecture unchanged unless explicitly authorized,
+with objective standalone measurements demonstrating benefit.
+
+
 ## Stage F public documentation and source package audit VERIFIED (2026-10-25)
 
 Checkpoint source commit 8742e88729664b997bca493ad0a6d67d9055d5a9.

@@ -1,194 +1,30 @@
-# Resume Linux::Event::HTTP (Stage B open, Stage C and F checks passing)
-
-Latest source: feature/unblock-http-rebuild commit
-8742e88729664b997bca493ad0a6d67d9055d5a9
-Stage F documentation and CPAN-source cleanup verified via
-https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40212449302
-ALL SEVEN Perl lanes PASS including latest make disttest, real HTTP2/H3,
-WebSocket and CONNECT. MANIFEST now 57 files (was 90): 33 archived
-benchmark-result files and one internal next-chat prompt excluded
-but kept in Git, MANIFEST.SKIP prevents archive regrowth.
-HTTP2 public architecture doc now reflects repaired 0.13 147/147
-h2spec with zero skips/failures. README no dead packaged handoff link.
-Benchmarking docs contain verified five-server peer comparisons.
-
-Stage B HTTP1 remains OPEN: same runner GET32 req/s
-Hyperman ~111k, Feersum ~109k, original LinuxEvent ~40k,
-rebuild ~9.7k, Mojolicious ~2.5k. No upstream change justified by
-these results alone. Stage C CLOSED with HTTP2 >=0.13.
-
-Keep project architecture and branch restrictions: only root feature
-editable without additional approval, never root main, no upstream
-Unblock/Uniform/LinuxEvent/BM Web changes, no release/merge/tag.
-Read root handoff.md first, then reconstruction plan/status.
-Do implementation and tests, not new design discussions.
-
-# Continue Linux::Event::HTTP reconstruction
-
-LATEST (2026-10-25): Neutral FIVE-PEER HTTP1 performance benchmark DONE.
-Source feature: 00b48c843955d73d30f6b1ff603596da1ecb9e2c.
-Benchmark CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40211468264 SUCCESS.
-Full root rebuild CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40211467996 ALL 7 PASS.
-Same-runner Benchmark::Web, same raw client, 100 keepalive connections,
-32 response bytes, GET 5 repeats, POST 4096 request bytes 3 repeats:
-                         GET req/s     POST req/s
-Hyperman                 111,289        67,543
-Feersum                  108,622        99,643
-Legacy LinuxEvent         40,413        34,617
-Rebuilt LinuxEvent         9,666         7,991
-Mojolicious                2,483         2,334
-Hosted-runner medians directional only; JSON in benchmark CI artifact.
-Neutral runner/other servers unchanged; only root benchmark adapter/
-workflow added. No changes to Unblock engines, Benchmark::Web main or
-root main. This does NOT establish an engine defect. Stage B remains
-OPEN; Stage C h2spec strict 147/147 CLOSED using HTTP2 >=0.13.
-Read active root handoff.md first. DO NOT restart architectural changes,
-make upstream modifications or optimize for LinuxEvent alone. No releases,
-merges or pushes to main without explicit authorization.
-
-# Continue Linux::Event::HTTP
-
-LAST VERIFIED FEATURE:
-6a90c5f26fcf6bc3fd0d8df97470d3bfbe677e3e
-Full CI https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40209116012 ALL SEVEN PASS.
-Strict HTTP2 h2spec https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40209116003
-Four comparisons, each 147 pass, 0 skip, 0 fail.
-
-Runtime Unblock::HTTP2 floor 0.13 enforced in _Config.pm, optional
-metadata, test, POD and README. Unused old standalone fixture removed.
-h2spec workflow automatically checks native/Perl adapter source changes.
-Stage C CLOSED, but Stage B HTTP1 throughput remains OPEN:
-paired latest same-run legacy ~33.3k vs rebuilt ~11.6k req/s,
-~32 vs ~88 CPU us/request (runner-specific). Do not claim improvement.
-Only root feature branch writable, main and upstream unchanged.
-Read handoff.md and docs/UNBLOCK-REBUILD-PLAN.md FIRST.
-Next action: user-approved framework-neutral protocol performance
-improvement on a suitable upstream feature branch if justified, or
-root Stage F release-readiness work. Never tailor Unblock to LinuxEvent.
-No merge/release/tag/version without explicit approval.
-
 # Continue Linux::Event::HTTP Unblock reconstruction
 
-CURRENT NEXT STEPS after strict HTTP2 integration completion:
-- Stage C closed: strict h2spec 147/147 with Unblock::HTTP2 >=0.13;
-  native + Perl paths zero errors. See handoff first.
-- Runtime HTTP2 0.13 minimum guard regression added to root feature;
-  commit 2cf4be58abaf75a3362bf8b612eafbef8ad1bfc7,
-  CI 40208752461 all seven jobs PASS.
-- The obsolete root diagnostic TLS fixture was never in MANIFEST;
-  its Git source was removed in favor of upstream's fixed fixture.
-- H2 conformance CI reruns automatically for adapter/XS/metadata/H2 test
-  changes, rather than solely on the h2spec fixture scripts.
-- Stage B paired real socket HTTP1 throughput remains open; current
-  profiler points to generic engine and Uniform object construction.
-  No LinuxEvent-specific Unblock changes without independent benefit.
-- Main untouched. Continue useful Stage F release gates or targeted,
-  demonstrably correct native bridge improvements. No merge or release.
+Working root haxmeister/perl-Linux-Event-HTTP branch feature/unblock-http-rebuild.
+Latest source 7265f410a51caa66864836181d14e7ed08750a96,
+plus handoff-only checkpoint from this update.
+Confirmed full rebuild CI seven of seven PASS:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40234606768
+Strict h2spec 147/147 zero skipped/failed on standalone/native/Perl:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40234606741
 
-# Continue Linux::Event::HTTP reconstruction
+New root-only fail-fast guard in Server->new checks
+Unblock::HTTP1::Server->can('drain') before socket binding.
+Current upstream 0.12 main lacks drain; feature branch adds it
+without changing version. New regression
+t/rebuild/15-backend-compat.t verifies refusal then supported
+startup/shutdown; passes both native and Perl CI lanes.
+This does NOT make published upstream Unblock versions sufficient;
+upper Unblock::HTTP 0.02 also lacks integration APIs. Upstream
+coordinated releases are separate and not authorized in this chat.
 
-LATEST VERIFIED CHECKPOINT (2026-10-25):
-- Stage C strict HTTP2 conformance gate CLOSED using repaired
-  Unblock::HTTP2 0.13 main release candidate
-  aa7992f173948464982728f8e68b9b3e7a681f98.
-- LinuxEvent feature c69124c9fda86c9719f3af8663356b1191134875:
-  h2spec v2.6.0 147 passed/0 skipped/0 failed independently
-  standalone, rebuilt native and rebuilt Perl; 4/4 exact parity.
-  Actions: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40205324889
-- Seven-lane rebuild with make disttest, HTTP1/H2 native+Perl,
-  real HTTP3/QUIC, WebSocket and Extended CONNECT: 7/7 PASS.
-  Actions: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40205324924
-- Optional HTTP2 minimum bumped to 0.13. It was still pending
-  CPAN publication at this checkpoint; CI pins tested source on main.
-- Stage B HTTP1 throughput remains OPEN and is the next large issue.
-  Do not re-diagnose the old 10/13 h2spec failures; those are fixed
-  generally in Unblock::HTTP2. Older results are historical only.
-- No main, release, tag, merge or upstream editing was done here.
-  Read handoff.md first and preserve feature-branch-only restrictions.
+Stage B HTTP1 throughput gate OPEN: common Benchmark::Web GET32:
+rebuilt 9.7k, legacy 40.4k, Feersum 108.6k, Hyperman 111.3k,
+Mojolicious 2.5k req/s on same hosted CI machine; report only
+directional findings. Native bridge already thin and canonical
+object/engine lifecycle dominate costs. Never bypass canonical
+Uniform semantics or optimize Unblock specifically for LinuxEvent.
 
-# Continue Linux::Event::HTTP Unblock reconstruction
-
-LATEST VERIFIED STAGE C h2spec engine/adapter A/B:
-Same-run independent TCP/TLS direct Unblock::HTTP2 0.12
-132 pass / 1 skip / 13 fail; rebuilt native and Perl both
-135 pass / 1 skip / 10 fail. Standalone repeated exactly 132/1/13.
-All 10 rebuilt failures also occur in direct standalone engine.
-Standalone-only 3 are GOAWAY, PING-close and unknown GOAWAY code,
-possibly simple direct driver's close semantics; unproven.
-GitHub Actions 40166951263 PASS, JUnit/comparison JSON artifacts.
-Feature source 45d397f63adc8e51c7b8304ea9d5ccccb3a276e3.
-NO changes to Unblock::HTTP2 or any upstream. Stage C release gate
-still OPEN. Do not claim Linux::Event caused these ten errors, nor
-that engine defect is proved. See handoff.md first for full detail.
-
-Repo: https://github.com/haxmeister/perl-Linux-Event-HTTP
-Feature branch: feature/unblock-http-rebuild
-Latest verified source checkpoint: 60644da63ee6c6b1b5e19d7a5c7234dd8ffeb9cc
-Root CI 40163552273: ALL SEVEN Perl jobs PASS (normal push). Latest nonthreaded
-make disttest PASS, plus native/Perl H1/2, real QUIC H3, WebSocket and
-generic H1/H2/H3 CONNECT regression coverage.
-Main baseline untouched: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
-
-Inspect HEAD and remote refs before editing. Read handoff.md first,
-then docs/UNBLOCK-REBUILD-PLAN.md and docs/UNBLOCK-REBUILD-STATUS.md.
-Do implementation and verification, not another architecture discussion.
-
-Architecture: Linux::Event::HTTP is a thin native Linux transport/adapter
-around event-loop-independent Unblock::HTTP. Real Unblock Transactions
-and Uniform Request/Response objects form the public boundary. No old
-Request/Response/Transaction/Operation wrappers or legacy parser remains.
-HTTP/1, TLS HTTP/2, combined TCP+QUIC/TLS HTTP/3, WebSocket and generic
-stream-local Extended CONNECT are implemented. H3-only and wildcard UDP
-listeners remain unsupported.
-
-Completed Stage F: source commit 51dc44d removed 85 obsolete files,
-including 57 old tests; 21 rebuilt tests retained. Docs commit 21f0ec6
-replaced stale architecture and policy docs. CI 40158734512 seven jobs
-PASS including source-tarball make disttest. Source cleanup f0f44ed
-removed 14 obsolete benchmark executables (old parsers/wrappers) and
-removed unused top-level direct CookieJar, Auth and URI prerequisites.
-The five Unblock benchmark executables and historical JSON evidence
-remain. CI 40161695154 all seven jobs PASS, including packaged tests.
-
-REVIEWED HISTORICAL H2SPEC EVIDENCE:
-- September 26, 2026 old Linux::Event::HTTP PR #40, private native
-  nghttp2 XS, did achieve 146 total/145 pass/1 skip/ZERO failed.
-  It was an experimental lower-stream-ID rejection in the OLD HTTP2
-  executor, not a verified standalone Unblock::HTTP2 result.
-  Production Net::HTTP2::nghttp2 0.011 was 144/1/1 on that fixture.
-- Unblock::HTTP2 0.12 standalone CI runs nghttp/nghttpd interop, NOT
-  h2spec. Do not blame this engine without an independent h2spec A/B.
-- October new h2spec 135/1/10 differs from September experiment.
-  October legacy MAIN and rebuilt both showed 134/1/11 under the
-  October fixture/environment. Response timing did not remove ten
-  failures. A same-run standalone HTTP2 engine versus rebuild HTTP2
-  transport comparison is still needed. Review archived PR #40
-  handoff and original h2spec fixture before deciding responsibility.
-
-RELEASE GATES OPEN:
-- Stage B HTTP1 real TCP throughput remains substantially below
-  legacy main. Same-host examples: legacy ~49k vs rebuilt ~25k req/s.
-  CPU decomposition isolates fresh Uniform canonical Response
-  construction (~4.49us), direct engine (~23.46us), and upper
-  Unblock facade (~23.40us); upper facade not the problem.
-  Native borrowed-input path is faster than Perl fallback (~27% in
-  one paired runner). Do NOT bypass Uniform validation or cache
-  canonical responses internally. Keep comparisons same-host ABBA.
-- Stage C h2spec remains NOT conformant: new same-host fixture A/B
-  (headers vs complete request, unchanged generic HTTP2 engine):
-  both 146 total / 135 pass / 1 skip / 10 fail; same ten cases.
-  Earlier baseline and rebuilt report: 134/1/11. One extra failure
-  (stream WINDOW_UPDATE overflow) was absent in current pair;
-  treat this as unverified run variance, not an optimization.
-  Response-timing hypothesis is falsified. h2spec diagnostic is
-  manual workflow_dispatch only. Upstream HTTP2 remains read-only
-  without explicit permission; do not work around it in LinuxEvent.
-- Complete remaining Stage F release-readiness evaluation (security,
-  leak/reentrancy, docs, dependency/release compatibility) only
-  without pretending those release gates passed.
-
-Never tailor Unblock/Uniform engines to Linux::Event-specific overhead.
-Any upstream optimization must be framework-neutral and independently
-verified. Keep changes to Linux::Event::HTTP feature branch unless
-explicit upstream authorization applies. Do not edit main, merge,
-tag, version bump, or release. Keep handoff.md updated frequently.
+Do not modify root main, merge/tag/release/bump versions or modify
+Unblock/Uniform/LinuxEvent/Benchmark::Web repositories.
+Read active handoff.md first then docs plan/status and inspect refs.
