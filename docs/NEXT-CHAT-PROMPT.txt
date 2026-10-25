@@ -39,6 +39,30 @@ Stage E CORE gate verified:
 - Linux::Event core, Net::QUIC, Uniform::HTTP, HTTP2, WebSocket
   dependency source read-only. Feature-branch pushes authorized.
 
+STAGE B NEW BENCHMARK 2026-10-25 UTC:
+- IMPORTANT user direction: preserve Unblock's framework-neutrality.
+  Never tune its behavior specifically for Linux::Event. An Unblock
+  source change requires independent, general benefit. No upstream
+  production change was made in this profiling pass.
+- Root CI 40156778214 and 40157039519 PASS all 7 lanes.
+- New root-only bench/run-unblock-cost-breakdown.pl separates
+  Uniform constructor (~4.49us), wire plan (~1.21us),
+  direct HTTP1 fresh engine (~23.46us), Unblock facade fresh
+  (~23.40us). The upper facade has negligible per-request penalty.
+- Diagnostic-only frozen prebuilt Uniform response direct engine
+  ~17.99us, facade ~17.85us. Reuse is a measurement upper bound,
+  NOT production caching or justification to bypass validation.
+- TCP native bridge 33.8k vs Perl input 26.7k req/s in matched CI.
+  Native input is faster, not the bottleneck fix.
+- Matched TCP fresh/prebuilt diagnostic shows constructor cost is
+  real, but absolute CI capacity varies strongly; Stage B still
+  FAILS the legacy throughput gate.
+- All raw samples:
+  bench/results/unblock-stage-b/20261025-cost-boundary.json
+- A truly general canonical constructor optimization belongs to
+  Uniform::HTTP's OWN project, not a Linux-specific Unblock path.
+  Uniform is READ-ONLY without separate authorization.
+
 STAGE B CURRENT CHECKPOINT (2026-10-25):
 - Unblock::HTTP1 feature/linux-event-integration core 4d19f59:
   bodyless Uniform request was already complete+frozen from trusted

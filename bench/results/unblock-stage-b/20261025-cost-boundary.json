@@ -1,0 +1,207 @@
+{
+  "description": "Read-only diagnostic measurements; no production response caching or Unblock source edits. Values are runner-specific, compare only within a matched run.",
+  "environment": "CI ubuntu-24.04, latest Perl nonthreaded, GET 32-byte body, 100 TCP sockets, depth 1, 1000 warmup, 10000 measured per repeat",
+  "ci_cost_and_input": "https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40156778214",
+  "ci_prebuilt_socket": "https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40157039519",
+  "engine_breakdown_settings": {
+    "iterations_per_case": 12000,
+    "rounds": 3
+  },
+  "raw": {
+    "cost_breakdown": [
+      {
+        "round": 1,
+        "case": "uniform_constructor",
+        "cpu_us_per_iteration": 4.479
+      },
+      {
+        "round": 1,
+        "case": "uniform_constructor_plus_plan",
+        "cpu_us_per_iteration": 5.829
+      },
+      {
+        "round": 1,
+        "case": "wire_plan_prebuilt_canonical",
+        "cpu_us_per_iteration": 1.21
+      },
+      {
+        "round": 1,
+        "case": "direct_engine_fresh",
+        "cpu_us_per_iteration": 23.56
+      },
+      {
+        "round": 1,
+        "case": "direct_engine_prebuilt",
+        "cpu_us_per_iteration": 17.991
+      },
+      {
+        "round": 1,
+        "case": "facade_engine_fresh",
+        "cpu_us_per_iteration": 23.404
+      },
+      {
+        "round": 1,
+        "case": "facade_engine_prebuilt",
+        "cpu_us_per_iteration": 17.625
+      },
+      {
+        "round": 2,
+        "case": "uniform_constructor_plus_plan",
+        "cpu_us_per_iteration": 5.827
+      },
+      {
+        "round": 2,
+        "case": "wire_plan_prebuilt_canonical",
+        "cpu_us_per_iteration": 1.205
+      },
+      {
+        "round": 2,
+        "case": "direct_engine_fresh",
+        "cpu_us_per_iteration": 23.297
+      },
+      {
+        "round": 2,
+        "case": "direct_engine_prebuilt",
+        "cpu_us_per_iteration": 17.884
+      },
+      {
+        "round": 2,
+        "case": "facade_engine_fresh",
+        "cpu_us_per_iteration": 25.339
+      },
+      {
+        "round": 2,
+        "case": "facade_engine_prebuilt",
+        "cpu_us_per_iteration": 17.848
+      },
+      {
+        "round": 2,
+        "case": "uniform_constructor",
+        "cpu_us_per_iteration": 4.519
+      },
+      {
+        "round": 3,
+        "case": "wire_plan_prebuilt_canonical",
+        "cpu_us_per_iteration": 1.254
+      },
+      {
+        "round": 3,
+        "case": "direct_engine_fresh",
+        "cpu_us_per_iteration": 23.464
+      },
+      {
+        "round": 3,
+        "case": "direct_engine_prebuilt",
+        "cpu_us_per_iteration": 18.209
+      },
+      {
+        "round": 3,
+        "case": "facade_engine_fresh",
+        "cpu_us_per_iteration": 23.182
+      },
+      {
+        "round": 3,
+        "case": "facade_engine_prebuilt",
+        "cpu_us_per_iteration": 17.957
+      },
+      {
+        "round": 3,
+        "case": "uniform_constructor",
+        "cpu_us_per_iteration": 4.494
+      },
+      {
+        "round": 3,
+        "case": "uniform_constructor_plus_plan",
+        "cpu_us_per_iteration": 5.897
+      }
+    ],
+    "native_perl": [
+      {
+        "variant": "native",
+        "req_s": 33986.1,
+        "server_cpu_us_per_request": 30.424
+      },
+      {
+        "variant": "perl",
+        "req_s": 26709.6,
+        "server_cpu_us_per_request": 37.896
+      },
+      {
+        "variant": "native",
+        "req_s": 33683.2,
+        "server_cpu_us_per_request": 30.283
+      },
+      {
+        "variant": "perl",
+        "req_s": 26683.9,
+        "server_cpu_us_per_request": 38.541
+      }
+    ],
+    "socket_constructor_bound": [
+      {
+        "variant": "fresh",
+        "req_s": 11085.3,
+        "server_cpu_us_per_request": 91.417
+      },
+      {
+        "variant": "prebuilt",
+        "req_s": 14566.3,
+        "server_cpu_us_per_request": 69.911
+      },
+      {
+        "variant": "prebuilt",
+        "req_s": 14554,
+        "server_cpu_us_per_request": 70.777
+      },
+      {
+        "variant": "fresh",
+        "req_s": 11154.8,
+        "server_cpu_us_per_request": 91.448
+      }
+    ],
+    "legacy_rebuild_20261025": [
+      {
+        "variant": "legacy",
+        "req_s": 62715.7,
+        "server_cpu_us_per_request": 17.819
+      },
+      {
+        "variant": "rebuild",
+        "req_s": 33516.3,
+        "server_cpu_us_per_request": 30.693
+      },
+      {
+        "variant": "rebuild",
+        "req_s": 34834,
+        "server_cpu_us_per_request": 29.299
+      },
+      {
+        "variant": "legacy",
+        "req_s": 62024.2,
+        "server_cpu_us_per_request": 17.991
+      }
+    ],
+    "legacy_rebuild_followup": [
+      {
+        "variant": "legacy",
+        "req_s": 33025.9,
+        "server_cpu_us_per_request": 32.222
+      },
+      {
+        "variant": "rebuild",
+        "req_s": 11507.8,
+        "server_cpu_us_per_request": 87.927
+      },
+      {
+        "variant": "rebuild",
+        "req_s": 11278,
+        "server_cpu_us_per_request": 90.08
+      },
+      {
+        "variant": "legacy",
+        "req_s": 31843.4,
+        "server_cpu_us_per_request": 33.367
+      }
+    ]
+  }
+}

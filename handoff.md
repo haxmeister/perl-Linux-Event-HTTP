@@ -9,6 +9,84 @@ Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
 Detailed evidence: docs/UNBLOCK-REBUILD-STATUS.md
 
+## Stage B framework-neutral performance boundary and cost isolation (2026-10-25 UTC)
+
+The architectural rule is now explicit in docs/UNBLOCK-REBUILD-PLAN.md:
+do not change Unblock to compensate for Linux::Event reactor/adapter
+overhead. Unblock source changes require framework-neutral benefit and
+standalone correctness/throughput evidence. No Unblock, Uniform::HTTP,
+Linux::Event core, or QUIC production files were changed in this round.
+
+New ROOT-ONLY diagnostic files:
+- bench/run-unblock-cost-breakdown.pl (per-request CPU experiments).
+- bench/run-unblock-end-to-end.pl option
+  --diagnostic-prebuilt-response. This shares one read-only frozen
+  canonical Uniform::HTTP::Response ONLY to bound constructor cost
+  in a benchmark; it is not a suggested application/engine policy.
+- bench/results/unblock-stage-b/20261025-cost-boundary.json
+  stores each actual sample and setup.
+
+Root CI 40156778214 and 40157039519: all SEVEN Perl lanes PASS,
+including required optional H2/H3 and WebSocket/handoff regressions.
+
+Same runner, three 12k-request rounds, exclusive process CPU:
+- Uniform::HTTP::Response->new(status=>200,body=>32B)
+  4.479 / 4.519 / 4.494 us (median 4.494).
+- Wire plan for prebuilt immutable canonical Response
+  1.210 / 1.205 / 1.254 us (median 1.210).
+- Direct Unblock::HTTP1::Server engine, fresh canonical response
+  23.560 / 23.297 / 23.464 us (median 23.464).
+- Upper Unblock::HTTP facade, fresh response
+  23.404 / 25.339 / 23.182 us (median 23.404).
+- Direct engine, prebuilt response
+  17.991 / 17.884 / 18.209 us (median 17.991).
+- Upper facade, prebuilt response
+  17.625 / 17.848 / 17.957 us (median 17.848).
+The upper Unblock facade does not show a meaningful per-request
+penalty versus using the low-level HTTP1 engine directly. The
+prebuilt experiments isolate constructor overhead; they do NOT
+authorize pooling or unsafe bypass of Uniform canonical validation.
+
+Matched real socket native-input mode on the same CI host:
+33,986 / 33,683 req/s, CPU 30.424 / 30.283 us/req.
+Perl input: 26,709 / 26,683 req/s, CPU 37.896 / 38.541.
+Native input improves GET32 throughput ~27% over the Perl path.
+Thus replacing the native bridge with a Perl callback does not
+solve Stage B. These are comparisons within that specific job.
+
+Paired TCP socket constructor upper bound, CI 40157039519:
+fresh canonical response: 11,085 / 11,154 req/s,
+91.417 / 91.448 server CPU us/req.
+benchmark-only frozen prebuilt response: 14,566 / 14,554 req/s,
+69.911 / 70.777 us/req.
+The host in this CI run was much slower than earlier runs; do
+NOT compare these absolute values to another CI host. Within this
+ABBA matched run, removing object construction has a sizable
+upper-bound effect but DOES NOT close the legacy gap. Production
+applications are free to construct responses; engines must not
+cache, reuse or mutate response objects behind callers' backs.
+
+Stage B throughput release gate STILL OPEN: matching legacy main
+c0bf714 versus rebuilt native on CI 40156778214:
+legacy 62,715/62,024 req/s vs rebuilt 33,516/34,834;
+server CPU legacy 17.819/17.991 vs rebuilt 30.693/29.299
+us/request. From the CI 40157039519 slower host:
+legacy 33,025/31,843 vs rebuilt 11,507/11,278 req/s.
+Numbers vary significantly across CI hosts; no claim of an
+absolute capacity forecast or passed release-performance gate.
+
+Decision: do not add a Linux-specific Unblock path, weaken Uniform
+validation, introduce response caching or duplicate protocol state.
+The biggest isolated construction cost is in Uniform's PUBLIC
+canonical response construction, not a demonstrable penalty from
+the Unblock facade. A later framework-neutral Uniform constructor
+optimization would belong to the Uniform repository and would
+require a separate scope/authorization and exhaustive correctness
+testing; none was attempted here. Further Stage B work can focus
+on Linux::Event bridge/socket overhead independently, with matched
+comparisons and no Unblock ABI changes. Stage C h2spec 11 fails and
+Stage F cleanup remain as previously recorded.
+
 ## Stage B measured no-body HTTP1 fast-path experiment — 2026-10-25
 
 Feature-branch HTTP1 change:
