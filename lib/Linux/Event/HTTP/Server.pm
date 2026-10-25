@@ -19,10 +19,15 @@ sub new ($class, %option) {
     croak 'new(): quic must be a hash reference' unless ref($quic) eq 'HASH';
     croak 'new(): quic requires http3 => 1' if %$quic && !$protocols{http3};
     my %callbacks;
-    for my $name (qw(on_headers on_request on_error)) {
+    for my $name (qw(on_headers on_request on_error on_websocket)) {
         $callbacks{$name} = delete $option{$name} if exists $option{$name};
     }
-    my $definition = Unblock::HTTP::Server->new(%protocols, %callbacks);
+    # H2/H3 Extended CONNECT WebSocket output must be scheduled outside
+    # the native protocol receive stack. H1 Upgrade does not use this hook.
+    my $defer = sub ($callback) { $loop->defer($callback) };
+    my $definition = Unblock::HTTP::Server->new(
+        %protocols, %callbacks, defer => $defer,
+    );
     my $self = bless { loop => $loop, definition => $definition,
         connections => {} }, $class;
     my $state = { server => $self };

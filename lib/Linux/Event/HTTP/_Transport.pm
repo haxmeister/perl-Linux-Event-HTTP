@@ -1,7 +1,8 @@
 package Linux::Event::HTTP::_Transport;
 use v5.36;
 use parent 'Linux::Event::IO::Sock::Stream';
-use Scalar::Util qw(weaken);
+use Scalar::Util qw(weaken blessed);
+use Carp qw(croak);
 
 sub on_ready ($self) {
     my $state = $self->data;
@@ -109,6 +110,36 @@ sub on_close ($self) {
     if (my $ready = delete $state->{ready}) {
         $ready->(error => 'HTTP transport closed before readiness');
     }
+    return;
+}
+
+# Unblock::HTTP owns the HTTP1 handshake and the successor protocol.
+# This is a socket-wide (never H2/H3 stream-local) transition. Linux::Event
+# retains the write queue and, for native input, the unread borrowed tail.
+sub unblock_upgrade ($self, $successor) {
+    croak 'unblock_upgrade(): requires an established protocol consumer'
+        unless blessed($successor)
+            && $successor->can('input') && $successor->can('input_eof')
+            && $successor->can('transport_error')
+            && $successor->can('resume_output');
+    croak 'unblock_upgrade(): socket already upgraded'
+        if $self->{http_successor};
+    croak 'unblock_upgrade(): multiplexed HTTP cannot transfer the socket'
+        if $self->{http_multiplexed};
+    croak 'unblock_upgrade(): no HTTP engine is attached'
+        unless $self->{http_engine};
+    require Linux::Event::HTTP::_UpgradedStream;
+    $self->{http_successor} = $successor;
+    my $ok = eval {
+        $self->transition_to('Linux::Event::HTTP::_UpgradedStream');
+        1;
+    };
+    unless ($ok) {
+        delete $self->{http_successor};
+        die $@;
+    }
+    delete $self->{http_engine};
+    delete $self->{http_multiplexed};
     return;
 }
 

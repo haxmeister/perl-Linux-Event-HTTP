@@ -74,6 +74,26 @@ main change has occurred. Feature-branch publication is authorized.
   gate closed until both upstream and root CI pass.
 - Unblock::HTTP1, Net::QUIC, core, Uniform, H2/3, WebSocket and main unchanged.
 
+## Stage E HTTP1 WebSocket stream-wide transition (pending tests)
+
+- Linux::Event::HTTP::_Transport implements Unblock's synchronous
+  unblock_upgrade($successor) hook. It uses the existing Linux::Event
+  transition_to() to replace HTTP1 input handling, without recreating TCP/TLS
+  sockets, altering queued writes, or introducing a second HTTP parser.
+  The private _UpgradedStream delegates data, EOF, errors, drain and
+  teardown to the actual Unblock::WebSocket successor.
+- The native XS bridge accepts HTTP1 INPUT_SWITCH only when a verified
+  successor Stream transition has occurred. The reported consumed prefix
+  stays with HTTP1; the native host retains and re-drives the unread suffix
+  through the new class. Unsupported generic 101 switches remain rejected.
+- Server now forwards opt-in on_websocket and supplies the event-loop defer
+  callback required for H2/H3 Extended CONNECT. The existing protocol
+  option validator no longer unconditionally rejects websocket => 1.
+- WebSocket remains strictly opt-in and lazily loaded by Unblock. Full
+  handshake, same-read native remainder, TLS, independent H2/H3 streams,
+  and Client end-to-end tests are still required before Stage E can pass.
+  This source slice is not yet CI-verified.
+
 ## Stage D verified gate — 2026-10-25
 
 Source implementation checkpoint: 4243b0a676d9027ef185a08bfb7052d45704340c.

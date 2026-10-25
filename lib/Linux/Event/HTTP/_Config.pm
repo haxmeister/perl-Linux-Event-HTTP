@@ -37,8 +37,6 @@ sub protocols ($option) {
             eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.12'); 1 }
                 or croak "new(): http2 requires Unblock::HTTP2 >= 0.12: $@";
         }
-        croak 'new(): WebSocket integration is not implemented yet'
-            if ref($value) && $value->{websocket};
         $protocols{$name} = ref($value) ? $value : {};
     }
     return %protocols;

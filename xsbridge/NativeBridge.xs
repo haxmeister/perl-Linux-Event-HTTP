@@ -178,7 +178,15 @@ bridge_input(pTHX_ void *opaque, const char *data, size_t length, size_t *consum
             *consumed = length;
             break;
         case UB_HTTP1_INPUT_SWITCH:
-            croak("native generic protocol handoff is not implemented yet");
+            /* The Unblock on_switch callback must have synchronously
+             * transitioned this very Stream. The native host applies the
+             * consumed HTTP prefix and re-drives its unread tail through
+             * the new ordinary input sink after our retained frame ends. */
+            if (ctx->protocol != 1 || !SvROK(ctx->stream)
+                || !sv_derived_from(ctx->stream,
+                    "Linux::Event::HTTP::_UpgradedStream"))
+                croak("native HTTP1 switch has no upgraded input consumer");
+            break;
         default:
             croak("HTTP engine returned an unknown native input status");
         }
