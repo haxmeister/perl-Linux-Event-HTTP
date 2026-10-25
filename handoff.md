@@ -129,6 +129,23 @@ these feature additions. Root CI pins the published feature source commits.
 - These new checks are pending CI verification. No Stage B/C gate waiver,
   Stage E/F work, or dependency/main source modification occurred.
 
+## 2026-10-25 Stage D credit recovery ownership fix - verification pending
+
+- The real-QUIC credit test successfully admitted both operations and the
+  malformed-UDP case passed, but it exposed an orphaned speculative QUIC
+  connection after shutdown: Client pool had connecting=1 with pending=0,
+  active=0, connections=0; a connected UDP watcher and its QUIC timer
+  remained live. This was NOT a test-timing issue.
+- Authorized upper Unblock::HTTP feature branch commit
+  f15638ec1cb35f95e0b1f4eb4138298fccb5fc85 fixes the generic admission
+  race: a recovered existing H3 connection cancels the speculative factory
+  before dispatching its queued request. Shutdown also cancels any outstanding
+  factory even if no queued op still refers to it.
+- Root CI now pins that upper source commit and requires the unchanged
+  real H3 credit/malformed regression. Verification pending; do not call the
+  gate closed until both upstream and root CI pass.
+- Unblock::HTTP1, Net::QUIC, core, Uniform, H2/3, WebSocket and main unchanged.
+
 ## Implemented
 
 Stage A/B:
