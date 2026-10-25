@@ -64,7 +64,7 @@ for my $version (2, 3) {
     subtest "generic HTTP$version Extended CONNECT isolates a stream" => sub {
         my $loop = Linux::Event::Loop->new;
         my (@errors, $server_consumer, $client_consumer);
-        my ($server_handoff, $client_handoff, $server_finished, $tunnel_finished);
+        my ($server_handoff, $client_handoff, $server_tx, $tunnel_finished);
         my ($normal, $normal_finished, $http_body);
         my $policy = $version == 2 ? 'http2' : 'http3';
         my $extended = $version == 2 ? 'enable_connect_protocol'
@@ -81,13 +81,13 @@ for my $version (2, 3) {
             },
             on_handoff => sub ($tx, $request, $bridge) {
                 ++$server_handoff;
+                $server_tx = $tx;
                 is($request->method, 'CONNECT', 'Server received CONNECT');
                 is($request->protocol, 'raw-tunnel',
                     'generic protocol name unchanged');
                 $server_consumer = Local::Tunnel->new(
                     role => 'server', bridge => $bridge,
                 );
-                $tx->on_finish(sub { ++$server_finished });
                 $bridge->unblock_send('HELLO');
                 return $server_consumer;
             },
@@ -167,7 +167,7 @@ for my $version (2, 3) {
         is_deeply($server_consumer->{failures}, [], 'Server tunnel clean');
         is_deeply($client_consumer->{failures}, [], 'Client tunnel clean');
         is($tunnel_finished, 1, 'Client CONNECT completes exactly once');
-        is($server_finished, 1, 'Server CONNECT completes exactly once');
+        is($server_tx->state, 'complete', 'Server CONNECT completes');
         is($tunnel->state, 'complete', 'Client CONNECT terminal complete');
         is($plain->state, 'complete', 'ordinary sibling completes');
         is($http_body, 'healthy-sibling', 'ordinary sibling body intact');
