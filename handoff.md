@@ -9,6 +9,52 @@ Untouched main baseline: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 Approved plan: docs/UNBLOCK-REBUILD-PLAN.md
 Detailed evidence: docs/UNBLOCK-REBUILD-STATUS.md
 
+## Stage E WebSocket implementation and verified boundary — 2026-10-24 local
+
+Current tested implementation: dd902cc1015993b51ceed347110f76a5a3a88a59
+(HTTP1 native INPUT_SWITCH/transition_to, WebSocket option, shared Server
+defer); later feature-branch commits include tests and diagnostics.
+- Root CI 40149010878 PASS all seven Perl lanes. The required actual
+  HTTP1 TCP Upgrade fixture t/rebuild/100-websocket-h1.t passes 12
+  assertions BOTH native XS and Perl input: handshake and masked frame
+  received in one write, 101 output ahead of WebSocket echo, no duplicate
+  tail, clean shutdown.
+- Root CI 40149284214 PASS all seven Perl lanes. Public Client and
+  Server t/rebuild/101-websocket-client.t pass in both native and Perl
+  input, with ordinary HTTP on a separate connection after H1 takeover.
+- t/rebuild/102-websocket-multiplex.t added to mandatory real H2/H3
+  WebSocket testing, both native and Perl paths on latest Perl.
+  H2 WebSocket Extended CONNECT and an independent ordinary H2
+  transaction pass (16 assertions in native run).
+  H3 WebSocket opens, echoes correctly and serves an ordinary H3 sibling
+  over one QUIC connection; it FAILS graceful terminal lifecycle.
+  CI 40149457160 and 40149637801 FAILED latest nonthreaded lane:
+  H3 Client WebSocket operation expired after 5 seconds. Deferring
+  WebSocket Close initiation to a later loop turn did NOT fix it.
+  Diagnostic CI 40149783042 confirms:
+  Client WebSocket close_sent=1, close_received=1, close_complete=1,
+  but is_closed=0, Client H3 tx cancelled by timeout;
+  Server H3 tx complete; ordinary H3 sibling complete; pool active=0.
+  The missing boundary is Client receive-side HTTP3 stream EOF/finish
+  after exchanged Close frames, not failure to send Close frames or
+  HTTP1 native provider transition.
+  Keep t/rebuild/102-websocket-multiplex.t mandatory and failing
+  until resolved; do not weaken the Close/terminal requirement.
+- Unblock::WebSocket main and Net::QUIC/HTTP3 engines are READ ONLY.
+  Existing upstream Unblock::HTTP t/36-client-websocket-h3.t covers
+  complete H3 close when driven directly by Net::QUIC Driver and an
+  IO::Select loop. Compare precise adapter scheduling/callback order.
+- Remaining Stage E: fix genuine H3 completion at authorized integration
+  layer (or request permission before any read-only engine edits);
+  then implement generic non-WebSocket Upgrade/CONNECT contract in
+  authorized upper Unblock::HTTP feature branch. TLS H1 WebSocket same-read
+  tail, rejection, and additional shutdown tests remain useful.
+
+Stage D remains verified on supported combined TCP/UDP concrete-address
+HTTP3; Stage B throughput gate remains OPEN; Stage C h2spec
+146 total / 134 pass / 1 skip / 11 fail still OPEN. Stage F deferred.
+No main changes, tags, merges, releases or version bumps.
+
 ## Authorization
 
 Continue implementation, not architecture discussion or release preparation.
