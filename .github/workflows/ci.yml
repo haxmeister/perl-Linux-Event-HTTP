@@ -170,6 +170,9 @@ jobs:
       - name: Stage C h2spec fixture timing diagnostic (non-gating)
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
+          # Perl setup points OPENSSL_CONF to a nonexistent installed path.
+          test -r /etc/ssl/openssl.cnf
+          export OPENSSL_CONF=/etc/ssl/openssl.cnf
           # Go rejects the upstream v2.6.0 tag as a module-version path;
           # compile the exact v2.6.0 source commit from its own go.mod.
           git clone --quiet --depth 1 --branch v2.6.0 https://github.com/summerwind/h2spec.git "$RUNNER_TEMP/h2spec-src"

@@ -2,6 +2,14 @@
 
 ## Stage C h2spec fixture-timing isolation (2026-10-25 UTC)
 
+A third CI attempt (40163081118) compiled h2spec, but
+OpenSSL aborted during fixture certificate generation because
+setup-perl exported OPENSSL_CONF pointing at a missing Perl-local
+openssl.cnf. This is independent of the HTTP2 engines. The
+diagnostic explicitly selects the Ubuntu system OpenSSL config
+(/etc/ssl/openssl.cnf) before creating its test certificate.
+The actual h2spec A/B result is still PENDING.
+
 The second CI diagnostic run 40162881983 built the exact
 h2spec source but failed before invoking it: the diagnostic's
 OpenSSL certificate subject had an invalid slash (CN/localhost
