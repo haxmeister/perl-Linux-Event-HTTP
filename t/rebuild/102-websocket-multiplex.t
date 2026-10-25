@@ -104,12 +104,37 @@ for my $version ('2', '3') {
                 $finish_if_done->();
             },
         );
+        my $snapshot = $version eq '3'
+            ? Linux::Event::Kernel::Timer->new(
+                loop => $loop, after => 1,
+                on_timer => sub {
+                    my $tx = $ws_op->transaction;
+                    return diag('H3 snapshot: no transaction') unless $tx;
+                    my $rd = $tx->_incoming_body_reader('response');
+                    my $wr = $tx->_request_body_object;
+                    diag("H3 snapshot: op=" . $ws_op->state
+                        . " tx=" . $tx->state
+                        . " callback_depth=" . ($tx->{callback_depth} // 'undef')
+                        . " response=" . ($tx->response ? $tx->response->is_complete : 'absent')
+                        . " reader=" . ($rd ? $rd->is_complete : 'absent')
+                        . " writer=" . ($wr ? $wr->is_complete : 'absent')
+                        . " WSclose=" . ($client_ws ? $client_ws->close_complete : 'absent')
+                        . " server_tx=" . (@ws_transactions
+                            ? $ws_transactions[0]->state : 'absent'));
+                    my $conn = $tx->{connection};
+                    diag("H3 flags: output_finished=" . ($conn->{output_finished}{$tx->{stream_id}} // 'undef')
+                        . " lifecycle=" . ($conn->{stream_lifecycle}{$tx->{stream_id}}
+                            ? join(',', sort keys %{ $conn->{stream_lifecycle}{$tx->{stream_id}} })
+                            : 'absent')) if $conn;
+                },
+            ) : undef;
         my $guard = Linux::Event::Kernel::Timer->new(
             loop => $loop, after => 8,
             on_timer => sub { push @errors, 'multiplexed timeout'; $loop->stop },
         );
         $loop->run;
         $guard->cancel;
+        $snapshot->cancel if $snapshot && $snapshot->is_active;
         if (@errors) {
             for my $label (['client', $client_ws], ['server', $server_ws]) {
                 my ($name, $ws) = @$label;
