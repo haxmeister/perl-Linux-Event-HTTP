@@ -99,3 +99,5 @@ jobs:
           REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/101-websocket-client.t
           REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/102-websocket-multiplex.t
           REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/102-websocket-multiplex.t
+          REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/106-websocket-tls.t
+          REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/106-websocket-tls.t
