@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: haxmeister/perl-Unblock-HTTP
-          ref: a850460a253937735f8cfe763a4afd3bf43ec147
+          ref: 735f73afaea271d1d3c7504fe1a5f51653876b63
           path: .ci-deps/unblock
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         if: matrix.perl == '5' && matrix.multi_thread == false
@@ -109,4 +109,6 @@ jobs:
           REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/106-websocket-tls.t
           REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/106-websocket-tls.t
           REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/102-websocket-multiplex.t
+          REBUILD_REQUIRE_GENERIC_CONNECT=1 make test TEST_FILES=t/rebuild/107-generic-multiplex.t
+          REBUILD_REQUIRE_GENERIC_CONNECT=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/107-generic-multiplex.t
           REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/102-websocket-multiplex.t
