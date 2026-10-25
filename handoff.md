@@ -155,6 +155,21 @@ Stage C initial integration:
   identity, responses, and watcher cleanup.
 - Pending actual CI test result; no verified public H3 claim yet.
 
+## Stage D public HTTP3 Server initial integration
+
+- Added optional H3 Server transport alongside the ordinary TCP/TLS
+  listener on one explicitly concrete address and port. Credentials
+  reuse TLS cert_file/key_file; native QUIC transport policy is configured
+  separately via quic => hashref.
+- Unblock::HTTP::QUIC->server attaches ready QUIC connections to the same
+  Unblock::HTTP::Server definition used by H1/H2. Linux::Event owns one UDP
+  socket and relative timer. No H3 parser or per-transaction wrapper exists.
+- H3 close sends GOAWAY and rejects future ready sessions. Shutdown uses
+  H3 drain/QUIC close when drained and force releases the UDP socket at
+  the grace deadline. H3-only/wildcard listeners remain unsupported.
+- This needs focused real public Server tests and CI verification before
+  the capability can be called verified. No main/upstream source changed.
+
 ## Verified
 
 - Current root: 5 files / 28 subtests on Perl 5.38.2 threaded and 5.44.0

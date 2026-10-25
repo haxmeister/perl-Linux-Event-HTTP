@@ -15,6 +15,9 @@ sub new ($class, %option) {
     Linux::Event::HTTP::_Config::loop($loop);
     my $stream_class = Linux::Event::HTTP::_Config::stream_class(\%option);
     my %protocols = Linux::Event::HTTP::_Config::protocols(\%option);
+    my $quic = delete($option{quic}) // {};
+    croak 'new(): quic must be a hash reference' unless ref($quic) eq 'HASH';
+    croak 'new(): quic requires http3 => 1' if %$quic && !$protocols{http3};
     my %callbacks;
     for my $name (qw(on_headers on_request on_error)) {
         $callbacks{$name} = delete $option{$name} if exists $option{$name};
@@ -30,6 +33,16 @@ sub new ($class, %option) {
     }
     croak 'new(): HTTP/2 Server requires tls for ALPN negotiation'
         if exists($protocols{http2}) && !exists($stream{tls});
+    if (exists $protocols{http3}) {
+        croak 'new(): HTTP3 requires a concrete host (not a wildcard)'
+            unless defined($option{host})
+                && $option{host} ne '0.0.0.0' && $option{host} ne '::';
+        croak 'new(): HTTP3 requires TLS cert_file and key_file'
+            unless ref($stream{tls}) eq 'HASH'
+                && $stream{tls}{cert_file} && $stream{tls}{key_file};
+        croak 'new(): HTTP3-only listeners are not implemented yet'
+            unless exists($protocols{http1}) || exists($protocols{http2});
+    }
     if (exists $stream{tls}) {
         croak 'new(): tls must be a hash reference' unless ref($stream{tls}) eq 'HASH';
         croak 'new(): HTTP Server owns TLS alpn' if exists $stream{tls}{alpn};
@@ -49,6 +62,32 @@ sub new ($class, %option) {
         },
         (defined($on_error) ? (on_error => $on_error) : ()),
     );
+    if (exists $protocols{http3}) {
+        require Unblock::HTTP::QUIC;
+        require Linux::Event::HTTP::_QUICSocket;
+        my $socket = Linux::Event::HTTP::_QUICSocket->new(
+            loop => $loop, host => $listen{host}, port => $self->port,
+            (defined($on_error) ? (on_error => $on_error) : ()),
+            on_progress => sub {
+                my $server = $state->{server} or return;
+                $server->_quic_progress;
+            },
+        );
+        my $manager = Unblock::HTTP::QUIC->server(
+            server => $definition,
+            certificate_file => $stream{tls}{cert_file},
+            private_key_file => $stream{tls}{key_file},
+            %$quic,
+            send => $socket->send_callback,
+            set_timeout => $socket->set_timeout_callback,
+            on_ready => sub ($engine, $quic_manager) {
+                my $server = $state->{server} or return;
+                $server->_quic_ready($engine);
+            },
+        );
+        $self->{quic} = { socket => $socket, manager => $manager };
+        $socket->start($manager);
+    }
     return $self;
 }
 
@@ -58,8 +97,22 @@ sub host ($self) { $self->{listener}->host }
 sub port ($self) { $self->{listener}->port }
 sub pause ($self) { $self->{listener}->pause; return $self }
 sub resume ($self) { $self->{listener}->resume; return $self }
-sub close ($self) { $self->{listener}->close; return $self }
-sub connection_count ($self) { scalar keys %{ $self->{connections} } }
+sub close ($self) {
+    $self->{listener}->close;
+    if ($self->{quic} && !$self->{quic_closing}++) {
+        for my $engine ($self->{quic}{manager}->sessions) {
+            $engine->shutdown_notice unless $engine->shutdown_notice_sent;
+            $engine->shutdown unless $engine->shutdown_started;
+        }
+        $self->_quic_progress;
+    }
+    return $self;
+}
+sub connection_count ($self) {
+    my $count = scalar keys %{ $self->{connections} };
+    $count += scalar($self->{quic}{manager}->sessions) if $self->{quic};
+    return $count;
+}
 
 sub shutdown ($self, %option) {
     my $grace = delete($option{grace}) // 30;
@@ -85,21 +138,54 @@ sub shutdown ($self, %option) {
             on_timer => sub {
                 my $server = $weak or return;
                 $_->close for values %{ $server->{connections} };
+                if (my $quic = delete $server->{quic}) {
+                    $quic->{socket}->close;
+                }
                 $server->_shutdown_done;
             },
         );
     }
+    $self->_quic_progress if $self->{quic};
     $self->_shutdown_done;
     return $self;
 }
 
 sub _shutdown_done ($self) {
-    return unless $self->{shutdown} && !$self->connection_count;
+    return unless $self->{shutdown} && !$self->connection_count && !$self->{quic};
     return if $self->{shutdown_notified}++;
     my $timer = delete $self->{shutdown_timer};
     $timer->cancel if $timer;
     my $complete = delete $self->{shutdown_complete};
     $complete->($self) if $complete;
+    return;
+}
+
+
+sub _quic_ready ($self, $engine) {
+    if ($self->{quic_closing}) {
+        $engine->quic->close unless $engine->quic->closed;
+    }
+    return;
+}
+
+sub _quic_progress ($self) {
+    my $quic = $self->{quic} or return;
+    return unless $self->{quic_closing};
+    my @sessions = $quic->{manager}->sessions;
+    for my $engine (@sessions) {
+        my $connection = $engine->quic;
+        next if $connection->closed;
+        if ($self->{shutdown} && ($engine->failed || $engine->drained)) {
+            $connection->close;
+        }
+    }
+    # If no sessions are admitted, a handshake in progress has no HTTP
+    # application transaction to preserve. Close the UDP listener.
+    if (!@sessions) {
+        delete $self->{quic};
+        $quic->{socket}->close;
+        $self->_shutdown_done if $self->{shutdown};
+    }
     return;
 }
 
@@ -170,5 +256,14 @@ HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>
 A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains
 admitted streams. Cleartext HTTP/2, HTTP/3 and handoff are not implemented.
 HTTP/2 C<on_error> may include a third protocol error-code argument.
+Optional C<http3 =E<gt> 1> uses Unblock::HTTP3 and Net::QUIC on UDP
+alongside the TCP listener at the same concrete host and port. Its
+credentials are taken from C<tls =E<gt> { cert_file, key_file }>.
+C<quic =E<gt> { ... }> configures Net::QUIC server transport policy.
+Wildcard-bound HTTP3 and H3-only listeners are not yet supported.
+C<close> stops H3 admission by sending GOAWAY to attached sessions;
+C<shutdown> also waits for draining sessions until the grace deadline.
+Forced expiry releases the UDP socket and timer. Full H3 shutdown and
+error-path coverage remain Stage D work.
 
 =cut

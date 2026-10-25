@@ -60,6 +60,21 @@ main change has occurred. Feature-branch publication is authorized.
   remain pending. This commit needs live CI before the Client can be called
   verified. Core, upstream engines and main remain unchanged.
 
+## Stage D public HTTP3 Server initial integration
+
+- Added optional H3 Server transport alongside the ordinary TCP/TLS
+  listener on one explicitly concrete address and port. Credentials
+  reuse TLS cert_file/key_file; native QUIC transport policy is configured
+  separately via quic => hashref.
+- Unblock::HTTP::QUIC->server attaches ready QUIC connections to the same
+  Unblock::HTTP::Server definition used by H1/H2. Linux::Event owns one UDP
+  socket and relative timer. No H3 parser or per-transaction wrapper exists.
+- H3 close sends GOAWAY and rejects future ready sessions. Shutdown uses
+  H3 drain/QUIC close when drained and force releases the UDP socket at
+  the grace deadline. H3-only/wildcard listeners remain unsupported.
+- This needs focused real public Server tests and CI verification before
+  the capability can be called verified. No main/upstream source changed.
+
 ## Current h2spec failure grouping (not a fix)
 
 The recorded 11 h2spec 2.6.0 failures are not all the same condition:
