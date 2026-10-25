@@ -25,6 +25,7 @@ lib/Linux/Event/HTTP/_NativeStream.pm
 lib/Linux/Event/HTTP/_Stream.pm
 lib/Linux/Event/HTTP/_Transport.pm
 t/rebuild/10-http1.t
+t/rebuild/15-backend-compat.t
 t/rebuild/20-transport.t
 t/rebuild/30-tls.t
 t/rebuild/40-shutdown-upload.t

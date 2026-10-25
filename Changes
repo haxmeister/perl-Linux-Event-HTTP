@@ -24,6 +24,10 @@ UNRELEASED - feature/unblock-http-rebuild (NOT FOR CPAN)
     - Correct stale HTTP/2 conformance documentation, and exclude 33
       historical benchmark JSON files plus an internal handoff prompt
       from the source distribution while preserving them in Git.
+    - Reject an installed Unblock::HTTP1 lacking the required graceful
+      drain API at Server construction, since unreleased feature commits
+      still advertise the same 0.12 version as incompatible public code.
+      Add a regression proving rejection occurs before socket binding.
     - HTTP/1 throughput remains an open gate; this feature branch is
       not yet a release candidate.
 

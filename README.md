@@ -146,7 +146,9 @@ Unblock::HTTP1 and URI. HTTP::CookieJar and Uniform::HTTP::Auth are no
 longer direct dependencies of this Linux integration layer.
 This development checkpoint additionally needs the upstream feature commits
 listed in the [status document](docs/UNBLOCK-REBUILD-STATUS.md) for admission
-callbacks and server drain. Their version numbers are deliberately unchanged;
+callbacks and server drain. Server construction now checks the required
+Unblock::HTTP1 graceful drain capability and fails before binding a listener
+when that capability is missing. Their version numbers are deliberately unchanged;
 the published 0.02/0.12 releases do not contain these additions. On the feature
 branch HTTP2/HTTP3 dependencies are optional, with an explicit error when an
 enabled engine is unavailable. The superseded private HTTP parsers, executors and public Request/Response

@@ -15,6 +15,15 @@ sub new ($class, %option) {
     Linux::Event::HTTP::_Config::loop($loop);
     my $stream_class = Linux::Event::HTTP::_Config::stream_class(\%option);
     my %protocols = Linux::Event::HTTP::_Config::protocols(\%option);
+    # The published Unblock::HTTP1 0.12 version predates the graceful
+    # drain contract used here. Feature revisions kept that version number,
+    # so VERSION() alone cannot establish integration compatibility.
+    # Check once at construction, never in the HTTP request hot path.
+    if ($protocols{http1}) {
+        require Unblock::HTTP1::Server;
+        croak 'new(): Unblock::HTTP1::Server lacks drain() required for HTTP/1 graceful shutdown; install a compatible Unblock::HTTP1 build'
+            unless Unblock::HTTP1::Server->can('drain');
+    }
     my $quic = delete($option{quic}) // {};
     croak 'new(): quic must be a hash reference' unless ref($quic) eq 'HASH';
     croak 'new(): quic requires http3 => 1' if %$quic && !$protocols{http3};
