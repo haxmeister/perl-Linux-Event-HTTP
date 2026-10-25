@@ -19,7 +19,7 @@ sub new ($class, %option) {
     croak 'new(): quic must be a hash reference' unless ref($quic) eq 'HASH';
     croak 'new(): quic requires http3 => 1' if %$quic && !$protocols{http3};
     my %callbacks;
-    for my $name (qw(on_headers on_request on_error on_websocket)) {
+    for my $name (qw(on_headers on_request on_error on_websocket on_handoff)) {
         $callbacks{$name} = delete $option{$name} if exists $option{$name};
     }
     # H2/H3 Extended CONNECT WebSocket output must be scheduled outside
