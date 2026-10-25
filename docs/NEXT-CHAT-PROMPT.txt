@@ -1,3 +1,21 @@
+# Continue Linux::Event::HTTP Unblock reconstruction
+
+CURRENT NEXT STEPS after strict HTTP2 integration completion:
+- Stage C closed: strict h2spec 147/147 with Unblock::HTTP2 >=0.13;
+  native + Perl paths zero errors. See handoff first.
+- Runtime HTTP2 0.13 minimum guard regression added to root feature;
+  commit 2cf4be58abaf75a3362bf8b612eafbef8ad1bfc7,
+  CI 40208752461 all seven jobs PASS.
+- The obsolete root diagnostic TLS fixture was never in MANIFEST;
+  its Git source was removed in favor of upstream's fixed fixture.
+- H2 conformance CI reruns automatically for adapter/XS/metadata/H2 test
+  changes, rather than solely on the h2spec fixture scripts.
+- Stage B paired real socket HTTP1 throughput remains open; current
+  profiler points to generic engine and Uniform object construction.
+  No LinuxEvent-specific Unblock changes without independent benefit.
+- Main untouched. Continue useful Stage F release gates or targeted,
+  demonstrably correct native bridge improvements. No merge or release.
+
 # Continue Linux::Event::HTTP reconstruction
 
 LATEST VERIFIED CHECKPOINT (2026-10-25):

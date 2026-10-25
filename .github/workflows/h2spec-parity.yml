@@ -5,10 +5,13 @@ on:
   push:
     branches: [feature/unblock-http-rebuild]
     paths:
-      - tools/http2-h2spec-standalone.pl
-      - tools/http2-h2spec-server.pl
-      - tools/h2spec-compare.py
-      - .github/workflows/h2spec-parity.yml
+      - 'Makefile.PL'
+      - 'lib/Linux/Event/HTTP/**'
+      - 'xsbridge/**'
+      - 't/rebuild/50-http2.t'
+      - 'tools/http2-h2spec-server.pl'
+      - 'tools/h2spec-compare.py'
+      - '.github/workflows/h2spec-parity.yml'
 
 permissions:
   contents: read

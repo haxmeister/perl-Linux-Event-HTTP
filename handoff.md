@@ -1,5 +1,31 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Stage F dead fixture cleanup and persistent HTTP2 gate (2026-10-25 UTC)
+
+Root runtime HTTP2 option check was corrected from >=0.12 to >=0.13,
+matching the optional dependency metadata and fixed protocol engine.
+t/rebuild/50-http2.t temporarily downgrades the loaded package VERSION
+to 0.12, verifies the runtime refusal, then accepts current >=0.13.
+POD/README updated. Root CI 40208752461 PASS all seven Perl lanes
+for root feature commit 2cf4be58abaf75a3362bf8b612eafbef8ad1bfc7.
+
+Obsolete root-only tools/http2-h2spec-standalone.pl can be removed from
+the Git branch. This first fixture had inferior TLS shutdown behavior;
+the upstream repaired Unblock::HTTP2 xt/h2spec-server.pl is the current,
+strictly verified standalone fixture used by parity CI. The obsolete file
+was never in the distribution MANIFEST, so packaged source is unchanged.
+The h2spec parity workflow's source-change trigger now covers real HTTP
+adapter, XS bridge, dependency metadata, HTTP2 regression and fixture
+edits automatically instead of only old fixture edits/manual dispatch.
+
+No changes were made to any upstream Unblock or Linux::Event project.
+Stage C closed (147 strict cases, no skips with Unblock::HTTP2 >=0.13).
+Stage B HTTP1 performance remains open. CPU samples show a large
+framework-neutral engine and Uniform response construction cost;
+do not bypass canonical messages to hide that cost.
+
+
+
 ## Stage C CLOSED on repaired HTTP2 0.13 (2026-10-25 UTC)
 
 Verified Unblock::HTTP2 main, release candidate:
