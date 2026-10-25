@@ -62,7 +62,7 @@ jobs:
           cp bench/benchmark-web-rebuild/server.pl bench/benchmark-web-rebuild/rebuilt-http.pl              .ci-deps/benchmark-web/benchmarks/http/servers/linuxevent-rebuild/
           printf '%s\n' "$GITHUB_WORKSPACE/.ci-deps/http-baseline"             > .ci-deps/benchmark-web/benchmarks/http/servers/linuxevent/source-root
           perl -c bench/benchmark-web-rebuild/server.pl
-          perl -c bench/benchmark-web-rebuild/rebuilt-http.pl
+          perl -Mblib -c bench/benchmark-web-rebuild/rebuilt-http.pl
       - name: Shared-driver five-server correctness smoke
         working-directory: .ci-deps/benchmark-web/benchmarks/http
         env:
