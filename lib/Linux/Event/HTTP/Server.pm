@@ -259,7 +259,7 @@ Repeated shutdown calls have no effect. C<grace> is non-negative seconds.
 C<http2 =E<gt> 1> enables optional Unblock::HTTP2 (at least 0.12). Server
 HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>.
 A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains
-admitted streams. Cleartext HTTP/2, HTTP/3 and handoff are not implemented.
+admitted streams. Cleartext HTTP/2 and generic non-WebSocket handoff are not implemented.
 HTTP/2 C<on_error> may include a third protocol error-code argument.
 Optional C<http3 =E<gt> 1> uses Unblock::HTTP3 and Net::QUIC on UDP
 alongside the TCP listener at the same concrete host and port. Its
@@ -268,7 +268,18 @@ C<quic =E<gt> { ... }> configures Net::QUIC server transport policy.
 Wildcard-bound HTTP3 and H3-only listeners are not yet supported.
 C<close> stops H3 admission by sending GOAWAY to attached sessions;
 C<shutdown> also waits for draining sessions until the grace deadline.
-Forced expiry releases the UDP socket and timer. Full H3 shutdown and
-error-path coverage remain Stage D work.
+Forced expiry releases the UDP socket and timer. The supported concrete-address
+HTTP3 lifecycle passed the Stage D QUIC loopback and cleanup tests.
+
+Opt-in C<http1 =E<gt> { websocket =E<gt> 1 }> with C<on_websocket>
+uses Unblock's HTTP1 handshake and transitions the same Linux::Event
+socket to WebSocket without losing same-read bytes. Native and Perl
+input paths are tested. C<http2 =E<gt> { websocket =E<gt> 1 }> and
+C<http3 =E<gt> { websocket =E<gt> 1 }> enable Extended CONNECT on
+individual multiplexed streams. The H2 path passes real TLS loopback.
+H3 message exchange is working, but Client-side stream completion
+after a WebSocket Close remains an open regression; do not treat
+graceful H3 WebSocket termination as verified. WebSocket is an optional
+dependency, loaded only when enabled.
 
 =cut
