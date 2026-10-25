@@ -39,7 +39,7 @@ my $server = Linux::Event::HTTP::Server->new(
         push @trace, 'server-websocket';
         return {
             backend => 'perl',
-            on_open => sub ($websocket) {
+            on_open => sub ($websocket, $tx, $request) {
                 push @trace, 'server-open';
                 my $ok = eval {
                     my $host = $websocket->{transport};
