@@ -78,7 +78,9 @@ for my $version ('2', '3') {
             },
             on_message => sub ($ws, $bytes, $type) {
                 $ws_message = [$bytes, $type];
-                $ws->close;
+                # Keep H2/H3 stream-close writes outside the QUIC receive
+                # callback, as with Unblock's deferred body transport.
+                $loop->defer(sub { $ws->close });
             },
             on_error => sub ($obj, $error) {
                 push @errors, "WebSocket: $error";
