@@ -170,6 +170,7 @@ jobs:
       - name: Optional HTTP2 integration
         run: |
           # Pin tested h2spec repair until it is present on main/CPAN.
+          cpanm --notest 'Alien::nghttp2@0.003'
           cpanm --notest ./.ci-deps/http2
           perl -MUnblock::HTTP2::_nghttp2 -e 'die "wrong repaired engine" unless $INC{"Unblock/HTTP2/_nghttp2.pm"} =~ /site_perl/'
           REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t

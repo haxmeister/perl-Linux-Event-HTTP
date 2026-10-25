@@ -43,6 +43,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libssl-dev libnghttp2-dev
           cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06' IO::Socket::SSL
+          cpanm --notest 'Alien::nghttp2@0.003'
           cpanm --notest ./.ci-deps/http2
           cpanm --notest ./.ci-deps/http1
           cpanm --notest ./.ci-deps/unblock
