@@ -81,6 +81,7 @@ for my $version (2, 3) {
             },
             on_handoff => sub ($tx, $request, $bridge) {
                 ++$server_handoff;
+                return if $request->target eq '/denied';
                 $server_tx = $tx;
                 is($request->method, 'CONNECT', 'Server received CONNECT');
                 is($request->protocol, 'raw-tunnel',
@@ -178,6 +179,46 @@ for my $version (2, 3) {
         is($client->pool_stats->{connections}, 1,
             'Client retains multiplexed connection');
         is($client->pool_stats->{active}, 0, 'stream credit returned');
+
+        # A denied CONNECT must finish its unused request producer and
+        # return a normal HTTP rejection; it must not take over the stream.
+        my ($denied_status, $denied_finished, $wrong_handoff);
+        my $denied = $client->request(
+            url => "https://$origin/denied",
+            http_version => "$version",
+            method => 'CONNECT', protocol => 'raw-tunnel',
+            timeout => 4,
+            on_handoff => sub { ++$wrong_handoff; return },
+            on_response => sub ($tx, $response) {
+                $denied_status = $response->status;
+            },
+            on_error => sub ($tx, $error) {
+                push @errors, "Rejected CONNECT: $error";
+                $loop->stop;
+            },
+            on_finish => sub {
+                ++$denied_finished;
+                $loop->stop;
+            },
+        );
+        my $deny_guard = Linux::Event::Kernel::Timer->new(
+            loop => $loop, after => 5,
+            on_timer => sub {
+                push @errors, 'rejected CONNECT hung';
+                $loop->stop;
+            },
+        );
+        $loop->run;
+        $deny_guard->cancel;
+        is($denied_status, 403, 'rejected CONNECT gives HTTP 403');
+        is($wrong_handoff || 0, 0, 'Client never receives rejected tunnel');
+        is($denied_finished, 1, 'rejected HTTP stream finishes exactly once');
+        is($denied->state, 'complete', 'rejection is a completed HTTP response');
+        is($server_handoff, 2, 'Server examined both CONNECT attempts');
+        is_deeply(\@errors, [], 'rejection does not damage the connection');
+        is($client->pool_stats->{connections}, 1, 'shared transport survives denial');
+        is($client->pool_stats->{active}, 0, 'rejected stream returns pool credit');
+
         $client->shutdown;
         my $closed = 0;
         $server->shutdown(grace => 0, on_complete => sub {
