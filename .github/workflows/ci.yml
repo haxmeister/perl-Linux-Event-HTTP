@@ -175,7 +175,7 @@ jobs:
           git clone --quiet --depth 1 --branch v2.6.0 https://github.com/summerwind/h2spec.git "$RUNNER_TEMP/h2spec-src"
           test "$(git -C "$RUNNER_TEMP/h2spec-src" rev-parse HEAD)" = 70ac2294010887f48b18e2d64f5cccd48421fad1
           (cd "$RUNNER_TEMP/h2spec-src" && go build -o "$RUNNER_TEMP/h2spec" ./cmd/h2spec)
-          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$RUNNER_TEMP/h2-key.pem" -out "$RUNNER_TEMP/h2-cert.pem" -subj /CN/localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1 -days 1 >/dev/null 2>&1
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$RUNNER_TEMP/h2-key.pem" -out "$RUNNER_TEMP/h2-cert.pem" -subj '/CN=localhost' -addext subjectAltName=DNS:localhost,IP:127.0.0.1 -days 1
           for mode in headers request; do
             port=19371
             if [ "$mode" = request ]; then port=19372; fi

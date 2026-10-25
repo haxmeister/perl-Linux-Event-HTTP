@@ -2,6 +2,15 @@
 
 ## Stage C h2spec fixture-timing isolation (2026-10-25 UTC)
 
+The second CI diagnostic run 40162881983 built the exact
+h2spec source but failed before invoking it: the diagnostic's
+OpenSSL certificate subject had an invalid slash (CN/localhost
+instead of CN=localhost), and stderr was redirected away.
+The command's failure was reproduced locally. The fixture command
+is corrected and stderr is no longer suppressed. These two
+diagnostic harness failures are not evidence of an HTTP2 regression.
+Conformance comparison still PENDING.
+
 The first CI diagnostic run 40162725724 failed during tool
 installation, before starting h2spec: modern Go rejected the legacy
 upstream v2.6.0 module tag without a /v2 module path. The ordinary
