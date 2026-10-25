@@ -186,3 +186,4 @@ t/rebuild/105-generic-client.t
 t/rebuild/106-websocket-tls.t
 docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md
 t/rebuild/107-generic-multiplex.t
+bench/run-unblock-cost-breakdown.pl
