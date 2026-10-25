@@ -103,7 +103,20 @@ subtest 'active H3 cancellation isolates a flow-controlled sibling' => sub {
     is_deeply(\@errors, [], 'no unexpected errors');
     is($server->connection_count, 1, 'sibling kept shared QUIC connection alive');
     $client->shutdown;
-    $server->shutdown(grace => 0);
+    my $shutdown_done = 0;
+    $server->shutdown(grace => 0, on_complete => sub {
+        ++$shutdown_done;
+        $loop->stop;
+    });
+    # The zero-grace deadline fires on the next reactor turn. It is not
+    # synchronous teardown for an established QUIC connection.
+    if (!$shutdown_done) {
+        my $closing_guard = guard($loop);
+        $loop->run;
+        $closing_guard->cancel;
+    }
+    is($shutdown_done, 1, 'forced shutdown completion called once');
+    is($server->connection_count, 0, 'server released the QUIC session');
     is($loop->count, 0, 'all socket and timer watchers released');
 };
 
