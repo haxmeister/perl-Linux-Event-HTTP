@@ -2,8 +2,8 @@
 
 Repo: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Feature branch: feature/unblock-http-rebuild
-Latest verified source checkpoint: f0f44edda0c8eb6a430625feb7285d175dc6cebd
-Root CI 40163258469: ALL SEVEN Perl jobs PASS. Latest nonthreaded
+Latest verified source checkpoint: 60644da63ee6c6b1b5e19d7a5c7234dd8ffeb9cc
+Root CI 40163552273: ALL SEVEN Perl jobs PASS (normal push). Latest nonthreaded
 make disttest PASS, plus native/Perl H1/2, real QUIC H3, WebSocket and
 generic H1/H2/H3 CONNECT regression coverage.
 Main baseline untouched: c0bf714e0f08f9031684e2eb4fd70dea3c68449f

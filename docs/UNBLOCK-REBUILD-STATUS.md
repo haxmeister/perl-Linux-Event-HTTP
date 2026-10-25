@@ -2,6 +2,15 @@
 
 ## Stage C controlled h2spec fixture comparison (2026-10-25 UTC)
 
+Stage C follow-up CI 40163552273 VERIFIED feature source
+60644da63ee6c6b1b5e19d7a5c7234dd8ffeb9cc: all SEVEN Perl
+jobs PASS, latest nonthreaded make disttest and required H2/H3,
+WebSocket and generic handoff regressions PASS. The optional
+h2spec fixture comparison was correctly SKIPPED on normal push;
+it is available only through workflow_dispatch. Its previous
+controlled result remains 135/1/10 in both response modes.
+No conformance or throughput release gate is newly closed.
+
 The root-only diagnostic built pinned h2spec v2.6.0 at source commit
 70ac2294010887f48b18e2d64f5cccd48421fad1 and compared two
 identical-response fixtures on one CI host. The Unblock::HTTP2 engine
