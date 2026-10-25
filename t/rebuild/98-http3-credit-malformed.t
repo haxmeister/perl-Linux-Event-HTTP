@@ -62,6 +62,7 @@ sub stop_server ($loop, $server, $client) {
     is($server->connection_count, 0, 'no remaining QUIC sessions');
     if ($loop->count) {
         require Data::Dumper;
+        diag('client pool: ' . Data::Dumper::Dumper($client->pool_stats));
         diag('remaining resources: ' . Data::Dumper::Dumper($loop->why_alive));
         diag('remaining classes: ' . join(', ', map { ref($_) } @{ $loop->objects }));
     }
