@@ -1,8 +1,34 @@
 # Unblock::HTTP3 CONNECT completion recheck defect
 
-Status: reproduced in required Linux::Event::HTTP Stage E regression;
+Status: RESOLVED and verified in authorized Unblock::HTTP3 feature branch;
 Unblock::HTTP3 is READ-ONLY under the current authorization. Do not edit
 its source without explicit permission for its own feature branch.
+
+## Verified resolution — 2026-10-25
+
+The suspected ordering race was confirmed. In Unblock::HTTP3
+feature/connect-completion-recheck, commit
+b0585f6083c91a7bdfea0ddbccfefea76ab92362, an outgoing
+Body::Stream->complete() tells its owning Transaction to recheck
+the existing Connection completion predicate AFTER the body writer
+complete bit becomes true.
+
+Standalone real QUIC regression t/28-connect-completion.t verifies
+the response and reader can finish before request FIN and ensures
+on_complete/on_finish fire synchronously and once after Client
+writer finalization. Standalone CI 40152896247 PASS in four Perl
+lanes (5.20, 5.28, 5.36, 5.44).
+
+The original mandatory downstream t/rebuild/102-websocket-multiplex.t
+now PASSES with BOTH native and Perl input paths. Full root CI
+40152960105 PASS all seven Perl jobs with H3 feature source installed
+after CPAN dependencies. The resolved Client WebSocket Close path
+finishes normally instead of expiring by timeout. This fix remains
+on an authorized feature branch; neither repository main changed,
+and no versions/releases were created.
+
+The remainder of this document records the original failure and
+candidate analysis for engineering context.
 
 ## Exact reproduction
 

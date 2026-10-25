@@ -288,9 +288,11 @@ socket to WebSocket without losing same-read bytes. Native and Perl
 input paths are tested. C<http2 =E<gt> { websocket =E<gt> 1 }> and
 C<http3 =E<gt> { websocket =E<gt> 1 }> enable Extended CONNECT on
 individual multiplexed streams. The H2 path passes real TLS loopback.
-H3 message exchange is working, but Client-side stream completion
-after a WebSocket Close remains an open regression; do not treat
-graceful H3 WebSocket termination as verified. WebSocket is an optional
-dependency, loaded only when enabled.
+H2 and H3 WebSocket Extended CONNECT are verified by real TLS and QUIC
+loopback with independent ordinary HTTP streams. After a protocol
+engine completion-order fix on Unblock::HTTP3's feature branch, the
+H3 Client also completes WebSocket Close and stream FIN exactly once.
+This relies on that feature fix until released. WebSocket remains an
+optional dependency, loaded only when enabled.
 
 =cut

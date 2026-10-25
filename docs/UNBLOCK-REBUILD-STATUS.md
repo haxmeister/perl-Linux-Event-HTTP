@@ -12,10 +12,47 @@ gate has NOT passed. Stage C initial integration is implemented; focused Stage C
 conformance remains open. Stage D's planned real QUIC/TLS loopback, timeout,
 credit recovery, cancellation and multi-connection gate is verified for the
 supported concrete-address, combined TCP/UDP Server API. Stage E is in progress: HTTP1 Upgrade and public WebSocket Client
-are verified, H2 Extended CONNECT tests pass, and H3 Close/EOF remains failing.
+are verified, H2/H3 WebSocket Extended CONNECT tests pass, and generic
+H2/H3 non-WebSocket CONNECT remains.
 Stage F remains unimplemented. See the explicit H3-only/wildcard limitations below. The user authorized
 the specified upstream feature-branch changes. No release, version bump,
 main change has occurred. Feature-branch publication is authorized.
+
+## Stage E HTTP3 CONNECT fix — independently and downstream verified (2026-10-25)
+
+User explicitly authorized feature-branch work on Unblock::HTTP3.
+New branch: feature/connect-completion-recheck; main unmodified at
+aa810d0b80dd4b3f94850b8ca95a4b5e6d7737a7.
+Production implementation + test commit:
+b0585f6083c91a7bdfea0ddbccfefea76ab92362.
+Standalone full CI 40152896247 PASS across Perl 5.20/5.28/5.36/5.44.
+Standalone t/28-connect-completion.t creates real Net::QUIC loopback:
+CONNECT response DATA, reader and response FIN complete before Client
+request FIN, then request writer complete() must invoke Client
+on_complete/on_finish exactly once without further QUIC polling.
+The fix rechecks existing Connection::_maybe_complete_transaction()
+after Body::Stream->complete commits its writer-complete flag;
+no adapter workaround, Linux core/Net::QUIC modification, or version bump.
+
+Downstream Linux::Event::HTTP CI 40152960105 PASS all SEVEN Perl jobs,
+including required latest-nonthreaded real QUIC H3 and WebSocket lanes.
+Root CI pins exact H3 feature source b0585f6 and installs it AFTER
+released dependency prerequisites. Mandatory
+t/rebuild/102-websocket-multiplex.t PASS both native and Perl input:
+H2 and H3 Extended CONNECT WebSocket echo, ordinary HTTP sibling on
+one transport, close/FIN terminal on_finish uniqueness, stream credit
+return, Server shutdown and zero leaked watchers. TLS WebSocket
+t/rebuild/106 also PASS both modes; Stage D tests 70/80/90/95/96/97/
+98/99 remain green.
+
+The previously required failing H3 Close regression is RESOLVED by
+that verified engine feature commit; earlier RED CI evidence below is
+historical, not current. The original approved design is unchanged.
+Still OPEN: Stage E generic H2/H3 non-WebSocket stream-local handoff,
+Stage B HTTP1 throughput gate and Stage C h2spec (146 total,
+134 pass / 1 skip / 11 fail, equal to legacy baseline). Stage F
+legacy cleanup deferred. H3-only and wildcard bind unsupported.
+No main, merge, tag, version bump or release changes in either repo.
 
 ## Stage E generic HTTP1 handoff and H3 completion diagnosis - 2026-10-25
 

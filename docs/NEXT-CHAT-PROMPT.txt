@@ -1,100 +1,57 @@
 # Continue Linux::Event::HTTP Unblock Reconstruction
 
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
-Feature branch: feature/unblock-http-rebuild
-Last VERIFIED implementation: 4243b0a676d9027ef185a08bfb7052d45704340c
-A later documentation-only commit may exist; inspect remote refs first.
-Main untouched at c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+Branch: feature/unblock-http-rebuild
+Full verified integration commit: 673584eed55fff7553190c5edc8c52b5c463aa03
+Documentation-only branch HEAD may be later: inspect current remote.
+Main baseline UNCHANGED: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
 
-Read handoff.md ACTIVE REBUILD HANDOFF first, then
-docs/UNBLOCK-REBUILD-PLAN.md (authoritative approved plan) and
-docs/UNBLOCK-REBUILD-STATUS.md (exact evidence).
+Authoritative plan: docs/UNBLOCK-REBUILD-PLAN.md
+Latest evidence: docs/UNBLOCK-REBUILD-STATUS.md and handoff.md.
+H3 bug/verified fix forensic: docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md.
 
-Do implementation, not another architecture or release discussion.
-Feature-branch pushes authorized; main requires permission. Never merge,
-tag, bump versions, or release. Upper Unblock::HTTP and HTTP1 changes
-previously approved ONLY on feature/linux-event-integration for scoped
-admission/optional-dep/handoff and performance/drain tasks respectively.
-Linux::Event core, Uniform, HTTP2/3, Net::QUIC and WebSocket are read-only.
+Do implementation, no architecture reset or release prep. All feature
+branch pushes authorized; no merges, tags, version bumps, releases, or
+main changes without fresh permission. Linux::Event core, Uniform::HTTP,
+Net::QUIC, HTTP2, Unblock::WebSocket are READ-ONLY. User authorized
+narrow scope changes on feature/connect-completion-recheck in
+haxmeister/perl-Unblock-HTTP3 and earlier generic handoff on
+haxmeister/perl-Unblock-HTTP feature/linux-event-integration.
 
-VERIFIED:
-- H1 Server/Client: Unblock + Uniform types, native borrowed input,
-  TCP/TLS, cancellation, buffering, streaming, timers, pooling, admission
-  callbacks, shutdown. HTTP1 serialization retention improvement reduced
-  recorded memory from ~130 MiB to ~66 MiB.
-- H2 TLS ALPN, fallback, multiplexing, stream isolation, GOAWAY and
-  cleanup. h2spec parity, NOT clean compliance.
-- H3 public Client and combined TCP+UDP Server, original-host TLS
-  verification, real Net::QUIC, independent multiplexing, shutdown
-  and active cancellation. Stage D real-QUIC gate verified for supported
-  concrete-address endpoints. No second pooling implementation.
-- In credit-exhaustion real-QUIC testing, one speculative connector and
-  timer stayed live after shutdown. Fixed in generic upper Unblock::HTTP
-  Client on feature/linux-event-integration commit
-  f15638ec1cb35f95e0b1f4eb4138298fccb5fc85. Handoff-only upper
-  commit 8c84553aa648bd8fbfca3499e7009473e9f3b561. Root CI pins
-  source f15638e. Upper CI run 40147073797 PASS Perl 5.20/5.44.
-- Root workflow 40147345109 PASS in all seven Perl lanes. Required real
-  QUIC/TLS tests: 70 (19), 80 (16), 90 (13), 95 (2 subtests),
-  96 (2 subtests), 97 (13), 98 (2 subtests), 99 (14 assertions).
-  Last added timeout regression confirmed active stream timeout, next
-  request unaffected, and zero watcher leaks.
+CRITICAL NEW VERIFIED CHECKPOINT:
+Unblock::HTTP3 feature/connect-completion-recheck
+implementation b0585f6083c91a7bdfea0ddbccfefea76ab92362
+(main remains aa810d0b80dd4b3f94850b8ca95a4b5e6d7737a7).
+Standalone CI 40152896247 PASS 4 Perl lanes 5.20/28/36/44.
+Fix: after Body::Stream->complete() commits the writer-complete bit,
+internal Transaction->_outgoing_body_complete() rechecks the existing
+Connection::_maybe_complete_transaction(). No Linux-specific shim.
+New real-QUIC regression t/28-connect-completion.t verifies response
+and incoming reader finish before CONNECT request writer FIN, then
+callbacks occur once without another network event.
 
-STAGE E CURRENT:
-- CI 40152181082 6/7 lanes green. Required authenticated TLS
-  H1 WebSocket test 106 PASSED in native and Perl modes with real
-  cipher, 101 Upgrade, WebSocket exchange, pool transfer and zero
-  watchers. Only the REQUIRED H3 t/102 remains red.
-- H3 issue note: docs/HTTP3-EXTENDED-CONNECT-COMPLETION.md.
-  Root snapshot proves missing completion recheck after all H3
-  CONNECT preconditions became true. Only an authorized H3
-  feature-branch fix is acceptable; no private adapter workaround.
+Root CI 40152960105 PASS all SEVEN Perl jobs, latest lane checks H3
+feature source pinned in .github/workflows/ci.yml. Required
+t/rebuild/102-websocket-multiplex.t PASS in native/Perl modes:
+H2/H3 WebSocket Extended CONNECT, echo, sibling ordinary HTTP, Close
+handshake and stream FIN complete, pool/watcher cleanup.
+All Stage D real QUIC checks 70/80/90/95/96/97/98/99 remain GREEN.
+Native and Perl H1 same-read WebSocket tests 100/101, generic H1
+Server 101/CONNECT t/104, generic Client socket handoff t/105, and
+authenticated TLS H1 WebSocket t/106 all PASS.
+Upstream Unblock::HTTP on feature/linux-event-integration HEAD
+56c6ab44829de3c59a1a3f4c940533ce67c63a64, implementation
+a850460a253937735f8cfe763a4afd3bf43ec147, no new version.
 
-- Generic HTTP1 on_handoff server (101/CONNECT) and client request
-  (strict HTTP1) implemented in Unblock::HTTP feature branch.
-  Upper source a850460a253937735f8cfe763a4afd3bf43ec147,
-  CI 40151043666 and 40151346692 PASS Perl 5.20/5.44.
-- Root t/rebuild/104 and 105 both PASS in native/Perl input; CI
-  40151423807 six ordinary Perl lanes green; the mandatory H3 test
-  still fails in latest nonthreaded Perl lane.
-- H3 bug now narrowed conclusively: at t+1s before timeout, Client
-  H3 tx active, callback_depth=0, response complete=1, reader=1,
-  writer=1, output_finished=1, stream closed_seen=1; all prerequisites
-  for completion are satisfied but callback never fires. CI 40150770545.
-  Correct fix belongs in read-only Unblock::HTTP3 lifecycle;
-  explicit user authorization required before touching that repo.
+NEXT in approved Stage E: generic non-WebSocket H2/H3 *stream-local*
+Extended CONNECT handoff via minimal event-loop-neutral Unblock API,
+NOT socket-wide transition_to(), preserving sibling streams, flow
+control, callback/error/close ownership. Determine what incremental
+contract is necessary in upper Unblock::HTTP; do not duplicate protocol
+engines or WebSocket codec. User dislikes unnecessary abstraction and
+async/await. H3-only/wildcard UDP listeners remain unsupported.
 
-- HTTP1 native INPUT_SWITCH->transition_to() WebSocket handoff, same-read
-  tail and original socket/write queue verified. t/rebuild/100 H1 and
-  public Client t/rebuild/101 both pass native/Perl input.
-- CI 40149010878 and 40149284214: 7/7 lanes green.
-- t/rebuild/102 H2 Extended CONNECT + ordinary sibling pass.
-- Required H3 test t/rebuild/102 is RED: client WebSocket Close has
-  sent=1, received=1, complete=1, closed=0; Server H3 Transaction
-  complete, Client H3 Transaction only ends by 5sec timeout.
-  CI diagnostic 40149783042. Deferring client Close does not fix it.
-  Investigate missing Client H3 response EOF/finish in Linux QUIC
-  integration against upstream t/36-client-websocket-h3.t.
-- H3/Net::QUIC/WebSocket/core source remain read-only, no changes
-  without fresh authorization. Do not weaken the failing test.
-- Generic H1 handoff is implemented and verified. Stream-local H2/H3
-  generic CONNECT remains open.
-
-NEXT:
-- Begin Stage E opt-in WebSocket and generic Upgrade/CONNECT through
-  existing Unblock APIs and approved Linux::Event transition_to(),
-  without forking another parser/connection-pool implementation.
-- FIRST inspect the upper Unblock::HTTP generic handoff contract;
-  new framework-neutral additions to that authorized feature branch
-  are permitted, but core/HTTP2/3/WebSocket source changes require
-  separate permission. Preserve socket-wide H1 vs stream-local H2/H3.
-- H1 native INPUT_SWITCH/same-read remainder is verified. Remaining
-  Stage E gate needs TLS Upgrade coverage, generic stream-local H2/H3
-  handling and the H3 Client close lifecycle fix.
-- Stage B throughput gate OPEN; Stage C 11 h2spec failures remain open,
-  exact baseline parity but not clean compliance. Stage F cleanup deferred
-  until replacement coverage. No backward compatibility required.
-- HTTP3 H3-only/wildcard/migration path unsupported; don't advertise.
-
-Keep handoff.md current and run targeted tests instead of broad benchmark
-sweeps without a concrete change.
+Release gates STILL OPEN: Stage B HTTP1 throughput comparison;
+Stage C h2spec 146 total / 134 pass / 1 skip / 11 fail (baseline
+parity but not clean conformance). Stage F legacy cleanup deferred.
+No backward compatibility required under reconstruction charter.

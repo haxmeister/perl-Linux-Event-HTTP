@@ -207,10 +207,11 @@ to the established Unblock::WebSocket session without introducing a second
 pool; a normal HTTP request can continue on another socket. The same-read
 native input handoff is verified. Optional C<http2 =E<gt>
 { websocket =E<gt> 1 }> uses multiplexed Extended CONNECT, verified
-alongside ordinary H2 requests. HTTP3 Extended CONNECT messages also
-work, but graceful Client-side response-stream EOF after WebSocket
-Close remains a failing required regression. Generic non-WebSocket
-handoff remains unfinished.
+alongside ordinary H2 requests. HTTP3 Extended CONNECT messages and
+graceful WebSocket Close/FIN are verified by real QUIC loopback, with
+the Unblock::HTTP3 completion-recheck feature commit installed.
+Generic non-WebSocket HTTP1 on_handoff is implemented; generic
+H2/H3 stream-local CONNECT handoff remains unfinished.
 No redirects, cookies, authentication retries or response wrappers are added.
 
 =cut
