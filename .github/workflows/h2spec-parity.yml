@@ -29,6 +29,11 @@ jobs:
           repository: haxmeister/perl-Unblock-HTTP
           ref: e9efa51ee0110227945628f3f85a3feedba90558
           path: .ci-deps/unblock
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Unblock-HTTP2
+          ref: aca84baf6f55fad7d6f5aaaaa6f0505b2ff3d165
+          path: .ci-deps/http2
       - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
         with:
           perl-version: '5'
@@ -37,7 +42,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes libssl-dev libnghttp2-dev
-          cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06' IO::Socket::SSL 'Unblock::HTTP2@0.12'
+          cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06' IO::Socket::SSL
+          cpanm --notest ./.ci-deps/http2
           cpanm --notest ./.ci-deps/http1
           cpanm --notest ./.ci-deps/unblock
           perl -MUnblock::HTTP2 -e 'die "wrong HTTP2 version" unless $Unblock::HTTP2::VERSION eq "0.12"'
@@ -64,9 +70,14 @@ jobs:
             case_num=$((case_num + 1))
             port=$((19400 + case_num))
             if [[ "$variant" == standalone* ]]; then
-              perl tools/http2-h2spec-standalone.pl \
-                --port "$port" --cert "$REPORTS/cert.pem" --key "$REPORTS/key.pem" \
-                --response-mode headers > "$REPORTS/$variant.server.log" 2>&1 &
+              UNBLOCK_HTTP2_TLS_CERT="$REPORTS/cert.pem" \
+                UNBLOCK_HTTP2_TLS_KEY="$REPORTS/key.pem" \
+                UNBLOCK_HTTP2_RESPONSE_MODE=headers \
+                UNBLOCK_HTTP2_INPUT_MODE=perl \
+                UNBLOCK_HTTP2_SERVER_PORT="$port" \
+                PERL_DL_NONLAZY=1 \
+                perl .ci-deps/http2/xt/h2spec-server.pl \
+                > "$REPORTS/$variant.server.log" 2>&1 &
             else
               flag=''
               if [[ "$variant" == rebuild-perl ]]; then flag='--no-native-input'; fi
@@ -78,7 +89,7 @@ jobs:
             trap 'kill "$pid" 2>/dev/null || true' EXIT
             ready=0
             for i in $(seq 1 100); do
-              if grep -q '^READY ' "$REPORTS/$variant.server.log"; then ready=1; break; fi
+              if grep -qi '^ready ' "$REPORTS/$variant.server.log"; then ready=1; break; fi
               if ! kill -0 "$pid" 2>/dev/null; then
                 echo "Fixture exited before READY: $variant"
                 cat "$REPORTS/$variant.server.log"
@@ -92,7 +103,7 @@ jobs:
               exit 1
             fi
             result=0
-            timeout 180s "$RUNNER_TEMP/h2spec" -t -k -h 127.0.0.1 -p "$port" \
+            timeout 180s "$RUNNER_TEMP/h2spec" -S -t -k -h 127.0.0.1 -p "$port" \
               -j "$REPORTS/$variant.xml" > "$REPORTS/$variant.h2spec.log" 2>&1 || result=$?
             kill "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -106,7 +117,7 @@ jobs:
             echo "h2spec completed $variant; test failures are compared below"
           done
           python3 tools/h2spec-compare.py "$REPORTS" "$REPORTS/comparison.json"
-          echo "Protocol errors are recorded, not declared passing."
+          echo "h2spec strict conformance is a release gate: all four variants must pass."
       - name: Preserve JUnit, fixture and comparison reports
         if: always()
         uses: actions/upload-artifact@v4

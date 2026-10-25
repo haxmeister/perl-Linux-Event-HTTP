@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compare exact h2spec JUnit case outcomes across protocol/adapter fixtures.
 
-Protocol failures are reported but do not cause a nonzero exit here.
-Missing/partial data and inconsistent case inventories DO cause a failure.
+All four strict conformance runs must pass: 147 cases, no failures or skips.
+Missing/partial data and inconsistent case inventories also cause a failure.
 """
 import json
 import pathlib
@@ -59,8 +59,8 @@ for name in names:
                 else "passed"
             )
             cases[key] = result
-    if len(cases) != 146:
-        raise SystemExit(f"{name}: expected 146 cases, got {len(cases)}")
+    if len(cases) != 147:
+        raise SystemExit(f"{name}: expected 147 cases, got {len(cases)}")
     summary[name] = {
         "passed": sum(v == "passed" for v in cases.values()),
         "skipped": sum(v == "skipped" for v in cases.values()),
@@ -111,3 +111,9 @@ output = {
 path = pathlib.Path(sys.argv[2])
 path.write_text(json.dumps(output, sort_keys=True, indent=2) + "\n")
 print(f"JSON comparison: {path}", flush=True)
+for name in names:
+    item = summary[name]
+    if item["failed"] or item["skipped"] or item["passed"] != 147:
+        raise SystemExit(f"{name}: strict h2spec conformance failed "
+                         f"({item['passed']} passed, {item['skipped']} skipped, "
+                         f"{item['failed']} failed)")

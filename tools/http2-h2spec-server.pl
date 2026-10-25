@@ -48,7 +48,7 @@ my $server = Linux::Event::HTTP::Server->new(
         $tx->on_data(sub { });
         if ($response_mode eq 'headers') {
             $tx->respond(status => 200,
-                headers => [['content-type', 'text/plain']], body => "ok\n");
+                headers => [['content-type', 'text/plain']], body => "unblock-h2spec-ok\n");
         }
     },
     on_request => sub ($tx, $request) {

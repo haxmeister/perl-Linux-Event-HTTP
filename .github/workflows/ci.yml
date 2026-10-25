@@ -60,6 +60,11 @@ jobs:
           repository: haxmeister/perl-Unblock-HTTP3
           ref: b0585f6083c91a7bdfea0ddbccfefea76ab92362
           path: .ci-deps/http3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: haxmeister/perl-Unblock-HTTP2
+          ref: aca84baf6f55fad7d6f5aaaaa6f0505b2ff3d165
+          path: .ci-deps/http2
       - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
         with:
           perl-version: ${{ matrix.perl }}
@@ -164,7 +169,9 @@ jobs:
           '
       - name: Optional HTTP2 integration
         run: |
-          cpanm --notest 'Unblock::HTTP2@0.12'
+          # Pin tested h2spec repair until it is present on main/CPAN.
+          cpanm --notest ./.ci-deps/http2
+          perl -MUnblock::HTTP2::_nghttp2 -e 'die "wrong repaired engine" unless $INC{"Unblock/HTTP2/_nghttp2.pm"} =~ /site_perl/'
           REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t
           REBUILD_REQUIRE_HTTP2=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/50-http2.t
       - name: Stage C h2spec fixture timing diagnostic (manual only, non-gating)

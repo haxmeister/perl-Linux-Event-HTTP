@@ -1,5 +1,31 @@
 # Reconstruction implementation checkpoint
 
+## Stage C repaired Unblock::HTTP2 integration validation (2026-10-25 UTC)
+
+User reports the HTTP/2 conformance repair is complete. Verified
+Unblock::HTTP2 feature/h2spec-conformance handoff at 4e98e6c,
+tested implementation aca84baf6f55fad7d6f5aaaaa6f0505b2ff3d165:
+16 h2spec strict configurations, EACH 147 passed / 0 skipped /
+0 failed, including system nghttp2 1.59 and pinned 1.70; standalone
+test/disttest/interop PASS. Engine uses framework-neutral private
+receive guard and public APIs/ABI are unchanged.
+
+NOTE: GitHub main branch still returned
+7bc0b6ccd653a74ad1e7399d27aa9d94c941b513 at verification
+time; the repair exists on published feature branch, not confirmed
+main yet. To validate integration now, root feature CI checks out
+the exact verified implementation aca84baf, installs this build
+rather than older released Unblock::HTTP2 0.12, runs H2 native
+and Perl tests, and executes strict h2spec comparison.
+The comparison uses upstream's VERIFIED standalone fixture for
+proper shutdown/GOAWAY and same response body size, alongside
+LinuxEvent native and Perl variants, 147 strict cases each, with
+zero failures/skips REQUIRED, and preserves complete artifacts.
+No Unblock repo changed. Validation PENDING.
+DO NOT close Stage C gate without observing downstream run results.
+
+
+
 ## Stage C VERIFIED standalone engine vs LinuxEvent same-run h2spec (2026-10-25 UTC)
 
 This is the requested attribution A/B. A dedicated diagnostic workflow
