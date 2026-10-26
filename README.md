@@ -94,7 +94,7 @@ hostname and ALPN selection. Server TLS options are passed as
 
 ## HTTP/3
 
-Install `Net::QUIC >= 0.06` and `Unblock::HTTP3 >= 0.13`, then enable
+Install `Net::QUIC >= 0.06` and `Unblock::HTTP3 >= 0.14`, then enable
 `http3 => 1`. A strict Client request can use `http_version => '3'`.
 A client may pass `quic => { ca_file => $path }` for a private CA and
 uses Linux::Event's asynchronous UDP hostname resolution and Net::QUIC's
@@ -141,17 +141,14 @@ attached host, respecting congestion until on_drain. Malformed protocol input
 closes the affected connection without unwinding the reactor.
 
 Current direct runtime requirements: Linux, Perl 5.36+, Linux::Event 0.117,
-Unblock::HTTP 0.02 and Uniform::HTTP 0.06. Unblock::HTTP requires
-Unblock::HTTP1 and URI. HTTP::CookieJar and Uniform::HTTP::Auth are no
-longer direct dependencies of this Linux integration layer.
-This development checkpoint additionally needs the upstream feature commits
-listed in the [status document](docs/UNBLOCK-REBUILD-STATUS.md) for admission
-callbacks and server drain. Server construction now checks the required
-Unblock::HTTP1 graceful drain capability and fails before binding a listener
-when that capability is missing. Their version numbers are deliberately unchanged;
-the published 0.02/0.12 releases do not contain these additions. On the feature
-branch HTTP2/HTTP3 dependencies are optional, with an explicit error when an
-enabled engine is unavailable. The superseded private HTTP parsers, executors and public Request/Response
+Unblock::HTTP 0.03, Unblock::HTTP1 0.13 and Uniform::HTTP 0.06.
+These versions are published on CPAN; no development dependency checkout is
+needed. HTTP2, HTTP3/Net::QUIC and WebSocket remain optional and are loaded
+only when enabled. Enabling an unavailable engine produces an explicit error.
+Server construction also checks HTTP1's graceful drain capability before
+binding a listener. HTTP::CookieJar and Uniform::HTTP::Auth are not direct
+dependencies of this integration layer.
+The superseded private HTTP parsers, executors and public Request/Response
 wrappers have been removed from this feature branch; the untouched main
 baseline retains the historical implementation and tests.
 

@@ -1,6 +1,7 @@
 # Unblock::HTTP3 CONNECT completion recheck defect
 
-Status: RESOLVED and verified in authorized Unblock::HTTP3 feature branch;
+Status: RESOLVED; the fix is published in Unblock::HTTP3 0.14.
+The account below preserves the original feature-branch investigation.
 Unblock::HTTP3 is READ-ONLY under the current authorization. Do not edit
 its source without explicit permission for its own feature branch.
 
@@ -23,9 +24,8 @@ The original mandatory downstream t/rebuild/102-websocket-multiplex.t
 now PASSES with BOTH native and Perl input paths. Full root CI
 40152960105 PASS all seven Perl jobs with H3 feature source installed
 after CPAN dependencies. The resolved Client WebSocket Close path
-finishes normally instead of expiring by timeout. This fix remains
-on an authorized feature branch; neither repository main changed,
-and no versions/releases were created.
+finishes normally instead of expiring by timeout. At that checkpoint the fix remained on an authorized feature branch.
+It has since been included in the published 0.14 release.
 
 The remainder of this document records the original failure and
 candidate analysis for engineering context.

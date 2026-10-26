@@ -10,7 +10,7 @@ my $available = eval {
     require Net::QUIC;
     Net::QUIC->VERSION('0.06');
     require Unblock::HTTP3;
-    Unblock::HTTP3->VERSION('0.13');
+    Unblock::HTTP3->VERSION('0.14');
     require Unblock::HTTP::QUIC;
     require Unblock::HTTP::Server;
     1;

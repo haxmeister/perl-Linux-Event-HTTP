@@ -17,7 +17,7 @@ subtest 'outdated Unblock HTTP1 fails at construction before binding' => sub {
     my $error;
     {
         no warnings 'redefine';
-        # Emulate a loaded 0.12 package missing the feature-branch method.
+        # Emulate a mixed installation missing the required method.
         local *Unblock::HTTP1::Server::drain;
         $server = eval { Linux::Event::HTTP::Server->new(options($loop)) };
         $error = "$@";

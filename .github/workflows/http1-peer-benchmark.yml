@@ -19,16 +19,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          repository: haxmeister/perl-Unblock-HTTP1
-          ref: 4d19f59196481ae4460207c5b22c5125fdbfe186
-          path: .ci-deps/http1
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          repository: haxmeister/perl-Unblock-HTTP
-          ref: e9efa51ee0110227945628f3f85a3feedba90558
-          path: .ci-deps/unblock
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
           repository: haxmeister/perl-Linux-Event-HTTP
           ref: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
           path: .ci-deps/http-baseline
@@ -46,8 +36,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes build-essential libssl-dev libev-dev zlib1g-dev
           cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06'
-          cpanm --notest ./.ci-deps/http1
-          cpanm --notest ./.ci-deps/unblock
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP1-0.13.tar.gz
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP-0.03.tar.gz
           cpanm --notest Hyperman Feersum Mojolicious
       - name: Build both LinuxEvent HTTP implementations
         run: |

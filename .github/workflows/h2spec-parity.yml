@@ -24,16 +24,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          repository: haxmeister/perl-Unblock-HTTP1
-          ref: 4d19f59196481ae4460207c5b22c5125fdbfe186
-          path: .ci-deps/http1
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          repository: haxmeister/perl-Unblock-HTTP
-          ref: e9efa51ee0110227945628f3f85a3feedba90558
-          path: .ci-deps/unblock
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
+          # Only xt/h2spec-server.pl is used; the fixture is not in CPAN.
+          # Its engine must come from the installed CPAN distribution.
           repository: haxmeister/perl-Unblock-HTTP2
           ref: aa7992f173948464982728f8e68b9b3e7a681f98
           path: .ci-deps/http2
@@ -47,9 +39,9 @@ jobs:
           sudo apt-get install --yes libssl-dev libnghttp2-dev
           cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06' IO::Socket::SSL
           cpanm --notest 'Alien::nghttp2@0.003'
-          cpanm --notest ./.ci-deps/http2
-          cpanm --notest ./.ci-deps/http1
-          cpanm --notest ./.ci-deps/unblock
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP2-0.13.tar.gz
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP1-0.13.tar.gz
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP-0.03.tar.gz
           perl -MUnblock::HTTP2 -e 'die "wrong HTTP2 version" unless $Unblock::HTTP2::VERSION eq "0.13"'
           perl Makefile.PL
           make -j2

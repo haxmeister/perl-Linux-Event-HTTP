@@ -9,13 +9,13 @@ my $available = eval {
     require Net::QUIC;
     Net::QUIC->VERSION('0.06');
     require Unblock::HTTP3;
-    Unblock::HTTP3->VERSION('0.13');
+    Unblock::HTTP3->VERSION('0.14');
     require Unblock::HTTP::QUIC;
     require Unblock::HTTP::Server;
     1;
 };
 die "HTTP3 required by this test lane: $@" if !$available && $ENV{REBUILD_REQUIRE_HTTP3};
-plan skip_all => 'optional Net::QUIC >= 0.06 and Unblock::HTTP3 >= 0.13 required'
+plan skip_all => 'optional Net::QUIC >= 0.06 and Unblock::HTTP3 >= 0.14 required'
     unless $available;
 plan skip_all => 'openssl command required' unless -x '/usr/bin/openssl';
 

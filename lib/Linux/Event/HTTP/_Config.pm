@@ -1,5 +1,7 @@
 package Linux::Event::HTTP::_Config;
 use v5.36;
+use Unblock::HTTP 0.03 ();
+use Unblock::HTTP1 0.13 ();
 use Carp qw(croak);
 use Scalar::Util qw(blessed);
 
@@ -27,11 +29,11 @@ sub protocols ($option) {
         if ($name eq 'http3') {
             eval {
                 require Unblock::HTTP3;
-                Unblock::HTTP3->VERSION('0.13');
+                Unblock::HTTP3->VERSION('0.14');
                 require Net::QUIC;
                 Net::QUIC->VERSION('0.06');
                 1;
-            } or croak "new(): http3 requires Unblock::HTTP3 >= 0.13 and Net::QUIC >= 0.06: $@";
+            } or croak "new(): http3 requires Unblock::HTTP3 >= 0.14 and Net::QUIC >= 0.06: $@";
         }
         if ($name eq 'http2') {
             eval { require Unblock::HTTP2; Unblock::HTTP2->VERSION('0.13'); 1 }

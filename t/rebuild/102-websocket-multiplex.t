@@ -9,9 +9,9 @@ use Linux::Event::HTTP::Client;
 my $available = eval {
     require Unblock::WebSocket::Handshake;
     require Unblock::HTTP2;
-    Unblock::HTTP2->VERSION('0.12');
+    Unblock::HTTP2->VERSION('0.13');
     require Unblock::HTTP3;
-    Unblock::HTTP3->VERSION('0.13');
+    Unblock::HTTP3->VERSION('0.14');
     require Net::QUIC;
     Net::QUIC->VERSION('0.06');
     1;

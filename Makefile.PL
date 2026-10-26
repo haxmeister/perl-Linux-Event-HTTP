@@ -35,14 +35,15 @@ WriteMakefile(
     test             => { TESTS => 't/rebuild/*.t' },
     CONFIGURE_REQUIRES => {
         'ExtUtils::MakeMaker' => 0,
-        'Unblock::HTTP1' => '0.12',
+        'Unblock::HTTP1' => '0.13',
     },
     TEST_REQUIRES => {
         'Test::More' => 0,
     },
     PREREQ_PM => {
         'Linux::Event'        => '0.117',
-        'Unblock::HTTP'       => '0.02',
+        'Unblock::HTTP'       => '0.03',
+        'Unblock::HTTP1'      => '0.13',
         'Uniform::HTTP'       => '0.06',
     },
     META_MERGE => {
@@ -50,7 +51,7 @@ WriteMakefile(
             http3 => {
                 description => 'HTTP/3 over verified QUIC/TLS (optional)',
                 prereqs => { runtime => { requires => {
-                    'Unblock::HTTP3' => '0.13', 'Net::QUIC' => '0.06',
+                    'Unblock::HTTP3' => '0.14', 'Net::QUIC' => '0.06',
                 } } },
             },
             websocket => {

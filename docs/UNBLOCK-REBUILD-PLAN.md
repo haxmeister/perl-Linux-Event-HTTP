@@ -243,31 +243,26 @@ Do not claim a performance gain without a reproducible same-run test.
 
 ## 7. Dependency and packaging decision
 
-Current Unblock::HTTP depends on all three HTTP engine distributions.
-This can make HTTP/3 / QUIC-related build requirements mandatory even
-for an HTTP/1-only Linux::Event::HTTP installation. Resolve this
-explicitly instead of hiding it.
-
-Investigate lazy/optional protocol dependencies or a compatible
-Unblock dependency change, keeping Unblock event-loop neutral. Do not
-modify other repositories without specific user authorization in the
-implementation chat. Failing to resolve optional packaging must be
-documented clearly rather than silently changing installation costs.
+The published dependency stack is Unblock::HTTP >= 0.03,
+Unblock::HTTP1 >= 0.13 and Uniform::HTTP >= 0.06. HTTP2 >= 0.13,
+HTTP3 >= 0.14 with Net::QUIC >= 0.06, and Unblock::WebSocket >= 0.02
+remain optional. Enable-time guards report missing or outdated engines.
+The earlier upstream publication and optional-packaging blockers are resolved;
+validation now uses actual CPAN distributions instead of feature revisions.
 
 Retain Linux-only scope. Establish supported Perl versions from the
 actual current dependencies and CI before updating MIN_PERL_VERSION;
 historically the current Linux::Event::HTTP baseline is Perl 5.36+.
 
 Current implementation evidence: `docs/UNBLOCK-REBUILD-STATUS.md`.
-The architecture below remains authoritative; later protocol stages are not complete.
+The architecture below remains authoritative; Stage B performance is still open.
 
 ## 8. Work plan and validation gates
 
 Work on `haxmeister/perl-Linux-Event-HTTP`, branch `feature/unblock-http-rebuild`.
-The user subsequently authorized the specific Unblock::HTTP1 performance/drain
-and Unblock::HTTP admission/optional-dependency/generic-handoff improvements
-documented in the status file. Both upstreams use `feature/linux-event-integration`.
-Other repositories remain read-only.
+The previously authorized upstream integration work is now published.
+All upstream distributions are read-only during this phase; any further
+upstream change needs separate discussion and authorization.
 Do not modify main, merge, tag, bump releases, push other repositories,
 or start a release process without user approval. If upstream changes
 are needed, prepare a precise proposal and obtain authorization before

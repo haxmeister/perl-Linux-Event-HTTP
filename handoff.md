@@ -1,5 +1,29 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-25
 
+## Published dependency validation in progress (2026-10-25)
+
+This section supersedes historical dependency-publication blockers below.
+Starting branch HEAD: 476f2e84bfcff2d326c46a75a8a9b690c0c3cca4;
+main remains c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+
+The user confirms CPAN/GitHub publication of Unblock::HTTP 0.03,
+HTTP1 0.13, HTTP2 0.13 and HTTP3 0.14. Uniform::HTTP 0.06 and
+Net::QUIC 0.06 are published dependencies. All upstreams are read-only.
+Updated Makefile, runtime/version guards, optional test guards and public
+POD/README. HTTP1 drain capability validation remains before socket binding.
+CI now installs CPAN distributions. Historical HTTP1 and legacy baseline
+pins remain only for comparisons; the pinned upstream h2spec fixture is
+needed because xt/h2spec-server.pl is absent from the HTTP2 CPAN archive.
+That fixture must load the installed CPAN engine, never checkout lib/blib.
+
+Local isolated system Perl 5.38.2 threaded: HTTP1-only native suite PASS
+(22 files, 53 top-level tests; optional protocol suites skipped as expected).
+Optional CPAN dependencies are building. Full optional suite, packaged
+source, strict h2spec and matched performance measurements are pending.
+No main change, version bump, tag or release. Stage B throughput stays OPEN.
+
+Earlier sections are dated historical records, not current dependency advice.
+
 ## Stage B integration ownership audit and dependency capability correction (2026-10-25)
 
 IMPLEMENTED root source commit 7265f410a51caa66864836181d14e7ed08750a96.

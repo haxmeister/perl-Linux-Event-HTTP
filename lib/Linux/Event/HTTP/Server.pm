@@ -2,7 +2,7 @@ package Linux::Event::HTTP::Server;
 use v5.36;
 use Carp qw(croak);
 use Scalar::Util qw(weaken refaddr);
-use Unblock::HTTP::Server 0.02;
+use Unblock::HTTP::Server 0.03;
 use Linux::Event::IO::Sock::Listener;
 use Linux::Event::Kernel::Timer;
 use Linux::Event::HTTP::_Config;
@@ -15,10 +15,8 @@ sub new ($class, %option) {
     Linux::Event::HTTP::_Config::loop($loop);
     my $stream_class = Linux::Event::HTTP::_Config::stream_class(\%option);
     my %protocols = Linux::Event::HTTP::_Config::protocols(\%option);
-    # The published Unblock::HTTP1 0.12 version predates the graceful
-    # drain contract used here. Feature revisions kept that version number,
-    # so VERSION() alone cannot establish integration compatibility.
-    # Check once at construction, never in the HTTP request hot path.
+    # Keep the capability check for mixed or incomplete installations.
+    # Check once at construction, before binding, never per request.
     if ($protocols{http1}) {
         require Unblock::HTTP1::Server;
         croak 'new(): Unblock::HTTP1::Server lacks drain() required for HTTP/1 graceful shutdown; install a compatible Unblock::HTTP1 build'
@@ -290,7 +288,7 @@ HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>
 A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains
 admitted streams. Cleartext HTTP/2 remains unimplemented.
 HTTP/2 C<on_error> may include a third protocol error-code argument.
-Optional C<http3 =E<gt> 1> uses Unblock::HTTP3 and Net::QUIC on UDP
+Optional C<http3 =E<gt> 1> uses Unblock::HTTP3 0.14 and Net::QUIC 0.06 on UDP
 alongside the TCP listener at the same concrete host and port. Its
 credentials are taken from C<tls =E<gt> { cert_file, key_file }>.
 C<quic =E<gt> { ... }> configures Net::QUIC server transport policy.
@@ -307,10 +305,8 @@ input paths are tested. C<http2 =E<gt> { websocket =E<gt> 1 }> and
 C<http3 =E<gt> { websocket =E<gt> 1 }> enable Extended CONNECT on
 individual multiplexed streams. The H2 path passes real TLS loopback.
 H2 and H3 WebSocket Extended CONNECT are verified by real TLS and QUIC
-loopback with independent ordinary HTTP streams. After a protocol
-engine completion-order fix on Unblock::HTTP3's feature branch, the
-H3 Client also completes WebSocket Close and stream FIN exactly once.
-This relies on that feature fix until released. WebSocket remains an
-optional dependency, loaded only when enabled.
+loopback with independent ordinary HTTP streams. Unblock::HTTP3 0.14
+includes the completion-order fix for WebSocket Close and stream FIN.
+WebSocket remains an optional dependency, loaded only when enabled.
 
 =cut

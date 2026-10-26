@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 use ExtUtils::MakeMaker;
-use Unblock::HTTP1::NativeABI ();
+use Unblock::HTTP1::NativeABI 0.13 ();
 my $inc = Unblock::HTTP1::NativeABI::native_include_dir();
 WriteMakefile(
     NAME => 'Linux::Event::HTTP::_NativeBridge',

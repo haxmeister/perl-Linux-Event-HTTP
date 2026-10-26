@@ -27,11 +27,6 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          repository: haxmeister/perl-Unblock-HTTP1
-          ref: 4d19f59196481ae4460207c5b22c5125fdbfe186
-          path: .ci-deps/http1
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         if: matrix.perl == '5' && matrix.multi_thread == false
         with:
           repository: haxmeister/perl-Unblock-HTTP1
@@ -43,28 +38,7 @@ jobs:
           repository: haxmeister/perl-Linux-Event-HTTP
           ref: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
           path: .ci-deps/http-baseline
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          repository: haxmeister/perl-Unblock-HTTP
-          ref: e9efa51ee0110227945628f3f85a3feedba90558
-          path: .ci-deps/unblock
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        if: matrix.perl == '5' && matrix.multi_thread == false
-        with:
-          repository: haxmeister/perl-Unblock-WebSocket
-          ref: 6f27677e176a3010355e1db5d135895baa3d8128
-          path: .ci-deps/websocket
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        if: matrix.perl == '5' && matrix.multi_thread == false
-        with:
-          repository: haxmeister/perl-Unblock-HTTP3
-          ref: b0585f6083c91a7bdfea0ddbccfefea76ab92362
-          path: .ci-deps/http3
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          repository: haxmeister/perl-Unblock-HTTP2
-          ref: aa7992f173948464982728f8e68b9b3e7a681f98
-          path: .ci-deps/http2
+
       - uses: shogo82148/actions-setup-perl@c3e9892cade8a01db1a8498b756f48d6ca98b678
         with:
           perl-version: ${{ matrix.perl }}
@@ -76,9 +50,8 @@ jobs:
       - name: HTTP1 dependencies
         run: |
           cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06'
-          # Development feature commits; versions are deliberately unchanged.
-          cpanm --notest ./.ci-deps/http1
-          cpanm --notest ./.ci-deps/unblock
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP1-0.13.tar.gz
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP-0.03.tar.gz
       - name: Build and test both input paths
         run: |
           perl Makefile.PL
@@ -169,9 +142,9 @@ jobs:
           '
       - name: Optional HTTP2 integration
         run: |
-          # Tested 0.13 release candidate on Unblock::HTTP2 main (not yet CPAN).
+          # Install the published engine, never a development checkout.
           cpanm --notest 'Alien::nghttp2@0.003'
-          cpanm --notest ./.ci-deps/http2
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP2-0.13.tar.gz
           perl -MUnblock::HTTP2::_nghttp2 -e 'die "wrong repaired engine" unless $INC{"Unblock/HTTP2/_nghttp2.pm"} =~ /site_perl/'
           REBUILD_REQUIRE_HTTP2=1 make test TEST_FILES=t/rebuild/50-http2.t
           REBUILD_REQUIRE_HTTP2=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/50-http2.t
@@ -206,14 +179,11 @@ jobs:
             if [ "$result" -gt 1 ]; then tail -50 "$RUNNER_TEMP/h2-$mode.log"; exit 1; fi
             python3 -c 'import sys, xml.etree.ElementTree as E; root=E.parse(sys.argv[1]).getroot(); cases=root.findall(".//testcase"); failures=[c for c in cases if c.find("failure") is not None or c.find("error") is not None]; skipped=[c for c in cases if c.find("skipped") is not None]; print("STAGE C", sys.argv[2], "total", len(cases), "pass", len(cases)-len(failures)-len(skipped), "skip", len(skipped), "fail", len(failures), flush=True); [print("  FAIL", c.get("classname",""), c.get("name",""), flush=True) for c in failures]; sys.exit(0 if len(cases)>=100 else 2)' "$RUNNER_TEMP/h2-$mode.xml" "$mode"
           done
-          echo "h2spec remains a release blocker even if diagnostic jobs pass."
+          echo "Strict conformance is enforced separately by h2spec-parity.yml."
       - name: Optional HTTP3 real QUIC loopback
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
-          cpanm --notest 'Net::QUIC@0.06' 'Unblock::HTTP3@0.13'
-          # Coordinated Stage E feature under test, not the released CPAN build.
-          cpanm --notest ./.ci-deps/http3
-          perl -MUnblock::HTTP3::Body::Stream -e 'my $path = $INC{"Unblock/HTTP3/Body/Stream.pm"}; die "feature source not installed: $path\n" unless $path =~ /site_perl/'
+          cpanm --notest 'https://cpan.metacpan.org/authors/id/H/HA/HAX/Net-QUIC-0.06.tar.gz' 'https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP3-0.14.tar.gz'
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/70-http3-loopback.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/80-http3-client.t
           REBUILD_REQUIRE_HTTP3=1 make test TEST_FILES=t/rebuild/90-http3-server.t
@@ -225,7 +195,7 @@ jobs:
       - name: Required HTTP1 WebSocket Upgrade
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
-          cpanm --notest ./.ci-deps/websocket
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-WebSocket-0.02.tar.gz
           REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/100-websocket-h1.t
           REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/100-websocket-h1.t
           REBUILD_REQUIRE_WEBSOCKET=1 make test TEST_FILES=t/rebuild/101-websocket-client.t
@@ -236,3 +206,15 @@ jobs:
           REBUILD_REQUIRE_GENERIC_CONNECT=1 make test TEST_FILES=t/rebuild/107-generic-multiplex.t
           REBUILD_REQUIRE_GENERIC_CONNECT=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/107-generic-multiplex.t
           REBUILD_REQUIRE_WEBSOCKET=1 REBUILD_NATIVE_INPUT=0 make test TEST_FILES=t/rebuild/102-websocket-multiplex.t
+      - name: Full published optional stack and source archive
+        if: matrix.perl == '5' && matrix.multi_thread == false
+        env:
+          REBUILD_REQUIRE_HTTP2: 1
+          REBUILD_REQUIRE_HTTP3: 1
+          REBUILD_REQUIRE_WEBSOCKET: 1
+          REBUILD_REQUIRE_GENERIC_CONNECT: 1
+        run: |
+          perl -MLinux::Event -MUniform::HTTP -MUnblock::HTTP -MUnblock::HTTP1 -MUnblock::HTTP2 -MUnblock::HTTP3 -MNet::QUIC -MUnblock::WebSocket -e 'for my $m (qw(Linux::Event Uniform::HTTP Unblock::HTTP Unblock::HTTP1 Unblock::HTTP2 Unblock::HTTP3 Net::QUIC Unblock::WebSocket)) { printf "%s %s\n", $m, $m->VERSION }'
+          make test
+          REBUILD_NATIVE_INPUT=0 make test
+          make disttest

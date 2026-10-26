@@ -197,7 +197,7 @@ HTTP/2 uses ALPN and multiplexes operations through Unblock's pool. Ordinary
 requests can fall back to HTTP/1; C<http_version =E<gt> '2'> fails if HTTP/2
 cannot be negotiated. HTTP/2 C<on_error> may include a third protocol error-code
 argument. HTTP/3 is optional through C<http3 =E<gt> 1> using Net::QUIC 0.06 and
-Unblock::HTTP3 0.13. C<quic =E<gt> { ca_file =E<gt> ... }> configures
+Unblock::HTTP3 0.14. C<quic =E<gt> { ca_file =E<gt> ... }> configures
 QUIC-specific trust and transport options. Origin hostnames are resolved
 asynchronously by Linux::Event UDP, and QUIC authenticates the original
 HTTPS origin, even when an alternative endpoint is used.
@@ -209,7 +209,7 @@ native input handoff is verified. Optional C<http2 =E<gt>
 { websocket =E<gt> 1 }> uses multiplexed Extended CONNECT, verified
 alongside ordinary H2 requests. HTTP3 Extended CONNECT messages and
 graceful WebSocket Close/FIN are verified by real QUIC loopback, with
-the Unblock::HTTP3 completion-recheck feature commit installed.
+the completion-recheck fix included in Unblock::HTTP3 0.14.
 Generic H2/H3 CONNECT uses C<request(method =E<gt> 'CONNECT',
 protocol =E<gt> 'raw-tunnel', http_version =E<gt> '2' or '3',
 on_handoff =E<gt> sub ($tx, $response, $bridge) { ... })>.

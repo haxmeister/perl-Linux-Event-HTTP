@@ -1,7 +1,7 @@
 package Linux::Event::HTTP::_NativeBridge;
 use v5.36;
 use Linux::Event::HTTP ();
-use Unblock::HTTP1::NativeABI 0.12 ();
+use Unblock::HTTP1::NativeABI 0.13 ();
 require XSLoader;
 XSLoader::load(__PACKAGE__, $Linux::Event::HTTP::VERSION);
 

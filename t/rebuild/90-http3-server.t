@@ -11,13 +11,27 @@ my $available = eval {
     require Net::QUIC;
     Net::QUIC->VERSION('0.06');
     require Unblock::HTTP3;
-    Unblock::HTTP3->VERSION('0.13');
+    Unblock::HTTP3->VERSION('0.14');
     require Unblock::HTTP::QUIC;
     1;
 };
 die "HTTP3 required by this test lane: $@" if !$available && $ENV{REBUILD_REQUIRE_HTTP3};
 plan skip_all => 'optional Net::QUIC and Unblock::HTTP3 required' unless $available;
 plan skip_all => 'openssl command required' unless -x '/usr/bin/openssl';
+
+subtest 'runtime HTTP3 minimum rejects pre-integration releases' => sub {
+    {
+        local $Unblock::HTTP3::VERSION = '0.13';
+        my %option = (http3 => 1);
+        my $ok = eval { Linux::Event::HTTP::_Config::protocols(\%option); 1 };
+        ok(!$ok, '0.13 cannot enable HTTP3');
+        like("$@", qr/http3 requires Unblock::HTTP3 >= 0\.14/,
+            'required published version is reported');
+    }
+    my %option = (http3 => 1);
+    my %actual = Linux::Event::HTTP::_Config::protocols(\%option);
+    ok(exists $actual{http3}, 'published compatible HTTP3 accepted');
+};
 
 my $dir = tempdir(CLEANUP => 1);
 my ($cert, $key) = ("$dir/cert.pem", "$dir/key.pem");
