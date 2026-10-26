@@ -29,12 +29,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         if: matrix.perl == '5' && matrix.multi_thread == false
         with:
-          repository: haxmeister/perl-Unblock-HTTP1
-          ref: 06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14
-          path: .ci-deps/http1-before
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        if: matrix.perl == '5' && matrix.multi_thread == false
-        with:
           repository: haxmeister/perl-Linux-Event-HTTP
           ref: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
           path: .ci-deps/http-baseline
@@ -72,18 +66,6 @@ jobs:
           perl -Mblib bench/run-rebuild-client.pl --requests 100 --warmup 10 --repeats 1
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role server
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role client
-      - name: Stage B paired bodyless HTTP1 CPU comparison
-        if: matrix.perl == '5' && matrix.multi_thread == false
-        run: |
-          perl -I .ci-deps/http1-before/lib -MUnblock::HTTP1::Server -e 'die "before server not loaded" unless $INC{"Unblock/HTTP1/Server.pm"} =~ /http1-before/'
-          for variant in before after after before; do
-            echo "Stage B engine sample: $variant"
-            if [ "$variant" = before ]; then
-              perl -I .ci-deps/http1-before/lib -Mblib bench/run-unblock-engine.pl --requests 10000
-            else
-              perl -Mblib bench/run-unblock-engine.pl --requests 10000
-            fi
-          done
       - name: Stage B matched legacy/rebuild HTTP1 socket gate
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |

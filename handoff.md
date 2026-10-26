@@ -18,8 +18,16 @@ That fixture must load the installed CPAN engine, never checkout lib/blib.
 
 Local isolated system Perl 5.38.2 threaded: HTTP1-only native suite PASS
 (22 files, 53 top-level tests; optional protocol suites skipped as expected).
-Optional CPAN dependencies are building. Full optional suite, packaged
-source, strict h2spec and matched performance measurements are pending.
+Full published optional stack now PASS locally on both input paths:
+22 files / 183 top-level tests, with all optional requirements enabled.
+Published versions printed from the isolated install match the requested stack.
+First remote checkpoint cfa3e9a4cf8293a0ab585169557a6fb51f4e3978:
+CI 40264404643 exposed an obsolete benchmark mixing HTTP1 0.12 Perl
+source with published 0.13 XS. Remove this obsolete mixed-source step
+from current correctness CI; historical reproduction stays pinned in
+Git and docs/BENCHMARKING.md. This is a workflow failure, not an
+integration regression. Strict h2spec run 40264404647 and peer run
+40264404641 are in progress. Packaged source and profiling continue.
 No main change, version bump, tag or release. Stage B throughput stays OPEN.
 
 Earlier sections are dated historical records, not current dependency advice.

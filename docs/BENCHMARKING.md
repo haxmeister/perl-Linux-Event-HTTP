@@ -96,3 +96,19 @@ the legacy baseline, so Stage B is **not passed**.
 HTTP/2 h2spec results are tracked separately; baseline parity is not a
 conformance pass. HTTP/3 QUIC/TLS, WebSocket and generic CONNECT regressions
 are required correctness checks, not substitutes for the throughput gate.
+
+## Published-stack validation and historical reproduction
+
+Current CI installs Unblock::HTTP 0.03, HTTP1 0.13, HTTP2 0.13 and HTTP3
+0.14 from CPAN. The legacy Linux::Event::HTTP comparison still uses the
+unchanged main baseline c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+
+The original development-stack workflows and exact dependency pins are
+preserved at root revision 476f2e84bfcff2d326c46a75a8a9b690c0c3cca4.
+Use that revision's workflow/dependency set to reproduce the old HTTP1
+engine before/after experiment (06a0f5d7c0509ad0deaebe4a8269c03fbe07ea14
+versus 4d19f59196481ae4460207c5b22c5125fdbfe186, upper layer
+e9efa51ee0110227945628f3f85a3feedba90558). Do not prepend old engine
+Perl sources to the published 0.13 XS installation: their version checks
+correctly reject that mixed installation. Current correctness CI and
+current benchmarks use the complete published stack instead.
