@@ -30,12 +30,32 @@ been created on separate UPSTREAM FEATURE BRANCHES, not main:
   test order assumption about delayed pipelined terminal notification;
   fixed at 33bce533. Verify final cross-platform CI separately.
 
-These are isolated experiments, not evidence of end-to-end socket
-speedup and NOT approved for main/release. Neither has been installed
-into this root branch. Next: verify all upstream CI; run combined
-UPSTREAM (not LinuxEvent-specific) standalone tests and controlled
-same-runner root socket comparison. Do not simply extrapolate tiny
-microbenchmark gains to HTTP1 throughput or close Stage B.
+All four final Unblock::HTTP1 cross-platform tests PASS after the
+test-only correction, including Perl 5.16:
+https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40435844102.
+
+COMBINED INTEGRATION trial now VERIFIED:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40436109321
+SUCCESS, source 5829f51ca41b7d2ad0abb85afa88a8fbea0152f2.
+A separate test workflow loaded BOTH pinned experimental trees,
+confirmed their exact loaded paths, and ran root HTTP1 tests with native
+and Perl input: both 22-file / 53 top-level test invocations PASS
+(HTTP2/3 optional stack not installed in this scoped trial). Actual
+native real-socket alternating comparison on ONE host, 100 persistent
+connections and 32 response bytes: published medians 11027.2 / 11543.3
+req/s; both trials 11247.0 / 11261.5 req/s. CPU medians published
+91.953 / 88.035 vs trial 90.499 / 90.321 us/request. These samples
+overlap, NOT a demonstrated meaningful speedup. The normal 7-job
+published-stack CI was also triggered independently by the workflow
+addition; check its final conclusion before claiming a new full gate.
+
+Neither upstream experimental library was installed into production
+root source, and neither should be merged or released on this evidence
+alone. Root feature only adds a diagnostic CI workflow and handoff.
+Stage B HTTP1 remains OPEN. Next investigate a materially larger
+framework-neutral engine cost; preserve canonical Uniform objects,
+strict validation and output lifecycle semantics. Do not repeat broad
+performance sweeps without a distinct code change or hypothesis.
 
 ## Profiling checkpoint published and verified (2026-10-26)
 
