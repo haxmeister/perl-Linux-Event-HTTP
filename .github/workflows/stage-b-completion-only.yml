@@ -69,6 +69,23 @@ jobs:
           make test
           REBUILD_NATIVE_INPUT=0 make test
 
+      - name: Independent native and portable engine CPU controls
+        run: |
+          set -euo pipefail
+          trial_lib="$PWD/.ci-deps/unblock-trial/blib/lib:$PWD/.ci-deps/unblock-trial/blib/arch:$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          for input in native portable; do
+            for stack in released trial trial released; do
+              echo "STAGE B ENGINE INPUT $input STACK $stack"
+              option=""
+              if [ "$input" = native ]; then option="--native-input"; fi
+              if [ "$stack" = released ]; then
+                env -u PERL5LIB perl -Mblib bench/run-unblock-engine.pl --case engine_input_and_response $option --requests 20000
+              else
+                PERL5LIB="$trial_lib" perl -Mblib bench/run-unblock-engine.pl --case engine_input_and_response $option --requests 20000
+              fi
+            done
+          done
+
       - name: Paired socket throughput published versus completion-only
         run: |
           set -euo pipefail
