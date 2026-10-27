@@ -45,9 +45,9 @@ native real-socket alternating comparison on ONE host, 100 persistent
 connections and 32 response bytes: published medians 11027.2 / 11543.3
 req/s; both trials 11247.0 / 11261.5 req/s. CPU medians published
 91.953 / 88.035 vs trial 90.499 / 90.321 us/request. These samples
-overlap, NOT a demonstrated meaningful speedup. The normal 7-job
-published-stack CI was also triggered independently by the workflow
-addition; check its final conclusion before claiming a new full gate.
+overlap, NOT a demonstrated meaningful speedup. The normal published-stack CI also passed ALL SEVEN Perl jobs on the
+same root source via https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40436109245.
+The full CI uses published dependencies, not experimental builds.
 
 Neither upstream experimental library was installed into production
 root source, and neither should be merged or released on this evidence
