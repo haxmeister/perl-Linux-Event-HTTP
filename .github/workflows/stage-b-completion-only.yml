@@ -1,0 +1,83 @@
+name: Stage B completion-only callback trial
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/unblock-http-rebuild
+    paths:
+      - '.github/workflows/stage-b-completion-only.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: haxmeister/perl-Unblock-HTTP
+          ref: 2f623c5df2672e967950554528c6fca193be576d
+          path: .ci-deps/unblock-trial
+
+      - uses: actions/checkout@v4
+        with:
+          repository: haxmeister/perl-Unblock-HTTP1
+          ref: 96c01f7091c12bacd7cad8260a018d0094b38ce5
+          path: .ci-deps/http1-trial
+
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.38'
+
+      - name: Install published runtime baseline
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev libnghttp2-dev
+          cpanm --notest 'Linux::Event@0.117' 'Uniform::HTTP@0.06'
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP1-0.13.tar.gz
+          cpanm --notest https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP-0.03.tar.gz
+          perl -MUnblock::HTTP::Server -MUnblock::HTTP1::Server -e 'print "$INC{q(Unblock/HTTP/Server.pm)} $INC{q(Unblock/HTTP1/Server.pm)}\n"'
+
+      - name: Build adapter and independent candidate dependencies
+        run: |
+          set -euo pipefail
+          perl Makefile.PL
+          make -j2
+          for tree in .ci-deps/unblock-trial .ci-deps/http1-trial; do
+            ( cd "$tree" && perl Makefile.PL && make -j2 )
+          done
+
+      - name: Confirm unpublished candidate source locations
+        run: |
+          set -euo pipefail
+          export PERL5LIB="$PWD/.ci-deps/unblock-trial/blib/lib:$PWD/.ci-deps/unblock-trial/blib/arch:$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          perl -MUnblock::HTTP::Server -MUnblock::HTTP1::Server -e '
+            for my $module (qw(Unblock/HTTP/Server.pm Unblock/HTTP1/Server.pm)) {
+              print "$module: $INC{$module}\n";
+              die "trial is using installed release" unless $INC{$module} =~ /\.ci-deps\//;
+            }
+          '
+
+      - name: Candidate HTTP1 integration correctness
+        run: |
+          set -euo pipefail
+          export PERL5LIB="$PWD/.ci-deps/unblock-trial/blib/lib:$PWD/.ci-deps/unblock-trial/blib/arch:$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          make test
+          REBUILD_NATIVE_INPUT=0 make test
+
+      - name: Paired socket throughput published versus completion-only
+        run: |
+          set -euo pipefail
+          trial_lib="$PWD/.ci-deps/unblock-trial/blib/lib:$PWD/.ci-deps/unblock-trial/blib/arch:$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          for stack in released trial trial released; do
+            echo "STAGE B SOCKET STACK $stack"
+            if [ "$stack" = released ]; then
+              env -u PERL5LIB perl -Mblib bench/run-unblock-end-to-end.pl --requests 12000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2
+            else
+              PERL5LIB="$trial_lib" perl -Mblib bench/run-unblock-end-to-end.pl --requests 12000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2
+            fi
+          done
