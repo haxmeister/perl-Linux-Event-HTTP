@@ -28,7 +28,11 @@ https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/40440089986
 SUCCESS; corrected OPENSSL_CONF verified actual H3 t/35,t/36
 PASS without TLS-fixture skip. Lower HTTP1 four-platform
 https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40439812469
-PASS. Neither upstream main changed. Root production unchanged.
+PASS. Neither upstream main changed. Root production unchanged. Separately triggered normal published-stack CI
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40440056054
+SUCCESS, ALL SEVEN Perl jobs, including full optional source/packaging
+and native/portable regression paths. These are published-dependency
+checks, NOT tests of the experimental upper/lower branches.
 
 Development resumed from root 85c91e42563dbbc003be510a43474cd48de8e48f.
 The root implementation and runtime dependency versions are UNCHANGED;
