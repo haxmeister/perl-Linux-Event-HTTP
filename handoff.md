@@ -1,5 +1,42 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-26
 
+## Unpublished general-purpose Stage B trials - 2026-10-26
+
+Root implementation/production code unchanged. Current root source
+05be1b2bc09a7848956489e772d5929273ee7581; root handoff starting
+HEAD fd9690ed62da3af8c50834abf319994fb83c1e34. Main stays
+c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+No versions, tags, releases or merges; published CPAN integration
+evidence and strict HTTP2 parity remain valid. Stage B is OPEN.
+
+Two independently scoped framework-neutral optimization trials have
+been created on separate UPSTREAM FEATURE BRANCHES, not main:
+- Uniform::HTTP feature/shared-constructor-cost (base 670c8eed);
+  source 12f2b885, validation/benchmark cd60770c. Exact canonical
+  Response/Request avoid a duplicate constructor argument copy;
+  subclasses use the old inherited path. 3/3 CI PASS:
+  https://github.com/haxmeister/perl-Uniform-HTTP/actions/runs/40435483897.
+  Same-runner constructor CPU experiment:
+  https://github.com/haxmeister/perl-Uniform-HTTP/actions/runs/40435483969;
+  Response 8.23-8.28 vs 7.55-7.59 CPU us/instance; Request smaller.
+- Unblock::HTTP1 feature/shared-server-lifecycle-cost (base 16acac76);
+  source f0748e3b, added regression t/58; last test correction 33bce533.
+  Skips no-op optional on_request_end dispatch and empty pending-finish
+  observer call, preserving real observer handling. Generic native
+  attached-engine CPU comparison PASSED:
+  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40435786709;
+  native ~18.5-18.8 baseline vs ~18.4 candidate CPU us/request,
+  portable samples overlap. Initial t/58 failure was an incorrect
+  test order assumption about delayed pipelined terminal notification;
+  fixed at 33bce533. Verify final cross-platform CI separately.
+
+These are isolated experiments, not evidence of end-to-end socket
+speedup and NOT approved for main/release. Neither has been installed
+into this root branch. Next: verify all upstream CI; run combined
+UPSTREAM (not LinuxEvent-specific) standalone tests and controlled
+same-runner root socket comparison. Do not simply extrapolate tiny
+microbenchmark gains to HTTP1 throughput or close Stage B.
+
 ## Profiling checkpoint published and verified (2026-10-26)
 
 Published source: 05be1b2bc09a7848956489e772d5929273ee7581.
