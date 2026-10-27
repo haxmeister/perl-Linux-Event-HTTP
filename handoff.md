@@ -1,4 +1,25 @@
-# ACTIVE REBUILD HANDOFF - 2026-10-25
+# ACTIVE REBUILD HANDOFF - 2026-10-26
+
+## Profiling checkpoint published and verified (2026-10-26)
+
+Published source: 05be1b2bc09a7848956489e772d5929273ee7581.
+Final CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40427616475
+SUCCESS, all seven Perl jobs. Full optional native/Perl suites and packaged
+source each PASS: 22 files / 183 top-level tests. The profiler steps also PASS.
+Raw native-engine/socket profiles and summaries are uploaded as
+stage-b-published-cpu-profiles, artifact 12700217900 (14-day retention).
+
+The hosted profiles independently reproduce the local attribution:
+native sockets HTTP1 51.99%, Uniform 22.30%, core LinuxEvent 19.92%,
+root HTTP adapter 2.68%; independent native engine HTTP1 67.21%,
+Uniform 27.92%. These are instrumented exclusive shares, not speedup bounds.
+The same native serializer and fresh canonical constructors are active.
+No new production change, upstream edit or performance-gate closure is claimed.
+
+Generated source metadata and POD were checked again. The profile summary
+and report are included in MANIFEST; raw historical benchmark JSON remains
+excluded from CPAN. The next step is the separately scoped upstream work
+proposed below, subject to authorization. Root main remains unchanged.
 
 ## Published stack verified; HTTP1 performance remains open (2026-10-25)
 

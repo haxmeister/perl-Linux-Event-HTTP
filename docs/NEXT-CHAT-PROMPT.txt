@@ -13,8 +13,11 @@ remain optional; the pre-bind HTTP1 drain capability guard is retained.
 
 Implementation cfa3e9a4cf8293a0ab585169557a6fb51f4e3978;
 corrected validation workflow d9f3e4fb4ddf2209e27ae8c51a8526383fe6f4c2.
-Later feature commits add profiling and the detailed investigation report;
-use remote HEAD and the handoff for their final verification links.
+Profiling source: 05be1b2bc09a7848956489e772d5929273ee7581.
+Final CI all seven jobs PASS, including both isolated profiler steps:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40427616475
+Subsequent handoff-only commits preserve identical implementation.
+Inspect remote HEAD and handoff before resuming.
 
 Verified rebuild CI all seven Perl jobs:
 https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264577767

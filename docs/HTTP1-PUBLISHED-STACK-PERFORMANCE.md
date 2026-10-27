@@ -23,6 +23,17 @@ Archive URLs and SHA256 digests are retained in
   standalone, rebuild native, rebuild Perl, standalone repeat EACH 147/147
   PASS, zero failures/skips and zero outcome differences, using CPAN HTTP2.
 
+The profiling implementation was subsequently published at
+05be1b2bc09a7848956489e772d5929273ee7581 and verified on 2026-10-26:
+[final CI](https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40427616475)
+PASS all seven Perl jobs, including complete optional native/Perl suites,
+packaged source and both CPU profiling steps. Its 14-day
+`stage-b-published-cpu-profiles` artifact retains raw NYTProf and JSON.
+Hosted profiles independently show the same attribution: native sockets
+HTTP1 51.99%, Uniform 22.30%, Linux::Event core 19.92%, root HTTP adapter
+2.68%; independent native engine HTTP1 67.21%, Uniform 27.92%.
+The instrumentation caveats below apply to these values as well.
+
 The first CPAN CI run exposed an old benchmark overlay that mixed HTTP1 0.12
 Perl source with 0.13 XS. Their version checks correctly rejected it. This
 was repaired in CI, not worked around in production. Historical engine
