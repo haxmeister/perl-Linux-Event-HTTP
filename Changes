@@ -30,6 +30,8 @@ UNRELEASED - feature/unblock-http-rebuild (NOT FOR CPAN)
     - Require published Unblock::HTTP 0.03 and HTTP1 0.13, with optional
       HTTP2 0.13 and HTTP3 0.14; retain optional QUIC/WebSocket policy.
       Validate CPAN distributions in CI instead of development engines.
+    - Add isolated server/engine CPU profiles and record matched published-stack
+      throughput; preserve canonical response behavior and upstream ownership.
     - HTTP/1 throughput remains an open gate; this feature branch is
       not yet a release candidate.
 

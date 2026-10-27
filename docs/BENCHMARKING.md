@@ -112,3 +112,37 @@ e9efa51ee0110227945628f3f85a3feedba90558). Do not prepend old engine
 Perl sources to the published 0.13 XS installation: their version checks
 correctly reject that mixed installation. Current correctness CI and
 current benchmarks use the complete published stack instead.
+
+## Server-only and independent native CPU profiles
+
+`--nytprof` profiles only the server event loop, excluding the load generator
+and setup. It needs the optional developer tool Devel::NYTProf (tested with
+6.16). Run ordinary benchmarks without profiling for throughput; profiler
+instrumentation substantially changes absolute costs and relative weights.
+On Linux, `clock=2` selects process CPU time rather than time waiting in epoll.
+The denominator below includes the 1,000 warmup requests.
+
+```sh
+NYTPROF=file=/tmp/socket.nytprof:addpid=1:start=no:stmts=0:calls=2:clock=2 \
+  perl -Mblib -d:NYTProf bench/run-unblock-end-to-end.pl \
+  --nytprof --requests 10000 --warmup 1000 --repeats 1
+perl tools/http1-profile-summary.pl /tmp/socket.nytprof.CHILD_PID 11000
+
+NYTPROF=file=/tmp/engine.nytprof:start=no:stmts=0:calls=2:clock=2 \
+  perl -d:NYTProf bench/run-unblock-engine.pl \
+  --case engine_input_and_response --native-input --nytprof --requests 10000
+perl tools/http1-profile-summary.pl /tmp/engine.nytprof 11000
+```
+
+The independent engine case uses HTTP1 0.13's own diagnostic BorrowedDriver,
+without any Linux::Event module or socket. The helper is private upstream
+benchmark machinery, not an application API or a production dependency.
+Omit `--native-input` for ordinary portable input. `--case` prevents separate
+constructor/control benchmarks from contaminating the engine profile.
+The summary reports exclusive subroutine time and calls per request;
+inclusive times in JSON overlap and must not be added. C work without its
+own Perl frame can be charged to its enclosing call, so namespace shares
+are attribution evidence, not an exact limit on possible optimization.
+
+See `docs/HTTP1-PUBLISHED-STACK-PERFORMANCE.md` for the published-stack
+results, limitations and next proposed investigation.

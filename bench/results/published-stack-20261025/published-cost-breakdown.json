@@ -1,0 +1,128 @@
+[
+   {
+      "case" : "uniform_constructor",
+      "cpu_us_per_iteration" : 6.50995125,
+      "iterations" : 20000,
+      "round" : 1
+   },
+   {
+      "case" : "uniform_constructor_plus_plan",
+      "cpu_us_per_iteration" : 8.4772214,
+      "iterations" : 20000,
+      "round" : 1
+   },
+   {
+      "case" : "wire_plan_prebuilt_canonical",
+      "cpu_us_per_iteration" : 1.877601,
+      "iterations" : 20000,
+      "round" : 1
+   },
+   {
+      "case" : "direct_engine_fresh",
+      "cpu_us_per_iteration" : 33.5444476,
+      "iterations" : 20000,
+      "round" : 1
+   },
+   {
+      "case" : "direct_engine_prebuilt",
+      "cpu_us_per_iteration" : 25.75530575,
+      "iterations" : 20000,
+      "round" : 1
+   },
+   {
+      "case" : "facade_engine_fresh",
+      "cpu_us_per_iteration" : 33.668631,
+      "iterations" : 20000,
+      "round" : 1
+   },
+   {
+      "case" : "facade_engine_prebuilt",
+      "cpu_us_per_iteration" : 25.85889195,
+      "iterations" : 20000,
+      "round" : 1
+   },
+   {
+      "case" : "uniform_constructor_plus_plan",
+      "cpu_us_per_iteration" : 8.82850044999999,
+      "iterations" : 20000,
+      "round" : 2
+   },
+   {
+      "case" : "wire_plan_prebuilt_canonical",
+      "cpu_us_per_iteration" : 1.85635795000001,
+      "iterations" : 20000,
+      "round" : 2
+   },
+   {
+      "case" : "direct_engine_fresh",
+      "cpu_us_per_iteration" : 34.3310639,
+      "iterations" : 20000,
+      "round" : 2
+   },
+   {
+      "case" : "direct_engine_prebuilt",
+      "cpu_us_per_iteration" : 26.174799,
+      "iterations" : 20000,
+      "round" : 2
+   },
+   {
+      "case" : "facade_engine_fresh",
+      "cpu_us_per_iteration" : 34.05439925,
+      "iterations" : 20000,
+      "round" : 2
+   },
+   {
+      "case" : "facade_engine_prebuilt",
+      "cpu_us_per_iteration" : 27.92816655,
+      "iterations" : 20000,
+      "round" : 2
+   },
+   {
+      "case" : "uniform_constructor",
+      "cpu_us_per_iteration" : 6.52691944999999,
+      "iterations" : 20000,
+      "round" : 2
+   },
+   {
+      "case" : "wire_plan_prebuilt_canonical",
+      "cpu_us_per_iteration" : 1.7466271,
+      "iterations" : 20000,
+      "round" : 3
+   },
+   {
+      "case" : "direct_engine_fresh",
+      "cpu_us_per_iteration" : 39.51983675,
+      "iterations" : 20000,
+      "round" : 3
+   },
+   {
+      "case" : "direct_engine_prebuilt",
+      "cpu_us_per_iteration" : 28.90014265,
+      "iterations" : 20000,
+      "round" : 3
+   },
+   {
+      "case" : "facade_engine_fresh",
+      "cpu_us_per_iteration" : 37.98797155,
+      "iterations" : 20000,
+      "round" : 3
+   },
+   {
+      "case" : "facade_engine_prebuilt",
+      "cpu_us_per_iteration" : 27.7655526999999,
+      "iterations" : 20000,
+      "round" : 3
+   },
+   {
+      "case" : "uniform_constructor",
+      "cpu_us_per_iteration" : 6.53384170000004,
+      "iterations" : 20000,
+      "round" : 3
+   },
+   {
+      "case" : "uniform_constructor_plus_plan",
+      "cpu_us_per_iteration" : 8.44203014999998,
+      "iterations" : 20000,
+      "round" : 3
+   }
+]

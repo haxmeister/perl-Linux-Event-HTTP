@@ -56,3 +56,5 @@ t/rebuild/107-generic-multiplex.t
 bench/run-unblock-cost-breakdown.pl
 xsbridge/stream_consumer_abi.h
 MANIFEST.SKIP
+docs/HTTP1-PUBLISHED-STACK-PERFORMANCE.md
+tools/http1-profile-summary.pl

@@ -1,28 +1,79 @@
 # Reconstruction implementation checkpoint
 
-## Published dependency validation in progress (2026-10-25)
+## Published stack verified; HTTP1 performance remains open (2026-10-25)
 
-This section supersedes historical dependency-publication blockers below.
-Starting branch HEAD: 476f2e84bfcff2d326c46a75a8a9b690c0c3cca4;
-main remains c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+This is the current resume point. Historical publication blockers below are
+resolved. Work only on feature/unblock-http-rebuild. Root main remains
+c0bf714e0f08f9031684e2eb4fd70dea3c68449f. No versions/tags/releases/merges.
+All upstream repositories remain read-only; discuss further changes separately.
 
-The user confirms CPAN/GitHub publication of Unblock::HTTP 0.03,
-HTTP1 0.13, HTTP2 0.13 and HTTP3 0.14. Uniform::HTTP 0.06 and
-Net::QUIC 0.06 are published dependencies. All upstreams are read-only.
-Updated Makefile, runtime/version guards, optional test guards and public
-POD/README. HTTP1 drain capability validation remains before socket binding.
-CI now installs CPAN distributions. Historical HTTP1 and legacy baseline
-pins remain only for comparisons; the pinned upstream h2spec fixture is
-needed because xt/h2spec-server.pl is absent from the HTTP2 CPAN archive.
-That fixture must load the installed CPAN engine, never checkout lib/blib.
+Published-stack implementation: cfa3e9a4cf8293a0ab585169557a6fb51f4e3978.
+Corrected validation workflow: d9f3e4fb4ddf2209e27ae8c51a8526383fe6f4c2.
+Runtime requirements and all active public docs/guards now use:
+- Linux::Event >=0.117; Uniform::HTTP >=0.06;
+- Unblock::HTTP >=0.03 and HTTP1 >=0.13 (configure AND runtime);
+- optional HTTP2 >=0.13, HTTP3 >=0.14 plus Net::QUIC >=0.06;
+- optional WebSocket >=0.02, unchanged policy.
+Server->can('drain') still fails before listener binding. A new HTTP3 regression
+refuses 0.13. Generated source META.json preserves optional protocol metadata.
 
-Local isolated system Perl 5.38.2 threaded: HTTP1-only native suite PASS
-(22 files, 53 top-level tests; optional protocol suites skipped as expected).
-Optional CPAN dependencies are building. Full optional suite, packaged
-source, strict h2spec and matched performance measurements are pending.
-No main change, version bump, tag or release. Stage B throughput stays OPEN.
+VERIFIED with actual CPAN archives, not development source:
+- Local isolated Perl 5.38.2 threaded: complete native and Perl suite,
+  22 files / 183 top-level tests each, zero optional skips, and full disttest PASS.
+- https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264577767
+  ALL SEVEN Perl lanes PASS. Latest includes full optional stack native/Perl
+  and full disttest, real QUIC, WebSocket, generic H2/H3 handoff. Installed
+  versions printed in that log exactly match the list above.
+- https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264404647
+  strict h2spec: standalone/native/Perl/standalone-repeat EACH 147/147 PASS,
+  zero failures/skips/outcome differences. Do not reopen H2 conformance.
+- https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264404641
+  published-stack five-peer Benchmark::Web comparison PASS.
 
-Earlier sections are dated historical records, not current dependency advice.
+First run 40264404643 failed only because an obsolete historical benchmark
+prepended HTTP1 0.12 Perl sources to installed 0.13 XS. Removed this mixed-source
+step from current CI. Historical pins/workflows remain reproducible from root
+476f2e84bfcff2d326c46a75a8a9b690c0c3cca4; docs/BENCHMARKING.md records them.
+The pinned HTTP2 checkout supplies ONLY xt/h2spec-server.pl (absent from CPAN),
+never its lib/blib. Actual h2spec engine is the installed published distribution.
+
+Stage B measurements: hosted GET rebuild 11,891 vs original 43,426, Feersum
+96,283, Hyperman 97,131, Mojo 3,502 req/s. POST rebuild 9,845 vs original
+38,416. These are same-run comparisons; do not infer a speedup from previous
+hosted values. Local matched reverse-order GET medians: original 54.8-63.1k,
+rebuild 18.3-20.6k; CPU original 17.3-19.3 vs rebuild 48.5-56.3 us/request.
+
+Added reproducible profiling tools in this checkpoint:
+- bench/run-unblock-end-to-end.pl --nytprof profiles ONLY the server event
+  loop; NYTPROF=start=no is required. JSON now records dependency versions.
+- bench/run-unblock-engine.pl --case isolates engine requests from separate
+  constructor controls; --native-input uses the released engine's own private
+  diagnostic BorrowedDriver, without any Linux::Event code.
+- tools/http1-profile-summary.pl records exclusive shares and calls/request.
+- CI profiles native sockets and independent native engine separately, with
+  process CPU clock, and uploads raw NYTProf data plus summary JSON.
+All four local profiles verified 11,000 fresh canonical responses and no load
+client code; standalone profiles contain no Linux::Event subroutines.
+
+Native socket profile attribution: HTTP1 52.77%, Uniform 22.32%, core LinuxEvent
+19.14%, root HTTP adapter 3.07%, upper facade 0.15%. Profiler overhead is large;
+C work may be attributed to enclosing frames, so these are not speedup bounds.
+Independent native input still costs 30-31 CPU us/request unprofiled and shows
+the same response/transaction hotspots. The native response serializer IS used.
+A frozen-response socket diagnostic improves cost but still misses original
+throughput; no response caching was added. No root-only production shortcut
+or upstream defect was established. No upstream source was edited.
+
+Full methods, data, caveats and bounded upstream proposals:
+docs/HTTP1-PUBLISHED-STACK-PERFORMANCE.md.
+Raw local JSON and CPAN archive SHA256 provenance (Git, excluded from CPAN):
+bench/results/published-stack-20261025/.
+
+Next: review the separately scoped framework-neutral optimization candidates
+in that report: Uniform public pure-Perl constructor overhead and HTTP1 shared
+response/transaction dispatch. They require separate upstream authorization.
+Do not repeat broad performance sweeps without a code change or concrete new
+question. Do not begin release prep while Stage B remains unsatisfied.
 
 ## Stage B integration ownership audit and dependency capability correction (2026-10-25)
 

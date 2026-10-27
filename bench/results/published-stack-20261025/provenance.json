@@ -1,0 +1,53 @@
+{
+  "runtime_commit": "d9f3e4fb4ddf2209e27ae8c51a8526383fe6f4c2",
+  "main_baseline": "c0bf714e0f08f9031684e2eb4fd70dea3c68449f",
+  "perl": "5.38.2 threaded",
+  "os": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "archives": [
+    {
+      "distribution": "Linux-Event-0.117",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Linux-Event-0.117.tar.gz",
+      "sha256": "d71b7d499f80ffa2fe897d72b3e79dd32f9a5d03d767ae0097538bf0f968d6c3"
+    },
+    {
+      "distribution": "Uniform-HTTP-0.06",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Uniform-HTTP-0.06.tar.gz",
+      "sha256": "4002e665fd333b9df5dc17fcb84add652bc5c37cfe1cec852038784e572518f5"
+    },
+    {
+      "distribution": "Unblock-HTTP-0.03",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP-0.03.tar.gz",
+      "sha256": "d860885f6b63fe5edca26a5bc925bc7f890744e9e637bd44fe41089747ce2565"
+    },
+    {
+      "distribution": "Unblock-HTTP1-0.13",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP1-0.13.tar.gz",
+      "sha256": "e22bb501a25c97b1c6888e6f7f33a517d4edb6ff76eac0eabd0cf8979ad4ef33"
+    },
+    {
+      "distribution": "Unblock-HTTP2-0.13",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP2-0.13.tar.gz",
+      "sha256": "aea874039deeb7c64ea6c1fd110115fedb1b1a648f2ccc61af7f88e918d4859b"
+    },
+    {
+      "distribution": "Unblock-HTTP3-0.14",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-HTTP3-0.14.tar.gz",
+      "sha256": "0b76435b2d5e6f883fd0eafb3ae5d24578eabf2b9c795bc6058477dd9ad50f5e"
+    },
+    {
+      "distribution": "Net-QUIC-0.06",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Net-QUIC-0.06.tar.gz",
+      "sha256": "b40f935cdc8b2280911c2d36533b87cfd756115a1c221b5570ba9eae78ba1884"
+    },
+    {
+      "distribution": "Unblock-WebSocket-0.02",
+      "url": "https://cpan.metacpan.org/authors/id/H/HA/HAX/Unblock-WebSocket-0.02.tar.gz",
+      "sha256": "a258d514cb00f886d5cc8e8aeddb026a3f61b85a08740adb2cd95efcb3f1c11a"
+    }
+  ],
+  "notes": [
+    "Only published CPAN distributions in a fresh isolated PERL5LIB.",
+    "Measurements on shared local host, not comparable to hosted CI in absolute terms.",
+    "NYTProf 6.16 process CPU clock=2, stmts=0 calls=2, warmup included."
+  ]
+}

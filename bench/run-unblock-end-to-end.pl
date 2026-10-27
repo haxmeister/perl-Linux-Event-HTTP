@@ -29,6 +29,7 @@ my $response_bytes = 32;
 my $repeats = 5;
 my $timeout = 15;
 my $profile = 0;
+my $nytprof = 0;
 my $json_path;
 my $smoke = 0;
 my $help = 0;
@@ -45,6 +46,7 @@ GetOptions(
     'repeats=i'            => \$repeats,
     'timeout=f'            => \$timeout,
     'profile!'             => \$profile,
+    'nytprof!'             => \$nytprof,
     'json=s'               => \$json_path,
     'smoke'                => \$smoke,
     'help'                 => \$help,
@@ -53,6 +55,9 @@ GetOptions(
 ) or usage(2);
 
 usage(0) if $help;
+die "--nytprof requires perl -d:NYTProf with NYTPROF=start=no\n"
+    if $nytprof && (!defined(&DB::enable_profile)
+        || ($ENV{NYTPROF} // '') !~ /(?:\A|:)start=no(?:\z|:)/);
 if ($smoke) {
     $requests = 200;
     $warmup = 20;
@@ -78,7 +83,7 @@ my @records;
 
 say 'Linux::Event::HTTP Unblock end-to-end benchmark';
 say "http_version=$Linux::Event::HTTP::VERSION linux_event=$Linux::Event::Loop::VERSION perl=$^V";
-say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats profile=$profile prebuilt_response=$prebuilt_response";
+say "requests=$requests warmup=$warmup connections=$connections pipeline=$pipeline request_body_bytes=$request_body_bytes response_bytes=$response_bytes repeats=$repeats native_input=$native_input profile=$profile nytprof=$nytprof prebuilt_response=$prebuilt_response";
 
 for my $repeat (1 .. $repeats) {
     my ($pid, $result_fh, $port) = spawn_server(
@@ -157,6 +162,9 @@ if (defined $json_path) {
             perl => "$^V",
             linux_event => "$Linux::Event::Loop::VERSION",
             linux_event_http => "$Linux::Event::HTTP::VERSION",
+            unblock_http => Unblock::HTTP->VERSION,
+            unblock_http1 => Unblock::HTTP1->VERSION,
+            uniform_http => Uniform::HTTP->VERSION,
             os => $sysname,
             kernel => $release,
             machine => $machine,
@@ -173,6 +181,7 @@ if (defined $json_path) {
             repeats => $repeats,
             timeout => $timeout,
             profile => $profile ? JSON::PP::true : JSON::PP::false,
+            nytprof => $nytprof ? JSON::PP::true : JSON::PP::false,
         },
         summary => $summary,
         records => \@records,
@@ -253,7 +262,11 @@ sub spawn_server (%opt) {
 
         print {$writer} "PORT ", $server->port, "\n";
         $writer->flush;
+        # Profile only the server event loop, never the independent driver.
+        # Start after setup; include warmup and explicitly finish before _exit.
+        DB::enable_profile() if $nytprof;
         $loop->run;
+        DB::finish_profile() if $nytprof;
         $server->close;
         close $writer;
         POSIX::_exit(0);
@@ -456,6 +469,8 @@ usage: bench/run-unblock-end-to-end.pl [options]
   --repeats=N              benchmark repeats (default 5)
   --timeout=SECONDS        timeout for each phase/result (default 15)
   --profile                 enable Linux::Event native timing collection
+  --nytprof                 profile server loop only (requires -d:NYTProf,
+                            NYTPROF=start=no; timings are diagnostic)
   --diagnostic-prebuilt-response  reuse a frozen response (diagnostic only)
   --json=PATH               write machine-readable report
   --smoke                   tiny CI/sanity workload

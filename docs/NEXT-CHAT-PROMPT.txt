@@ -1,30 +1,44 @@
-# Continue Linux::Event::HTTP Unblock reconstruction
+# Resume Linux::Event::HTTP published-stack performance work
 
-Working root haxmeister/perl-Linux-Event-HTTP branch feature/unblock-http-rebuild.
-Latest source 7265f410a51caa66864836181d14e7ed08750a96,
-plus handoff-only checkpoint from this update.
-Confirmed full rebuild CI seven of seven PASS:
-https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40234606768
-Strict h2spec 147/147 zero skipped/failed on standalone/native/Perl:
-https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40234606741
+Repository haxmeister/perl-Linux-Event-HTTP, branch feature/unblock-http-rebuild.
+Inspect remote refs and working tree first; read ACTIVE handoff.md,
+docs/UNBLOCK-REBUILD-PLAN.md, docs/UNBLOCK-REBUILD-STATUS.md,
+docs/BENCHMARKING.md and docs/HTTP1-PUBLISHED-STACK-PERFORMANCE.md.
 
-New root-only fail-fast guard in Server->new checks
-Unblock::HTTP1::Server->can('drain') before socket binding.
-Current upstream 0.12 main lacks drain; feature branch adds it
-without changing version. New regression
-t/rebuild/15-backend-compat.t verifies refusal then supported
-startup/shutdown; passes both native and Perl CI lanes.
-This does NOT make published upstream Unblock versions sufficient;
-upper Unblock::HTTP 0.02 also lacks integration APIs. Upstream
-coordinated releases are separate and not authorized in this chat.
+Published dependency validation is complete. Actual CPAN stack:
+Linux::Event 0.117, Uniform::HTTP 0.06, Unblock::HTTP 0.03,
+HTTP1 0.13, HTTP2 0.13, HTTP3 0.14, Net::QUIC 0.06, WebSocket 0.02.
+No unpublished dependency source is needed. HTTP2/HTTP3/QUIC/WebSocket
+remain optional; the pre-bind HTTP1 drain capability guard is retained.
 
-Stage B HTTP1 throughput gate OPEN: common Benchmark::Web GET32:
-rebuilt 9.7k, legacy 40.4k, Feersum 108.6k, Hyperman 111.3k,
-Mojolicious 2.5k req/s on same hosted CI machine; report only
-directional findings. Native bridge already thin and canonical
-object/engine lifecycle dominate costs. Never bypass canonical
-Uniform semantics or optimize Unblock specifically for LinuxEvent.
+Implementation cfa3e9a4cf8293a0ab585169557a6fb51f4e3978;
+corrected validation workflow d9f3e4fb4ddf2209e27ae8c51a8526383fe6f4c2.
+Later feature commits add profiling and the detailed investigation report;
+use remote HEAD and the handoff for their final verification links.
 
-Do not modify root main, merge/tag/release/bump versions or modify
-Unblock/Uniform/LinuxEvent/Benchmark::Web repositories.
-Read active handoff.md first then docs plan/status and inspect refs.
+Verified rebuild CI all seven Perl jobs:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264577767
+Full optional stack native/Perl and disttest: 22 files / 183 top-level tests.
+Strict h2spec 147/147 in all four variants, zero failures/skips:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264404647
+Do not reopen completed H2 conformance without new regression evidence.
+
+Stage B HTTP1 throughput remains OPEN. Published-stack peer run:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264404641
+GET rebuild 11,891 vs original 43,426, Feersum 96,283, Hyperman 97,131,
+Mojo 3,502 req/s on one runner. POST rebuild 9,845 vs original 38,416.
+These cannot be compared to different historical runners as improvements.
+
+Server-only CPU profiles and independent native/portable engine diagnostics
+show shared response construction and transaction costs; no LinuxEvent-only
+bug or protocol defect was established. Native serializer is active and
+upper facade overhead is negligible in these measurements. Detailed raw
+JSON/provenance and reproducible commands are in the performance report.
+
+No production caching, alternate messages, weakened checks or duplicate parser.
+The next measured candidates are framework-neutral Uniform pure-Perl public
+constructor overhead and Unblock::HTTP1 response/transaction dispatch.
+Discuss separately before editing upstream; no further upstream edits are
+authorized by this prompt. Do not modify root main, bump version, merge,
+tag or release. Feature-branch changes/pushes are authorized. Keep handoff
+current, and do not repeat benchmark sweeps without a concrete new question.

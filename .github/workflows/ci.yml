@@ -101,27 +101,25 @@ jobs:
               perl -Mblib bench/run-unblock-end-to-end.pl --diagnostic-prebuilt-response --requests 10000 --warmup 1000 --connections 100 --pipeline 1 --response-bytes 32 --repeats 2
             fi
           done
-      - name: Stage B HTTP1 engine CPU hotspots (diagnostic)
+      - name: Stage B isolated engine and socket profiles (diagnostic)
         if: matrix.perl == '5' && matrix.multi_thread == false
         run: |
-          cpanm --notest Devel::NYTProf
-          NYTPROF=file=/tmp/http1-stage-b.nytprof:stmts=0:calls=1 perl -Mblib -d:NYTProf bench/run-unblock-engine.pl --requests 4000
-          nytprofcalls /tmp/http1-stage-b.nytprof | perl -ne '
-            next unless /\A(.+) (\d+)\s*\z/;
-            my ($path, $ticks) = ($1, $2);
-            my @names = split /;/, $path;
-            my $name = $names[-1];
-            $sum{$name} += $ticks;
-            $total += $ticks;
-            END {
-              print "Stage B exclusive CPU call-tree hotspots (NYTProf ticks):\n";
-              my @keys = sort { $sum{$b} <=> $sum{$a} } keys %sum;
-              for my $i (0 .. ($#keys < 39 ? $#keys : 39)) {
-                my $name = $keys[$i];
-                printf "%6.2f%%  %11d  %s\n", 100*$sum{$name}/($total || 1), $sum{$name}, $name;
-              }
-            }
-          '
+          cpanm --notest 'Devel::NYTProf@6.16'
+          mkdir -p "$RUNNER_TEMP/http1-profiles"
+          NYTPROF="file=$RUNNER_TEMP/http1-profiles/engine.nytprof:start=no:stmts=0:calls=2:clock=2" perl -d:NYTProf bench/run-unblock-engine.pl --case engine_input_and_response --native-input --nytprof --requests 4000
+          perl tools/http1-profile-summary.pl "$RUNNER_TEMP/http1-profiles/engine.nytprof" 5000 "$RUNNER_TEMP/http1-profiles/engine.json"
+          NYTPROF="file=$RUNNER_TEMP/http1-profiles/socket.nytprof:addpid=1:start=no:stmts=0:calls=2:clock=2" perl -Mblib -d:NYTProf bench/run-unblock-end-to-end.pl --nytprof --requests 4000 --warmup 1000 --repeats 1
+          for profile in "$RUNNER_TEMP"/http1-profiles/socket.nytprof.*; do
+            perl tools/http1-profile-summary.pl "$profile" 5000 "$profile.json"
+          done
+      - name: Preserve CPU profile evidence
+        if: always() && matrix.perl == '5' && matrix.multi_thread == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-published-cpu-profiles
+          path: ${{ runner.temp }}/http1-profiles/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Optional HTTP2 integration
         run: |
           # Install the published engine, never a development checkout.

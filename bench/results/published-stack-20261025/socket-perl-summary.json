@@ -1,0 +1,1542 @@
+{
+   "clock" : "2",
+   "groups" : {
+      "Linux::Event" : 0.3577704,
+      "Linux::Event::HTTP" : 0.1002581,
+      "Unblock::HTTP" : 0.0026394,
+      "Unblock::HTTP1" : 1.5173405,
+      "Uniform::HTTP" : 0.6227523,
+      "other" : 0.0714589
+   },
+   "nytprof_version" : "6.16",
+   "subroutines" : [
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.242774,
+         "inclusive_seconds" : 1.8245992,
+         "sub" : "Unblock::HTTP1::Server::_drive"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.1853622,
+         "inclusive_seconds" : 0.3420636,
+         "sub" : "Unblock::HTTP1::Server::_transaction_respond"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.1284185,
+         "inclusive_seconds" : 0.1284185,
+         "sub" : "Linux::Event::_ByteStream::State::_write"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0907167,
+         "inclusive_seconds" : 1.0652435,
+         "sub" : "Unblock::HTTP1::Server::_complete_request"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.089464,
+         "inclusive_seconds" : 0.2552243,
+         "sub" : "Linux::Event::_ByteStream::write"
+      },
+      {
+         "calls" : 11200,
+         "calls_per_request" : 1.01818181818182,
+         "exclusive_seconds" : 0.0861602,
+         "inclusive_seconds" : 0.1655436,
+         "sub" : "Unblock::HTTP1::Server::_finish_accepted_output"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0790116,
+         "inclusive_seconds" : 0.458589,
+         "sub" : "Uniform::HTTP::Response::new"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0781348,
+         "inclusive_seconds" : 0.0951674,
+         "sub" : "Uniform::HTTP::FastPath::_validate_view"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0748995,
+         "inclusive_seconds" : 0.880941,
+         "sub" : "Unblock::HTTP1::Transaction::respond"
+      },
+      {
+         "calls" : 22100,
+         "calls_per_request" : 2.00909090909091,
+         "exclusive_seconds" : 0.0734851,
+         "inclusive_seconds" : 0.9916954,
+         "sub" : "Unblock::HTTP1::Server::_invoke_server"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0670155,
+         "inclusive_seconds" : 2.4643202,
+         "sub" : "Unblock::HTTP1::_Engine::input"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.061597,
+         "inclusive_seconds" : 0.1585475,
+         "sub" : "Uniform::HTTP::Message::body"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0545872,
+         "inclusive_seconds" : 0.1532584,
+         "sub" : "Uniform::HTTP::Response::status"
+      },
+      {
+         "calls" : 22100,
+         "calls_per_request" : 2.00909090909091,
+         "exclusive_seconds" : 0.0519739,
+         "inclusive_seconds" : 0.5886593,
+         "sub" : "Unblock::HTTP1::Server::_transport_sync"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0516063,
+         "inclusive_seconds" : 0.2192871,
+         "sub" : "Uniform::HTTP::Message::new"
+      },
+      {
+         "calls" : 10763,
+         "calls_per_request" : 0.978454545454545,
+         "exclusive_seconds" : 0.0502387,
+         "inclusive_seconds" : 2.6222364,
+         "sub" : "Linux::Event::_ByteStream::State::_read_ready"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0496638,
+         "inclusive_seconds" : 0.0555874,
+         "sub" : "Unblock::HTTP1::Transaction::_new"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.049072,
+         "inclusive_seconds" : 2.5566229,
+         "sub" : "Linux::Event::HTTP::_Stream::on_data"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0484753,
+         "inclusive_seconds" : 0.1527607,
+         "sub" : "Unblock::HTTP1::_Wire::_received_request_metadata"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0479881,
+         "inclusive_seconds" : 0.0623845,
+         "sub" : "Unblock::HTTP1::Transaction::_notify_finish"
+      },
+      {
+         "calls" : 11100,
+         "calls_per_request" : 1.00909090909091,
+         "exclusive_seconds" : 0.0477782,
+         "inclusive_seconds" : 0.3712038,
+         "sub" : "Unblock::HTTP1::_Engine::_transport_sync"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0469094,
+         "inclusive_seconds" : 0.3107222,
+         "sub" : "Linux::Event::HTTP::_Transport::unblock_send"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0468492,
+         "inclusive_seconds" : 0.1637195,
+         "sub" : "Uniform::HTTP::FastPath::request_from_validated"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.044253,
+         "inclusive_seconds" : 0.0523802,
+         "sub" : "Unblock::HTTP1::_Wire::_bytes"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0415605,
+         "inclusive_seconds" : 0.080969,
+         "sub" : "Unblock::HTTP1::_Wire::_method"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.041334,
+         "inclusive_seconds" : 0.0927128,
+         "sub" : "Uniform::HTTP::Message::_assert_initial_mutable"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0411096,
+         "inclusive_seconds" : 0.0537539,
+         "sub" : "Uniform::HTTP::Message::_assert_mutable"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0366793,
+         "inclusive_seconds" : 0.0632936,
+         "sub" : "Unblock::HTTP1::_Wire::response_plan"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0341643,
+         "inclusive_seconds" : 0.1978838,
+         "sub" : "Unblock::HTTP1::_Wire::_request_from_validated_head"
+      },
+      {
+         "calls" : 11100,
+         "calls_per_request" : 1.00909090909091,
+         "exclusive_seconds" : 0.0310509,
+         "inclusive_seconds" : 0.0434751,
+         "sub" : "Unblock::HTTP1::Server::want_read"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0288728,
+         "inclusive_seconds" : 0.0288728,
+         "sub" : "Unblock::HTTP1::Server::_retire_if_done"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0279371,
+         "inclusive_seconds" : 0.909213,
+         "sub" : "main::__ANON__[bench/run-unblock-end-to-end.pl:260]"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0266038,
+         "inclusive_seconds" : 0.0266143,
+         "sub" : "Unblock::HTTP1::_Native::_simple_response_wire"
+      },
+      {
+         "calls" : 11200,
+         "calls_per_request" : 1.01818181818182,
+         "exclusive_seconds" : 0.0264923,
+         "inclusive_seconds" : 0.0312948,
+         "sub" : "Linux::Event::_ByteStream::pending_bytes"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.026464,
+         "inclusive_seconds" : 0.031723,
+         "sub" : "Uniform::HTTP::Message::body_is_mutable"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0263009,
+         "inclusive_seconds" : 0.0320706,
+         "sub" : "Uniform::HTTP::Message::_byte_string"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0260803,
+         "inclusive_seconds" : 0.0307818,
+         "sub" : "Uniform::HTTP::Message::initial_is_mutable"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0258616,
+         "inclusive_seconds" : 0.0258616,
+         "sub" : "Unblock::HTTP1::_Native::parse_request_head"
+      },
+      {
+         "calls" : 44000,
+         "calls_per_request" : 4,
+         "exclusive_seconds" : 0.0256711,
+         "inclusive_seconds" : 0.0256711,
+         "sub" : "Unblock::HTTP1::Transaction::is_terminal"
+      },
+      {
+         "calls" : 55000,
+         "calls_per_request" : 5,
+         "exclusive_seconds" : 0.0250369,
+         "inclusive_seconds" : 0.0250369,
+         "sub" : "utf8::downgrade"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 0.0230008,
+         "inclusive_seconds" : 2.6722196,
+         "sub" : "Linux::Event::Loop::run"
+      },
+      {
+         "calls" : 44000,
+         "calls_per_request" : 4,
+         "exclusive_seconds" : 0.0226048,
+         "inclusive_seconds" : 0.0226048,
+         "sub" : "Uniform::HTTP::Message::is_mutable"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0223682,
+         "inclusive_seconds" : 0.0223682,
+         "sub" : "Uniform::HTTP::Message::_named_args"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0217753,
+         "inclusive_seconds" : 0.0273882,
+         "sub" : "Unblock::HTTP1::_Wire::_status_code"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0217029,
+         "inclusive_seconds" : 0.0217029,
+         "sub" : "Uniform::HTTP::FastPath::_common_from_view"
+      },
+      {
+         "calls" : 33002,
+         "calls_per_request" : 3.00018181818182,
+         "exclusive_seconds" : 0.0170353,
+         "inclusive_seconds" : 0.0170353,
+         "sub" : "Uniform::HTTP::FastPath::CORE:match"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0164119,
+         "inclusive_seconds" : 0.0164119,
+         "sub" : "Unblock::HTTP1::_Engine::_queue_output"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0159576,
+         "inclusive_seconds" : 0.0159576,
+         "sub" : "Unblock::HTTP1::_Wire::CORE:match"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0156392,
+         "inclusive_seconds" : 0.0156392,
+         "sub" : "Unblock::HTTP1::_Engine::_input_length"
+      },
+      {
+         "calls" : 11100,
+         "calls_per_request" : 1.00909090909091,
+         "exclusive_seconds" : 0.0124242,
+         "inclusive_seconds" : 0.0124242,
+         "sub" : "Unblock::HTTP1::_Engine::want_read"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0105437,
+         "inclusive_seconds" : 0.0105437,
+         "sub" : "Unblock::HTTP1::_Engine::_input_discard"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0089298,
+         "inclusive_seconds" : 0.0089973,
+         "sub" : "main::__ANON__[bench/run-unblock-end-to-end.pl:236]"
+      },
+      {
+         "calls" : 11300,
+         "calls_per_request" : 1.02727272727273,
+         "exclusive_seconds" : 0.0087352,
+         "inclusive_seconds" : 0.0087352,
+         "sub" : "Linux::Event::_ByteStream::is_closed"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0086675,
+         "inclusive_seconds" : 0.0086675,
+         "sub" : "Unblock::HTTP1::Transaction::_invoke"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.008311,
+         "inclusive_seconds" : 0.008311,
+         "sub" : "Unblock::HTTP1::Transaction::_mark_complete"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0082729,
+         "inclusive_seconds" : 0.0082729,
+         "sub" : "Unblock::HTTP1::_Engine::_input_window"
+      },
+      {
+         "calls" : 11100,
+         "calls_per_request" : 1.00909090909091,
+         "exclusive_seconds" : 0.007713,
+         "inclusive_seconds" : 0.007713,
+         "sub" : "Scalar::Util::weaken"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0074574,
+         "inclusive_seconds" : 0.0074574,
+         "sub" : "Unblock::HTTP1::Transaction::_mark_local_done"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0073023,
+         "inclusive_seconds" : 0.0073023,
+         "sub" : "Unblock::HTTP1::Transaction::request"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0066935,
+         "inclusive_seconds" : 0.0066935,
+         "sub" : "Unblock::HTTP1::Transaction::_set_response"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0063787,
+         "inclusive_seconds" : 0.0063787,
+         "sub" : "Unblock::HTTP1::Transaction::_mark_remote_done"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0062642,
+         "inclusive_seconds" : 0.0062642,
+         "sub" : "Unblock::HTTP1::Transaction::response"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0059584,
+         "inclusive_seconds" : 0.0059584,
+         "sub" : "Uniform::HTTP::Response::CORE:match"
+      },
+      {
+         "calls" : 11200,
+         "calls_per_request" : 1.01818181818182,
+         "exclusive_seconds" : 0.0048025,
+         "inclusive_seconds" : 0.0048025,
+         "sub" : "Linux::Event::_ByteStream::State::pending_bytes"
+      },
+      {
+         "calls" : 700,
+         "calls_per_request" : 0.0636363636363636,
+         "exclusive_seconds" : 0.0038778,
+         "inclusive_seconds" : 0.009272,
+         "sub" : "Linux::Event::_ByteStream::_teardown_step"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0023438,
+         "inclusive_seconds" : 0.0041225,
+         "sub" : "Linux::Event::_Socket::Stream::_socket_setup"
+      },
+      {
+         "calls" : 200,
+         "calls_per_request" : 0.0181818181818182,
+         "exclusive_seconds" : 0.0021393,
+         "inclusive_seconds" : 0.0023064,
+         "sub" : "Linux::Event::HTTP::Server::_track"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0018058,
+         "inclusive_seconds" : 0.0018541,
+         "sub" : "Linux::Event::_ByteStream::__ANON__[/workspace/scratch/1f2c7d411d41/deps/install/lib/perl5/x86_64-linux-gnu-thread-multi/Linux/Event/_ByteStream.pm:1489]"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0017009,
+         "inclusive_seconds" : 0.0040488,
+         "sub" : "Unblock::HTTP1::_Engine::_init_engine"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0016124,
+         "inclusive_seconds" : 0.0036094,
+         "sub" : "Linux::Event::_ByteStream::new"
+      },
+      {
+         "calls" : 300,
+         "calls_per_request" : 0.0272727272727273,
+         "exclusive_seconds" : 0.0012408,
+         "inclusive_seconds" : 0.0104547,
+         "sub" : "Linux::Event::_ByteStream::_close_now"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0008922,
+         "inclusive_seconds" : 0.0074129,
+         "sub" : "Unblock::HTTP::Server::attach_stream"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0008305,
+         "inclusive_seconds" : 0.0232783,
+         "sub" : "Linux::Event::_Socket::Listener::_accept_client"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0007997,
+         "inclusive_seconds" : 0.0093397,
+         "sub" : "Linux::Event::_Socket::Stream::new"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0007062,
+         "inclusive_seconds" : 0.0053569,
+         "sub" : "Unblock::HTTP::_EngineFactory::create"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0006564,
+         "inclusive_seconds" : 0.0013807,
+         "sub" : "Linux::Event::_ByteStream::_prepare_handles"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0006224,
+         "inclusive_seconds" : 0.0152516,
+         "sub" : "Linux::Event::_ByteStream::_mark_eof"
+      },
+      {
+         "calls" : 300,
+         "calls_per_request" : 0.0272727272727273,
+         "exclusive_seconds" : 0.0005834,
+         "inclusive_seconds" : 0.0006311,
+         "sub" : "Unblock::HTTP::_Policy::_copy"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0005637,
+         "inclusive_seconds" : 0.0005637,
+         "sub" : "Linux::Event::_ByteStream::State::_shutdown_write"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0005092,
+         "inclusive_seconds" : 0.0005472,
+         "sub" : "Linux::Event::_ByteStream::State::DESTROY"
+      },
+      {
+         "calls" : 3,
+         "calls_per_request" : 0.000272727272727273,
+         "exclusive_seconds" : 0.0004873,
+         "inclusive_seconds" : 0.024327,
+         "sub" : "Linux::Event::_Socket::Listener::_accept_ready"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0004665,
+         "inclusive_seconds" : 0.0007749,
+         "sub" : "Linux::Event::_ByteStream::_register_handles"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0004594,
+         "inclusive_seconds" : 0.0087818,
+         "sub" : "Linux::Event::HTTP::_Transport::on_ready"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0004538,
+         "inclusive_seconds" : 0.0164818,
+         "sub" : "Linux::Event::_Socket::Stream::_on_read_terminal_ready"
+      },
+      {
+         "calls" : 301,
+         "calls_per_request" : 0.0273636363636364,
+         "exclusive_seconds" : 0.0004531,
+         "inclusive_seconds" : 0.0006175,
+         "sub" : "Linux::Event::_SocketConfig::names"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0004233,
+         "inclusive_seconds" : 0.011797,
+         "sub" : "Linux::Event::_ByteStream::_finish_write_side"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0004137,
+         "inclusive_seconds" : 0.014458,
+         "sub" : "Linux::Event::HTTP::_Transport::on_eof"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0004103,
+         "inclusive_seconds" : 0.0044591,
+         "sub" : "Unblock::HTTP1::Server::new"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0003983,
+         "inclusive_seconds" : 0.0005557,
+         "sub" : "Linux::Event::Address::_parse"
+      },
+      {
+         "calls" : 700,
+         "calls_per_request" : 0.0636363636363636,
+         "exclusive_seconds" : 0.0003935,
+         "inclusive_seconds" : 0.0003935,
+         "sub" : "Unblock::HTTP1::_Engine::CORE:match"
+      },
+      {
+         "calls" : 804,
+         "calls_per_request" : 0.0730909090909091,
+         "exclusive_seconds" : 0.0003603,
+         "inclusive_seconds" : 0.0003603,
+         "sub" : "UNIVERSAL::can"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0003546,
+         "inclusive_seconds" : 0.0081154,
+         "sub" : "Linux::Event::HTTP::Server::_attach"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0003421,
+         "inclusive_seconds" : 0.0018694,
+         "sub" : "Linux::Event::HTTP::_Transport::on_close"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.000325,
+         "inclusive_seconds" : 0.000325,
+         "sub" : "Linux::Event::_Socket::Listener::CORE:open"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.00032,
+         "inclusive_seconds" : 0.00032,
+         "sub" : "Unblock::HTTP1::Server::_on_eof"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0003062,
+         "inclusive_seconds" : 0.0004473,
+         "sub" : "Unblock::HTTP1::Server::_fail_all"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002949,
+         "inclusive_seconds" : 0.001341,
+         "sub" : "Linux::Event::_ByteStream::_attach_to_loop"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002885,
+         "inclusive_seconds" : 0.001123,
+         "sub" : "Unblock::HTTP1::_Engine::_transport_abort"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002868,
+         "inclusive_seconds" : 0.0006093,
+         "sub" : "Linux::Event::_SocketConfig::extract"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002721,
+         "inclusive_seconds" : 0.0002721,
+         "sub" : "Linux::Event::_ByteStream::State::_new_validated"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002716,
+         "inclusive_seconds" : 0.0137999,
+         "sub" : "Unblock::HTTP1::_Engine::input_eof"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002645,
+         "inclusive_seconds" : 0.0098204,
+         "sub" : "Linux::Event::_ByteStream::Descriptor::with_prepared"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 0.0002572,
+         "inclusive_seconds" : 0.0007232,
+         "sub" : "JSON::PP::hash_to_json"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002437,
+         "inclusive_seconds" : 0.000354,
+         "sub" : "Linux::Event::_Socket::Stream::_socket_type"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.000243,
+         "inclusive_seconds" : 0.000243,
+         "sub" : "Linux::Event::_ByteStream::_effective_lifecycle_callbacks"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002419,
+         "inclusive_seconds" : 0.0122182,
+         "sub" : "Linux::Event::_ByteStream::end"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002396,
+         "inclusive_seconds" : 0.0003391,
+         "sub" : "Linux::Event::_ByteStream::_set_nonblocking"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002283,
+         "inclusive_seconds" : 0.0009335,
+         "sub" : "Unblock::HTTP::_Policy::options"
+      },
+      {
+         "calls" : 600,
+         "calls_per_request" : 0.0545454545454545,
+         "exclusive_seconds" : 0.0002253,
+         "inclusive_seconds" : 0.0002253,
+         "sub" : "Scalar::Util::refaddr"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002225,
+         "inclusive_seconds" : 0.0004374,
+         "sub" : "Linux::Event::_ByteStream::_close_handles"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002211,
+         "inclusive_seconds" : 0.0003988,
+         "sub" : "Linux::Event::_SocketConfig::apply_policy"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002162,
+         "inclusive_seconds" : 0.0095559,
+         "sub" : "Linux::Event::_Socket::Listener::_construct_prepared_stream"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002149,
+         "inclusive_seconds" : 0.0002149,
+         "sub" : "Linux::Event::_ByteStream::CORE:close"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002131,
+         "inclusive_seconds" : 0.0002131,
+         "sub" : "Linux::Event::Loop::watch_fd"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002129,
+         "inclusive_seconds" : 0.0167591,
+         "sub" : "Linux::Event::_ByteStream::_watch_read_terminal_xs_cb"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0002082,
+         "inclusive_seconds" : 0.0002663,
+         "sub" : "Linux::Event::_ByteStream::close"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001978,
+         "inclusive_seconds" : 0.0127034,
+         "sub" : "Unblock::HTTP1::Server::_transport_finish"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001963,
+         "inclusive_seconds" : 0.00076,
+         "sub" : "Linux::Event::_Socket::Stream::_finish_transport_write"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001944,
+         "inclusive_seconds" : 0.0089762,
+         "sub" : "Linux::Event::_ByteStream::_fire_ready"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001918,
+         "inclusive_seconds" : 0.0002712,
+         "sub" : "Linux::Event::_ByteStream::_start_stream_deadlines"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001866,
+         "inclusive_seconds" : 0.0002768,
+         "sub" : "Linux::Event::_ByteStream::_cancel_io_watchers"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001861,
+         "inclusive_seconds" : 0.0157976,
+         "sub" : "Linux::Event::_ByteStream::_on_read_terminal_ready"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001795,
+         "inclusive_seconds" : 0.0002189,
+         "sub" : "Linux::Event::HTTP::Server::_closed"
+      },
+      {
+         "calls" : 200,
+         "calls_per_request" : 0.0181818181818182,
+         "exclusive_seconds" : 0.0001767,
+         "inclusive_seconds" : 0.0001767,
+         "sub" : "Linux::Event::Address::new"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 0.0001696,
+         "inclusive_seconds" : 0.0002122,
+         "sub" : "Linux::Event::Loop::add"
+      },
+      {
+         "calls" : 301,
+         "calls_per_request" : 0.0273636363636364,
+         "exclusive_seconds" : 0.0001644,
+         "inclusive_seconds" : 0.0001644,
+         "sub" : "Linux::Event::_SocketConfig::CORE:sort"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001604,
+         "inclusive_seconds" : 0.0001604,
+         "sub" : "Linux::Event::_ByteStream::_take_callbacks"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001549,
+         "inclusive_seconds" : 0.0021739,
+         "sub" : "Linux::Event::HTTP::Server::__ANON__[/workspace/scratch/1f2c7d411d41/perl-Linux-Event-HTTP/blib/lib/Linux/Event/HTTP/Server.pm:74]"
+      },
+      {
+         "calls" : 200,
+         "calls_per_request" : 0.0181818181818182,
+         "exclusive_seconds" : 0.0001456,
+         "inclusive_seconds" : 0.0001456,
+         "sub" : "Linux::Event::_Socket::Stream::CORE:gsockopt"
+      },
+      {
+         "calls" : 3,
+         "calls_per_request" : 0.000272727272727273,
+         "exclusive_seconds" : 0.0001453,
+         "inclusive_seconds" : 0.0001453,
+         "sub" : "Linux::Event::_Socket::Listener::_accept4_batch"
+      },
+      {
+         "calls" : 77,
+         "calls_per_request" : 0.007,
+         "exclusive_seconds" : 0.000145,
+         "inclusive_seconds" : 0.000185,
+         "sub" : "JSON::PP::string_to_json"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001343,
+         "inclusive_seconds" : 0.0002677,
+         "sub" : "Linux::Event::_ByteStream::__ANON__[/workspace/scratch/1f2c7d411d41/deps/install/lib/perl5/x86_64-linux-gnu-thread-multi/Linux/Event/_ByteStream.pm:1485]"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001334,
+         "inclusive_seconds" : 0.0001334,
+         "sub" : "Linux::Event::_ByteStream::_cancel_stream_deadline"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001327,
+         "inclusive_seconds" : 0.0012557,
+         "sub" : "Unblock::HTTP1::_Engine::transport_error"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001297,
+         "inclusive_seconds" : 0.0006854,
+         "sub" : "Linux::Event::Address::family_number"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001232,
+         "inclusive_seconds" : 0.0153748,
+         "sub" : "Linux::Event::_ByteStream::_xs_read_eof"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.000123,
+         "inclusive_seconds" : 0.0001784,
+         "sub" : "Linux::Event::_ByteStream::__ANON__[/workspace/scratch/1f2c7d411d41/deps/install/lib/perl5/x86_64-linux-gnu-thread-multi/Linux/Event/_ByteStream.pm:1480]"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001227,
+         "inclusive_seconds" : 0.0003995,
+         "sub" : "Linux::Event::_ByteStream::__ANON__[/workspace/scratch/1f2c7d411d41/deps/install/lib/perl5/x86_64-linux-gnu-thread-multi/Linux/Event/_ByteStream.pm:1491]"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001209,
+         "inclusive_seconds" : 0.0003872,
+         "sub" : "Linux::Event::HTTP::_Transport::unblock_abort"
+      },
+      {
+         "calls" : 200,
+         "calls_per_request" : 0.0181818181818182,
+         "exclusive_seconds" : 0.0001189,
+         "inclusive_seconds" : 0.0001189,
+         "sub" : "Linux::Event::_ByteStream::data"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.000118,
+         "inclusive_seconds" : 0.0001792,
+         "sub" : "Linux::Event::_ByteStream::__ANON__[/workspace/scratch/1f2c7d411d41/deps/install/lib/perl5/x86_64-linux-gnu-thread-multi/Linux/Event/_ByteStream.pm:1486]"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001162,
+         "inclusive_seconds" : 0.0001162,
+         "sub" : "Linux::Event::_ByteStream::fh"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001131,
+         "inclusive_seconds" : 0.0001131,
+         "sub" : "Linux::Event::_ByteStream::_require_read_sink"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001131,
+         "inclusive_seconds" : 0.0124436,
+         "sub" : "Unblock::HTTP1::_Engine::_transport_finish"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001123,
+         "inclusive_seconds" : 0.0123305,
+         "sub" : "Linux::Event::HTTP::_Transport::unblock_finish"
+      },
+      {
+         "calls" : 76,
+         "calls_per_request" : 0.00690909090909091,
+         "exclusive_seconds" : 0.000112,
+         "inclusive_seconds" : 0.000131,
+         "sub" : "JSON::PP::_looks_like_number"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001053,
+         "inclusive_seconds" : 0.0005427,
+         "sub" : "Linux::Event::_ByteStream::__ANON__[/workspace/scratch/1f2c7d411d41/deps/install/lib/perl5/x86_64-linux-gnu-thread-multi/Linux/Event/_ByteStream.pm:1492]"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 0.0001032,
+         "inclusive_seconds" : 0.0019726,
+         "sub" : "Linux::Event::_ByteStream::__ANON__[/workspace/scratch/1f2c7d411d41/deps/install/lib/perl5/x86_64-linux-gnu-thread-multi/Linux/Event/_ByteStream.pm:1496]"
+      },
+      {
+         "calls" : 200,
+         "calls_per_request" : 0.0181818181818182,
+         "exclusive_seconds" : 9.95e-05,
+         "inclusive_seconds" : 9.95e-05,
+         "sub" : "Linux::Event::_ByteStream::CORE:fcntl"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 9.49e-05,
+         "inclusive_seconds" : 0.0001208,
+         "sub" : "Linux::Event::_Socket::Descriptor::for_class"
+      },
+      {
+         "calls" : 102,
+         "calls_per_request" : 0.00927272727272727,
+         "exclusive_seconds" : 9.25e-05,
+         "inclusive_seconds" : 9.25e-05,
+         "sub" : "UNIVERSAL::isa"
+      },
+      {
+         "calls" : 76,
+         "calls_per_request" : 0.00690909090909091,
+         "exclusive_seconds" : 9.25e-05,
+         "inclusive_seconds" : 0.0002235,
+         "sub" : "JSON::PP::value_to_json"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 9.19e-05,
+         "inclusive_seconds" : 9.19e-05,
+         "sub" : "Linux::Event::_ByteStream::_validate_callback_modes"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 9.02e-05,
+         "inclusive_seconds" : 9.02e-05,
+         "sub" : "Linux::Event::_Registration::cancel"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 8.97e-05,
+         "inclusive_seconds" : 8.97e-05,
+         "sub" : "Unblock::HTTP::_EngineFactory::CORE:subst"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 7.94e-05,
+         "inclusive_seconds" : 7.94e-05,
+         "sub" : "Linux::Event::_ByteStream::_needs_activity_tracking"
+      },
+      {
+         "calls" : 200,
+         "calls_per_request" : 0.0181818181818182,
+         "exclusive_seconds" : 7.89e-05,
+         "inclusive_seconds" : 7.89e-05,
+         "sub" : "Linux::Event::_Socket::Stream::CORE:unpack"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 7.8e-05,
+         "inclusive_seconds" : 7.8e-05,
+         "sub" : "Linux::Event::_Socket::Stream::_configure_socket"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 7.57e-05,
+         "inclusive_seconds" : 7.57e-05,
+         "sub" : "Linux::Event::_ByteStream::transport"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 7.41e-05,
+         "inclusive_seconds" : 7.41e-05,
+         "sub" : "Unblock::HTTP::_Policy::enabled"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 7.26e-05,
+         "inclusive_seconds" : 7.26e-05,
+         "sub" : "Linux::Event::_SocketConfig::normalize_policy"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.84e-05,
+         "inclusive_seconds" : 6.84e-05,
+         "sub" : "Linux::Event::_Socket::Stream::CORE:getsockname"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.62e-05,
+         "inclusive_seconds" : 6.62e-05,
+         "sub" : "Socket::inet_ntoa"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.55e-05,
+         "inclusive_seconds" : 6.55e-05,
+         "sub" : "Unblock::HTTP::_Policy::websocket_enabled"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.5e-05,
+         "inclusive_seconds" : 6.5e-05,
+         "sub" : "Unblock::HTTP1::_Engine::_input_clear"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.44e-05,
+         "inclusive_seconds" : 6.44e-05,
+         "sub" : "Linux::Event::_ByteStream::State::object"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.35e-05,
+         "inclusive_seconds" : 6.35e-05,
+         "sub" : "Linux::Event::_ByteStream::Descriptor::for_class"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.31e-05,
+         "inclusive_seconds" : 6.31e-05,
+         "sub" : "Linux::Event::_Registration::disable_read"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.12e-05,
+         "inclusive_seconds" : 6.12e-05,
+         "sub" : "Linux::Event::_ByteStream::_destroy_transport_deadline"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.06e-05,
+         "inclusive_seconds" : 6.06e-05,
+         "sub" : "Linux::Event::_Socket::Listener::loop"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 6.05e-05,
+         "inclusive_seconds" : 6.05e-05,
+         "sub" : "Linux::Event::_Socket::Stream::selected_alpn"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 5.77e-05,
+         "inclusive_seconds" : 0.0009231,
+         "sub" : "main::__ANON__[bench/run-unblock-end-to-end.pl:257]"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 5.75e-05,
+         "inclusive_seconds" : 5.75e-05,
+         "sub" : "Linux::Event::_ByteStream::CORE:match"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 5.7e-05,
+         "inclusive_seconds" : 5.7e-05,
+         "sub" : "Linux::Event::_Registration::disable_write"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 5.54e-05,
+         "inclusive_seconds" : 5.54e-05,
+         "sub" : "Linux::Event::_Socket::Stream::_cancel_pending"
+      },
+      {
+         "calls" : 101,
+         "calls_per_request" : 0.00918181818181818,
+         "exclusive_seconds" : 5.48e-05,
+         "inclusive_seconds" : 5.48e-05,
+         "sub" : "Scalar::Util::blessed"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 5.39e-05,
+         "inclusive_seconds" : 5.39e-05,
+         "sub" : "Linux::Event::_ByteStream::_clear_transport_deadline"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 4.83e-05,
+         "inclusive_seconds" : 4.83e-05,
+         "sub" : "Linux::Event::_ByteStream::State::_close"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 4.57e-05,
+         "inclusive_seconds" : 4.57e-05,
+         "sub" : "Socket::unpack_sockaddr_in"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 4.55e-05,
+         "inclusive_seconds" : 4.55e-05,
+         "sub" : "Socket::sockaddr_family"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 4.45e-05,
+         "inclusive_seconds" : 4.45e-05,
+         "sub" : "Linux::Event::Loop::stats"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 4.41e-05,
+         "inclusive_seconds" : 4.73e-05,
+         "sub" : "Linux::Event::Kernel::Timer::_effective_descriptor"
+      },
+      {
+         "calls" : 154,
+         "calls_per_request" : 0.014,
+         "exclusive_seconds" : 4e-05,
+         "inclusive_seconds" : 4e-05,
+         "sub" : "JSON::PP::CORE:subst"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 3.83e-05,
+         "inclusive_seconds" : 3.83e-05,
+         "sub" : "Linux::Event::_ByteStream::State::consumer_paused"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 3.8e-05,
+         "inclusive_seconds" : 3.8e-05,
+         "sub" : "Linux::Event::_ByteStream::DESTROY"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 3.64e-05,
+         "inclusive_seconds" : 3.64e-05,
+         "sub" : "Linux::Event::Kernel::Timer::_attach_to_loop"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 3.36e-05,
+         "inclusive_seconds" : 0.000762,
+         "sub" : "JSON::PP::PP_encode_json"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 3.34e-05,
+         "inclusive_seconds" : 3.34e-05,
+         "sub" : "JSON::PP::CORE:sort"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 3.33e-05,
+         "inclusive_seconds" : 0.0003349,
+         "sub" : "Linux::Event::Kernel::Timer::new"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 3.22e-05,
+         "inclusive_seconds" : 3.22e-05,
+         "sub" : "Linux::Event::_Registration::DESTROY"
+      },
+      {
+         "calls" : 100,
+         "calls_per_request" : 0.00909090909090909,
+         "exclusive_seconds" : 3.17e-05,
+         "inclusive_seconds" : 3.17e-05,
+         "sub" : "Unblock::HTTP1::_Engine::CORE:sort"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 2.69e-05,
+         "inclusive_seconds" : 4.52e-05,
+         "sub" : "Time::HiRes::AUTOLOAD"
+      },
+      {
+         "calls" : 76,
+         "calls_per_request" : 0.00690909090909091,
+         "exclusive_seconds" : 1.9e-05,
+         "inclusive_seconds" : 1.9e-05,
+         "sub" : "utf8::is_utf8"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.72e-05,
+         "inclusive_seconds" : 1.72e-05,
+         "sub" : "Time::HiRes::CORE:subst"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.71e-05,
+         "inclusive_seconds" : 3.83e-05,
+         "sub" : "Linux::Event::Kernel::Timer::_schedule"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.71e-05,
+         "inclusive_seconds" : 1.71e-05,
+         "sub" : "main::CORE:print"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 1.71e-05,
+         "inclusive_seconds" : 5.05e-05,
+         "sub" : "JSON::PP::_sort"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 1.7e-05,
+         "inclusive_seconds" : 1.7e-05,
+         "sub" : "Time::HiRes::time"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.43e-05,
+         "inclusive_seconds" : 1.96e-05,
+         "sub" : "Linux::Event::Kernel::Timer::_seconds"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.34e-05,
+         "inclusive_seconds" : 1.34e-05,
+         "sub" : "JSON::PP::new"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.26e-05,
+         "inclusive_seconds" : 1.26e-05,
+         "sub" : "JSON::PP::canonical"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 1.22e-05,
+         "inclusive_seconds" : 0.0007284,
+         "sub" : "JSON::PP::object_to_json"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.04e-05,
+         "inclusive_seconds" : 1.16e-05,
+         "sub" : "Linux::Event::_Socket::Descriptor::_tls_for"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 9.2e-06,
+         "inclusive_seconds" : 9.2e-06,
+         "sub" : "Time::HiRes::clock_gettime"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 7.8e-06,
+         "inclusive_seconds" : 1.05e-05,
+         "sub" : "Uniform::HTTP::FastPath::native_compatible"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 5e-06,
+         "inclusive_seconds" : 0.000767,
+         "sub" : "JSON::PP::encode"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 4.7e-06,
+         "inclusive_seconds" : 4.7e-06,
+         "sub" : "Linux::Event::Kernel::Timer::_Descriptor::DESTROY"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 3.7e-06,
+         "inclusive_seconds" : 3.7e-06,
+         "sub" : "Time::HiRes::__ANON__[/usr/lib/x86_64-linux-gnu/perl/5.38/Time/HiRes.pm:71]"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 3.3e-06,
+         "inclusive_seconds" : 3.3e-06,
+         "sub" : "POSIX::isfinite"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 2.4e-06,
+         "inclusive_seconds" : 2.4e-06,
+         "sub" : "IO::Handle::flush"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 2e-06,
+         "inclusive_seconds" : 2e-06,
+         "sub" : "Scalar::Util::looks_like_number"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.9e-06,
+         "inclusive_seconds" : 1.9e-06,
+         "sub" : "Linux::Event::Kernel::Timer::_new_native"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.9e-06,
+         "inclusive_seconds" : 1.9e-06,
+         "sub" : "Linux::Event::Kernel::Timer::_Descriptor::new"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.6e-06,
+         "inclusive_seconds" : 1.6e-06,
+         "sub" : "Linux::Event::Kernel::Timer::CORE:sort"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.2e-06,
+         "inclusive_seconds" : 1.2e-06,
+         "sub" : "mro::get_linear_isa"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.1e-06,
+         "inclusive_seconds" : 1.1e-06,
+         "sub" : "Time::HiRes::constant"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 8e-07,
+         "inclusive_seconds" : 8e-07,
+         "sub" : "Linux::Event::Loop::stop"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 6e-07,
+         "inclusive_seconds" : 6e-07,
+         "sub" : "Linux::Event::Kernel::Timer::DESTROY"
+      }
+   ],
+   "total_exclusive_seconds" : 2.6722196,
+   "total_requests" : 11000
+}

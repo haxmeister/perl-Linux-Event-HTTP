@@ -1,0 +1,441 @@
+{
+   "clock" : "2",
+   "groups" : {
+      "Unblock::HTTP" : 0.0062318,
+      "Unblock::HTTP1" : 1.2367854,
+      "Uniform::HTTP" : 0.538579,
+      "other" : 0.0724962
+   },
+   "nytprof_version" : "6.16",
+   "subroutines" : [
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.1995224,
+         "inclusive_seconds" : 1.5597289,
+         "sub" : "Unblock::HTTP1::Server::_drive"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.1774922,
+         "inclusive_seconds" : 0.3131615,
+         "sub" : "Unblock::HTTP1::Server::_transaction_respond"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0728713,
+         "inclusive_seconds" : 0.9271977,
+         "sub" : "Unblock::HTTP1::Server::_complete_request"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0697064,
+         "inclusive_seconds" : 0.1369267,
+         "sub" : "Unblock::HTTP1::Server::_finish_accepted_output"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0669125,
+         "inclusive_seconds" : 0.0804342,
+         "sub" : "Uniform::HTTP::FastPath::_validate_view"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0657959,
+         "inclusive_seconds" : 0.3899963,
+         "sub" : "Uniform::HTTP::Response::new"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0634411,
+         "inclusive_seconds" : 0.7732676,
+         "sub" : "Unblock::HTTP1::Transaction::respond"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0550374,
+         "inclusive_seconds" : 0.8563955,
+         "sub" : "Unblock::HTTP1::Server::_invoke_server"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0541827,
+         "inclusive_seconds" : 1.8352659,
+         "sub" : "Unblock::HTTP1::_Engine::input"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0531232,
+         "inclusive_seconds" : 0.1261632,
+         "sub" : "Uniform::HTTP::Message::body"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0526978,
+         "inclusive_seconds" : 0.1871871,
+         "sub" : "Uniform::HTTP::Message::new"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0501294,
+         "inclusive_seconds" : 0.146733,
+         "sub" : "Uniform::HTTP::FastPath::request_from_validated"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0447778,
+         "inclusive_seconds" : 0.2245187,
+         "sub" : "Unblock::HTTP1::Server::_transport_sync"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0442262,
+         "inclusive_seconds" : 0.13371,
+         "sub" : "Uniform::HTTP::Response::status"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0433606,
+         "inclusive_seconds" : 0.0554224,
+         "sub" : "Unblock::HTTP1::Transaction::_notify_finish"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.039144,
+         "inclusive_seconds" : 0.0440493,
+         "sub" : "Unblock::HTTP1::Transaction::_new"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0372202,
+         "inclusive_seconds" : 0.0479105,
+         "sub" : "Unblock::HTTP1::_Wire::_bytes"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0369272,
+         "inclusive_seconds" : 0.0521607,
+         "sub" : "Uniform::HTTP::Message::_assert_mutable"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0361864,
+         "inclusive_seconds" : 0.1244385,
+         "sub" : "Unblock::HTTP1::_Wire::_received_request_metadata"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0357357,
+         "inclusive_seconds" : 0.0428142,
+         "sub" : "Unblock::HTTP1::_Engine::_transport_sync"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0346911,
+         "inclusive_seconds" : 0.1814241,
+         "sub" : "Unblock::HTTP1::_Wire::_request_from_validated_head"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0329895,
+         "inclusive_seconds" : 0.0536438,
+         "sub" : "Unblock::HTTP1::_Wire::response_plan"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0329765,
+         "inclusive_seconds" : 0.0638541,
+         "sub" : "Unblock::HTTP1::_Wire::_method"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.032532,
+         "inclusive_seconds" : 0.0828416,
+         "sub" : "Uniform::HTTP::Message::_assert_initial_mutable"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0283208,
+         "inclusive_seconds" : 0.0283208,
+         "sub" : "Unblock::HTTP1::Server::_retire_if_done"
+      },
+      {
+         "calls" : 44000,
+         "calls_per_request" : 4,
+         "exclusive_seconds" : 0.0237057,
+         "inclusive_seconds" : 0.0237057,
+         "sub" : "Unblock::HTTP1::Transaction::is_terminal"
+      },
+      {
+         "calls" : 44000,
+         "calls_per_request" : 4,
+         "exclusive_seconds" : 0.0235259,
+         "inclusive_seconds" : 0.0235259,
+         "sub" : "Uniform::HTTP::Message::is_mutable"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.022616,
+         "inclusive_seconds" : 0.0275904,
+         "sub" : "Unblock::HTTP1::_Wire::_status_code"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0218587,
+         "inclusive_seconds" : 0.7951263,
+         "sub" : "main::__ANON__[bench/run-unblock-engine.pl:33]"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0206463,
+         "inclusive_seconds" : 0.0206543,
+         "sub" : "Unblock::HTTP1::_Native::_simple_response_wire"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0199601,
+         "inclusive_seconds" : 0.024159,
+         "sub" : "Uniform::HTTP::Message::body_is_mutable"
+      },
+      {
+         "calls" : 44000,
+         "calls_per_request" : 4,
+         "exclusive_seconds" : 0.0198272,
+         "inclusive_seconds" : 0.0198272,
+         "sub" : "utf8::downgrade"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0192878,
+         "inclusive_seconds" : 0.0244557,
+         "sub" : "Uniform::HTTP::Message::_byte_string"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0187491,
+         "inclusive_seconds" : 1.854015,
+         "sub" : "main::__ANON__[bench/run-unblock-engine.pl:38]"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.018639,
+         "inclusive_seconds" : 0.018639,
+         "sub" : "Uniform::HTTP::Message::_named_args"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0186184,
+         "inclusive_seconds" : 0.0186184,
+         "sub" : "Unblock::HTTP1::_Native::parse_request_head"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0184807,
+         "inclusive_seconds" : 0.0225742,
+         "sub" : "Uniform::HTTP::Message::initial_is_mutable"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0161694,
+         "inclusive_seconds" : 0.0161694,
+         "sub" : "Uniform::HTTP::FastPath::_common_from_view"
+      },
+      {
+         "calls" : 33002,
+         "calls_per_request" : 3.00018181818182,
+         "exclusive_seconds" : 0.0135241,
+         "inclusive_seconds" : 0.0135241,
+         "sub" : "Uniform::HTTP::FastPath::CORE:match"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0131885,
+         "inclusive_seconds" : 0.0131885,
+         "sub" : "Unblock::HTTP1::_Engine::_input_length"
+      },
+      {
+         "calls" : 22000,
+         "calls_per_request" : 2,
+         "exclusive_seconds" : 0.0123395,
+         "inclusive_seconds" : 0.0123395,
+         "sub" : "Unblock::HTTP1::_Wire::CORE:match"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0102636,
+         "inclusive_seconds" : 0.0102636,
+         "sub" : "Unblock::HTTP1::_Engine::_queue_output"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0081969,
+         "inclusive_seconds" : 0.0081969,
+         "sub" : "Unblock::HTTP1::_Engine::_input_discard"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0075669,
+         "inclusive_seconds" : 0.0075669,
+         "sub" : "Unblock::HTTP1::_Engine::_input_window"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0072686,
+         "inclusive_seconds" : 0.0072686,
+         "sub" : "Unblock::HTTP1::Transaction::_invoke"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0070895,
+         "inclusive_seconds" : 0.0070895,
+         "sub" : "Unblock::HTTP1::Transaction::_mark_local_done"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0070785,
+         "inclusive_seconds" : 0.0070785,
+         "sub" : "BenchSink::unblock_send"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0066422,
+         "inclusive_seconds" : 0.0066422,
+         "sub" : "Uniform::HTTP::Response::CORE:match"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0065937,
+         "inclusive_seconds" : 0.0065937,
+         "sub" : "Unblock::HTTP1::Transaction::_mark_complete"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0062318,
+         "inclusive_seconds" : 0.0062318,
+         "sub" : "Unblock::HTTP::Server::_ignore_headers"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0055341,
+         "inclusive_seconds" : 0.0055341,
+         "sub" : "Unblock::HTTP1::Transaction::_set_response"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0054296,
+         "inclusive_seconds" : 0.0054296,
+         "sub" : "Unblock::HTTP1::Transaction::request"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0051098,
+         "inclusive_seconds" : 0.0051098,
+         "sub" : "Unblock::HTTP1::Transaction::_mark_remote_done"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0049622,
+         "inclusive_seconds" : 0.0049622,
+         "sub" : "Unblock::HTTP1::Transaction::response"
+      },
+      {
+         "calls" : 11000,
+         "calls_per_request" : 1,
+         "exclusive_seconds" : 0.0049053,
+         "inclusive_seconds" : 0.0049053,
+         "sub" : "Scalar::Util::weaken"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 2.46e-05,
+         "inclusive_seconds" : 2.46e-05,
+         "sub" : "Time::HiRes::CORE:subst"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 2.42e-05,
+         "inclusive_seconds" : 5.03e-05,
+         "sub" : "Time::HiRes::AUTOLOAD"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 2.27e-05,
+         "inclusive_seconds" : 2.27e-05,
+         "sub" : "Time::HiRes::clock_gettime"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 5.6e-06,
+         "inclusive_seconds" : 8e-06,
+         "sub" : "Uniform::HTTP::FastPath::native_compatible"
+      },
+      {
+         "calls" : 2,
+         "calls_per_request" : 0.000181818181818182,
+         "exclusive_seconds" : 4.4e-06,
+         "inclusive_seconds" : 4.4e-06,
+         "sub" : "Time::HiRes::__ANON__[/usr/lib/x86_64-linux-gnu/perl/5.38/Time/HiRes.pm:71]"
+      },
+      {
+         "calls" : 1,
+         "calls_per_request" : 9.09090909090909e-05,
+         "exclusive_seconds" : 1.5e-06,
+         "inclusive_seconds" : 1.5e-06,
+         "sub" : "Time::HiRes::constant"
+      }
+   ],
+   "total_exclusive_seconds" : 1.8540924,
+   "total_requests" : 11000
+}
