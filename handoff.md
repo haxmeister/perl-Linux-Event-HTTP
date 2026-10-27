@@ -1,5 +1,67 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-26
 
+## Stage B completion-only shared callback experiment - 2026-10-26
+
+Development resumed from root 85c91e42563dbbc003be510a43474cd48de8e48f.
+The root implementation and runtime dependency versions are UNCHANGED;
+main, tags and releases UNTOUCHED. Added a separate reproducible
+experiment workflow only (source 5422dc6dfd174a0640106b6ccd49a67173c7bbd5,
+then expanded independent engine controls at 62c4068f52e3365bfe867d4940298d6e94685b3e).
+It does not install experimental dependencies into production code.
+
+Two generic upstream branches were created:
+- haxmeister/perl-Unblock-HTTP1 feature/completion-only-callback,
+  source 96c01f7091c12bacd7cad8260a018d0094b38ce5
+  (main parent 16acac763ad2f158c4c0ac91f2df3df5e6b72284).
+  A server may have on_request_end without a synthetic on_request
+  callback, while preserving all early callbacks when explicit.
+  Partial-body/pipeline/frozen canonical/request validation tests and
+  MANIFEST/POD added. Cross-platform 4/4 CI:
+  https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40439812469
+  PASS including Perl 5.16.
+- haxmeister/perl-Unblock-HTTP feature/completion-only-callback,
+  production source bc3c66247dd8feb7492e2d880978de9f2ecbfe9f,
+  test corrected 7a390af, integration CI 962ad912.
+  No longer maps absent on_headers to _ignore_headers, and H2/H3
+  WebSocket callbacks handle an absent early handler. Its feature
+  depends on the lower HTTP1 branch and is NOT compatible with
+  published HTTP1 0.13 when on_headers is absent; do not release
+  without coordinated version/prerequisite handling.
+
+First controlled root experiment:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40439909173
+SUCCESS using BOTH pinned upstream candidates. Root H1 native/Perl
+tests EACH 22 files / 53 top-level tests PASS.
+Same-runner real-socket GET32, 100 persistent connections,
+12k measured+1k warmup, 2 repeats each, baseline/trial/trial/baseline.
+Published medians: 34990.2 and 35767.2 req/s;
+completion-only candidate: 34500.2 and 36249.5 req/s.
+CPU us/request baselines 29.733 and 28.425; trials 29.481 and
+28.076. Results overlap: NO demonstrated meaningful socket
+throughput gain, do not cherry-pick cross-run maxima or merge
+for this performance result. Engine-only native/portable
+controls were added as a separate precise question in
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40440056191;
+check its final outcome and record readings.
+
+The independent upper suite:
+https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/40439940480
+PASS HTTP1-only and complete optional stack, but two QUIC TLS tests
+initially skipped due to setup-perl's bogus OPENSSL_CONF. The
+workflow was corrected to /etc/ssl/openssl.cnf and those H3
+WebSocket tests explicitly rerun: check final
+https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/40440089986
+and do not claim unskipped coverage before confirmation.
+Published-dependency root 7-job CI is triggered separately on each
+root workflow source change; keep it distinct from candidate tests.
+
+Stage B REMAINS OPEN. The initial constructor/dispatch and
+completion-only callback simplifications have not yet recovered
+a significant fraction of original HTTP1 throughput. Avoid
+framework-specific fast-path exceptions or weakened validation.
+Future work must target materially larger generic protocol and
+canonical object lifecycle costs, with standalone measurement first.
+
 ## Unpublished general-purpose Stage B trials - 2026-10-26
 
 Root implementation/production code unchanged. Current root source
