@@ -2,6 +2,34 @@
 
 ## Stage B completion-only shared callback experiment - 2026-10-26
 
+FINAL COMPLETION-ONLY CROSS-STACK VERIFICATION:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40440056191
+SUCCESS. Same-runner independent engine comparisons:
+- Native: published 53.602 / 53.357 CPU us/request;
+  completion-only trial 50.033 / 50.392 (~6% lower).
+- Portable: published 69.753 / 69.110;
+  trial 66.569 / 67.561 (~2-5% lower).
+Each control uses 20k measured, alternating published/trial/trial/
+published, with fresh response on a borrowed or portable engine.
+No Linux::Event loaded in this engine-only benchmark.
+
+Same-runner actual HTTP1 socket GET32 100 conns 12k measured,
+two repeats per sequence:
+published medians 11298.2 / 11276.7 req/s;
+trial medians 11424.4 / 11364.6 req/s;
+server CPU us/request baseline 89.849 / 90.288 versus trial
+89.318 / 89.278. This is a marginal ~1% socket effect,
+not recovery of the original-server performance.
+One earlier paired run had overlapping medians in opposite
+directions, demonstrating runner variability. Stage B OPEN.
+
+Upper feature full published optional stack and real QUIC WebSocket
+https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/40440089986
+SUCCESS; corrected OPENSSL_CONF verified actual H3 t/35,t/36
+PASS without TLS-fixture skip. Lower HTTP1 four-platform
+https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40439812469
+PASS. Neither upstream main changed. Root production unchanged.
+
 Development resumed from root 85c91e42563dbbc003be510a43474cd48de8e48f.
 The root implementation and runtime dependency versions are UNCHANGED;
 main, tags and releases UNTOUCHED. Added a separate reproducible
