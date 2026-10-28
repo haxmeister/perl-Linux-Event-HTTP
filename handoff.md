@@ -33,10 +33,12 @@ On the final feature source before main merge:
 - After main fast-forward, verification:
   https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40620703951
   and https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40620703901
-  must be checked for final results before claiming fully green main.
-  The main-only changes since validated feature version are
-  release-note documentation and manualizing Stage B diagnostics,
-  not protocol code.
+  PASSED: main cross-Perl run 40620703951 all seven jobs successful,
+  including the optional protocol and packaged-source checks. The
+  main HTTP2 h2spec run 40620703901 also PASSED; it exercises
+  standalone and rebuilt native/portable input. Both workflows
+  tested the merged production/release-preparation source at
+  ee962658dc2c2129d873f9805b790c56a6a6a89e.
 
 DEPENDENCY RELEASE AUDIT:
 Unblock::HTTP1 main==v0.13, HTTP2 main==v0.13,
