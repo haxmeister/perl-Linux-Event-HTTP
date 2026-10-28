@@ -8,12 +8,17 @@ Request, Response, Transaction and connection classes are not retained
 as compatibility wrappers. Applications should follow the new Server
 and Client examples in the README.
 
-The separately distributed **Linux::Event::WebSocket 0.002** still uses the
-old Linux::Event::HTTP::Request and connection-class APIs. It is **not
-compatible** with Linux::Event::HTTP 0.004. This release instead offers
-WebSocket transitions through Unblock::HTTP and Unblock::WebSocket.
-Existing applications using Linux::Event::WebSocket should retain
-Linux::Event::HTTP 0.003 until the older WebSocket wrapper is updated.
+**Coordinated WebSocket release:** Linux::Event::WebSocket 0.002 is not
+compatible with HTTP 0.004 because it uses removed HTTP internals.
+Linux::Event::WebSocket **0.003** replaces that dependency with
+published Unblock::HTTP1 and retains its dedicated client/server API.
+Publish WebSocket 0.003 before HTTP 0.004 so users can update both
+without a broken intermediate installation.
+
+For WebSocket-only programs use Linux::Event::WebSocket. For WebSocket
+endpoints already running inside an HTTP server/client, use
+Linux::Event::HTTP's on_websocket/connect_websocket interface.
+No application needs to configure the underlying framing implementation.
 
 ## What's included
 
