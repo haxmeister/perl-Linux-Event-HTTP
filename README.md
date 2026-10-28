@@ -155,12 +155,17 @@ The superseded private HTTP parsers, executors and public Request/Response
 wrappers have been removed. The earlier implementation remains available
 from the 0.003 release.
 
-**Compatibility note:** the separate `Linux::Event::WebSocket` 0.002
-distribution uses the removed HTTP API and is not compatible with this
-release. Use the WebSocket facilities integrated through Unblock::HTTP for
-new applications. Existing `Linux::Event::WebSocket` applications should
-continue using Linux::Event::HTTP 0.003 until that separate distribution
-is updated.
+**WebSocket compatibility:** the separate `Linux::Event::WebSocket` 0.002
+distribution uses the removed HTTP internals and cannot run with HTTP
+0.004. Its coordinated **0.003 compatibility release** instead uses
+`Unblock::HTTP1` directly, preserves the existing WebSocket client/server
+API and does not depend on this distribution.
+
+For a dedicated WebSocket application, use `Linux::Event::WebSocket` 0.003.
+For WebSocket endpoints within an HTTP application, use this distribution's
+`on_websocket` or `connect_websocket` convenience. Neither requires
+choosing a WebSocket framing engine. Publish WebSocket 0.003 first, then
+HTTP 0.004, to avoid breaking existing WebSocket installations.
 
 In a shared-client, single-execution-slot HTTP/1.1 comparison using
 Benchmark::Web, this rebuild exceeded Mojolicious throughput but trailed
