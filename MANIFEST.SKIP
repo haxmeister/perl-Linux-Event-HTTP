@@ -7,3 +7,7 @@
 ^bench/results/
 ^docs/NEXT-CHAT-PROMPT\.txt$
 ^handoff\.md$
+^docs/UNBLOCK-REBUILD-PLAN\.md$
+^docs/UNBLOCK-REBUILD-STATUS\.md$
+^docs/HTTP3-EXTENDED-CONNECT-COMPLETION\.md$
+^docs/HTTP1-PUBLISHED-STACK-PERFORMANCE\.md$
