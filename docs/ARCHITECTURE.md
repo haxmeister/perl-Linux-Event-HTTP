@@ -1,8 +1,7 @@
-# Linux::Event::HTTP architecture (Unblock rebuild)
+# Linux::Event::HTTP architecture
 
-This describes the implementation on `feature/unblock-http-rebuild`, not the
-former implementation still available on the untouched `main` branch.
-The rebuild has no backward-compatibility layer and is not release ready.
+Version 0.004 uses independent Unblock protocol engines. It replaces the
+previous Linux::Event::HTTP internals and does not retain the old API.
 
 ## Ownership boundaries
 
@@ -66,20 +65,15 @@ not the underlying TCP or QUIC transport. Normal sibling HTTP requests
 remain active. A successor is a raw input consumer returned from the
 application's `on_handoff` callback. See `docs/CONNECT.md` for contracts.
 
-## Shutdown, correctness and performance gates
+## Shutdown and validation
 
 `Server->close` stops admission; `shutdown(grace => 30, on_complete => sub ($server) { ... })` drains and releases owned transports. The Client
 delegates pooling and operation lifecycle to Unblock. Both native and Perl
 input paths run the same rebuilt regression contract in `t/rebuild/`.
 
-The Stage B HTTP1 throughput gate remains open: the rebuilt native path
-has not reached the original baseline under paired real-socket testing.
-Stage C HTTP2 strict h2spec conformance is verified on the repaired
-Unblock::HTTP2 0.13 engine: all 147 cases pass on standalone and
-Linux::Event native/Perl input paths without skips. This does not
-close the independent Stage B HTTP1 throughput release gate.
-Do not bypass Uniform canonical validation, cache response objects behind
-applications or change Unblock for a Linux::Event-only performance benefit.
-The approved plan, measurements and current restrictions are recorded in
-`docs/UNBLOCK-REBUILD-PLAN.md`, `docs/UNBLOCK-REBUILD-STATUS.md` and
-`handoff.md`.
+HTTP/2 h2spec conformance is verified on Unblock::HTTP2 0.13: all 147
+cases pass on the standalone engine and Linux::Event native/Perl paths.
+HTTP/1 real-socket benchmarking documents a performance trade-off versus
+the prior specialized server; see `docs/BENCHMARKING.md`. Correctness,
+message ownership and backpressure remain required. Do not bypass
+Uniform validation or add Linux::Event-specific behavior to Unblock.
