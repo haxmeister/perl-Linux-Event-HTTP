@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        if: matrix.perl == '5' && matrix.multi_thread == false
+        if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         with:
           repository: haxmeister/perl-Linux-Event-HTTP
           ref: c0bf714e0f08f9031684e2eb4fd70dea3c68449f
@@ -66,8 +66,8 @@ jobs:
           perl -Mblib bench/run-rebuild-client.pl --requests 100 --warmup 10 --repeats 1
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role server
           perl bench/run-unblock-retention.pl --requests 4 --body-bytes 4096 --role client
-      - name: Stage B matched legacy/rebuild HTTP1 socket gate
-        if: matrix.perl == '5' && matrix.multi_thread == false
+      - name: Stage B matched legacy/rebuild HTTP1 socket diagnostic
+        if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         run: |
           (cd .ci-deps/http-baseline && perl Makefile.PL && make -j2)
           for variant in legacy rebuild rebuild legacy; do
@@ -79,7 +79,7 @@ jobs:
             fi
           done
       - name: Stage B constructor versus engine cost decomposition
-        if: matrix.perl == '5' && matrix.multi_thread == false
+        if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         run: |
           perl -Mblib bench/run-unblock-cost-breakdown.pl --iterations 12000 --rounds 3
           for input in native perl native perl; do
@@ -91,7 +91,7 @@ jobs:
             fi
           done
       - name: Stage B diagnostic constructor upper bound on real sockets
-        if: matrix.perl == '5' && matrix.multi_thread == false
+        if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         run: |
           for variant in fresh prebuilt prebuilt fresh; do
             echo "Stage B identical TCP response data: $variant"
@@ -102,7 +102,7 @@ jobs:
             fi
           done
       - name: Stage B isolated engine and socket profiles (diagnostic)
-        if: matrix.perl == '5' && matrix.multi_thread == false
+        if: github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         run: |
           cpanm --notest 'Devel::NYTProf@6.16'
           mkdir -p "$RUNNER_TEMP/http1-profiles"
@@ -113,7 +113,7 @@ jobs:
             perl tools/http1-profile-summary.pl "$profile" 5000 "$profile.json"
           done
       - name: Preserve CPU profile evidence
-        if: always() && matrix.perl == '5' && matrix.multi_thread == false
+        if: always() && github.event_name == 'workflow_dispatch' && matrix.perl == '5' && matrix.multi_thread == false
         uses: actions/upload-artifact@v4
         with:
           name: stage-b-published-cpu-profiles
