@@ -1,5 +1,69 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-26
 
+## FINALIZATION DECISION - 2026-10-27
+
+Maintainer wants to END the Linux::Event::HTTP rebuild rather than keep
+working indefinitely on HTTP1 throughput or producing frequent Unblock
+releases. Optimizations may not cost API stability, framework neutrality,
+simplicity or capability. Linux::Event core, not HTTP protocol engines, is
+the intended long-term optimization focus. This instruction supersedes
+historical handoff entries demanding legacy HTTP1 requests/second parity.
+
+What is already verified, not merely planned:
+- Published-stack root rebuild full CI, latest seven Perl lanes PASS:
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40615275062
+  The optional H2/H3/QUIC/WebSocket suites, native/portable H1 paths and
+  source package/disttest have passed in the published-stack matrix.
+- Strict HTTP2 conformance: standalone, rebuilt native, rebuilt portable,
+  standalone-repeat each 147/147 h2spec PASS, zero skips/errors:
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40264404647
+- HTTP3 and QUIC were actually exercised over real TLS/QUIC in root tests.
+  Separately Unblock::HTTP3 benchmarks real QUIC one-process/split-process
+  loopback and upper Unblock::HTTP performs 20-case, repeated real-QUIC
+  client/direct performance sweeps:
+  https://github.com/haxmeister/perl-Unblock-HTTP/actions/runs/39269889496
+- WebSocket standalone engines have actual native/Perl framing message-rate
+  benchmarks and Linux::Event::WebSocket tested 20-1000 concurrent clients,
+  windowed traffic and HTTP Upgrade. Current root verifies H1/H2/H3
+  WebSocket and generic handoff correctness. There is no direct performance
+  parity benchmark of *every* new root protocol against the legacy project;
+  don't misrepresent correctness tests as those measurements.
+- The API-neutral Unblock::HTTP1 optimization branch
+  feature/http1-internal-hotpath at b162f600b440a1cd03e18859d7c76ac322ed7e76
+  measured roughly 8-16% real-socket throughput improvement, but is
+  NOT released/merged and is NOT necessary to treat this root reconstruction
+  as functionally complete. It remains a separate maintainer decision.
+  Reject/keep on hold the earlier feature/completion-only-callback public
+  callback-contract experiment; user expressly objected to an unapproved
+  public API change and its socket benefit was marginal.
+
+Updated docs/UNBLOCK-REBUILD-PLAN.md: Stage B is now a **measured
+performance trade-off**, not an indefinitely open numerical throughput gate.
+Published dependencies work; no new API proposals, parser rewrites,
+performance campaigns or upstream changes are needed without an actual
+correctness/resource blocker.
+
+Finite remaining steps (do these once, not open-ended research):
+1. Audit final feature branch vs main for public API, docs/POD, MANIFEST,
+   Changes, metadata, optional dependency guards and version; focus on
+   actual discrepancies rather than rewriting architecture.
+2. Verify one final current-branch cross-Perl CI/disttest and optional
+   protocol gates. Strict h2spec already passed; rerun only if relevant
+   protocol code or dependencies change.
+3. If no real correctness, resource, packaging or API issue, declare
+   release-ready and request maintainer authorization before any main
+   merge, version bump, tag, or CPAN release. Do not force an extra Unblock
+   release as a prerequisite.
+4. After the authorized release, stop work on HTTP unless bugs are
+   reported. No more broad performance campaigns just to push the
+   standalone HTTP1 number higher.
+
+No production code changed for this finalization decision.
+The only changes here are on root feature/unblock-http-rebuild documentation.
+Root main and every upstream main remain untouched.
+
+---
+
 ## API-neutral HTTP1 native lifecycle rounds - 2026-10-27
 
 User explicitly authorized a FEW feature-branch rounds after comparing
