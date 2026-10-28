@@ -18,7 +18,8 @@ The same harness accepts `--no-native-input` to compare the Perl path.
 For historical performance, compare with the original 0.003 source (commit
 `c0bf714e0f08f9031684e2eb4fd70dea3c68449f`) on the same runner,
 using its `bench/run-http-end-to-end.pl`.
-The rebuild CI performs a legacy/rebuild/rebuild/legacy sequence.
+A manually dispatched CI run can perform a legacy/rebuild/rebuild/legacy
+sequence. Ordinary push CI focuses on correctness and packaging.
 
 The new client benchmark is `bench/run-rebuild-client.pl`.
 `bench/run-unblock-engine.pl` isolates the protocol engine without
