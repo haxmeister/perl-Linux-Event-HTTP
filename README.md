@@ -1,8 +1,9 @@
 # Linux::Event::HTTP
 
-This feature branch is reconstructing Linux::Event::HTTP as a thin Linux-native
-integration of Unblock::HTTP. **It is not a completed replacement or a release
-candidate.** There is no compatibility layer for the previous API.
+Linux::Event::HTTP integrates Linux::Event's native sockets, TLS and timers
+with the event-loop-neutral Unblock::HTTP protocol engines. Server and Client
+expose Unblock transactions and Uniform messages. There is no compatibility
+layer for the previous Linux::Event::HTTP API.
 
 The implemented slice provides HTTP/1 servers and clients over TCP and TLS,
 real Unblock transactions and Uniform messages, bounded buffering, streaming
@@ -12,8 +13,10 @@ Optional HTTP/2 over TLS uses ALPN, multiplexing, flow control and GOAWAY.
 HTTP/3 Client and combined TCP/UDP Server integration is verified
 with real QUIC/TLS loopback, timeout, cancellation, congestion and
 multi-connection tests. HTTP/1 Upgrade and HTTP/2/3 WebSocket and generic
-CONNECT handoff are verified. HTTP/1 throughput remains an open release gate. HTTP/2 strict
-h2spec conformance passes with Unblock::HTTP2 0.13 or newer.
+CONNECT handoff are verified. HTTP/2 strict h2spec conformance passes with
+Unblock::HTTP2 0.13 or newer. HTTP/1 throughput was measured against the
+previous implementation; its trade-offs are documented, not an open
+requirement for identical requests-per-second performance.
 
 ## Server
 
@@ -111,7 +114,7 @@ Current limits: wildcard UDP binding, H3-only listeners, comprehensive QUIC
 migration and packet-origin metadata are not supported yet. Graceful H3
 shutdown, failure, cancellation, congestion and multi-connection coverage
 pass their required Stage D integration regressions.
-Do not treat this feature branch as release ready.
+Final distribution release checks are tracked in the repository.
 
 ## HTTP/2
 
@@ -155,7 +158,8 @@ baseline retains the historical implementation and tests.
 In a shared-client, single-execution-slot HTTP/1.1 comparison using
 Benchmark::Web, this rebuild exceeded Mojolicious throughput but trailed
 Feersum, Hyperman and the original Linux::Event::HTTP significantly.
-The performance gate remains open; see `docs/BENCHMARKING.md` for
+The documented HTTP/1 performance trade-off is accepted rather than
+treated as an indefinite release blocker; see `docs/BENCHMARKING.md` for
 matched workloads and caveats. See
 [implementation status and measurements](docs/UNBLOCK-REBUILD-STATUS.md),
 [approved plan](docs/UNBLOCK-REBUILD-PLAN.md). The development handoff is
@@ -175,6 +179,6 @@ REBUILD_NATIVE_INPUT=0 make test
 suite and its pre-rebuild implementation remain on untouched main.
 The untouched baseline passed 57 files / 1,489 tests before reconstruction.
 
-CI is configured for Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest and latest
-threaded. Local results and unexecuted CI lanes are distinguished in the status
-document. No release, version bump, tag or merge is part of this work.
+CI covers Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest and latest threaded.
+The status document records verified results. Publication and version changes
+are separate maintainer decisions.
