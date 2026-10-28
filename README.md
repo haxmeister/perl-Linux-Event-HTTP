@@ -5,7 +5,7 @@ with the event-loop-neutral Unblock::HTTP protocol engines. Server and Client
 expose Unblock transactions and Uniform messages. There is no compatibility
 layer for the previous Linux::Event::HTTP API.
 
-The implemented slice provides HTTP/1 servers and clients over TCP and TLS,
+The distribution provides HTTP/1 servers and clients over TCP and TLS,
 real Unblock transactions and Uniform messages, bounded buffering, streaming
 reception/responses, pooling, cancellation, timers and native borrowed input.
 Queued streaming uploads and graceful HTTP/1 service shutdown are implemented.
@@ -114,7 +114,7 @@ Current limits: wildcard UDP binding, H3-only listeners, comprehensive QUIC
 migration and packet-origin metadata are not supported yet. Graceful H3
 shutdown, failure, cancellation, congestion and multi-connection coverage
 pass their required Stage D integration regressions.
-Final distribution release checks are tracked in the repository.
+See the release notes for supported features and current limitations.
 
 ## HTTP/2
 
@@ -152,8 +152,8 @@ Server construction also checks HTTP1's graceful drain capability before
 binding a listener. HTTP::CookieJar and Uniform::HTTP::Auth are not direct
 dependencies of this integration layer.
 The superseded private HTTP parsers, executors and public Request/Response
-wrappers have been removed from this feature branch; the untouched main
-baseline retains the historical implementation and tests.
+wrappers have been removed. The earlier implementation remains available
+from the 0.003 release.
 
 In a shared-client, single-execution-slot HTTP/1.1 comparison using
 Benchmark::Web, this rebuild exceeded Mojolicious throughput but trailed
@@ -161,9 +161,9 @@ Feersum, Hyperman and the original Linux::Event::HTTP significantly.
 The documented HTTP/1 performance trade-off is accepted rather than
 treated as an indefinite release blocker; see `docs/BENCHMARKING.md` for
 matched workloads and caveats. See
-[implementation status and measurements](docs/UNBLOCK-REBUILD-STATUS.md),
-[approved plan](docs/UNBLOCK-REBUILD-PLAN.md). The development handoff is
-tracked in the Git repository, not in the packaged distribution.
+[release notes](docs/RELEASE-0.004.md) and [architecture](docs/ARCHITECTURE.md)
+provide the supported contract. Internal development handoffs are kept
+in Git, not in the packaged distribution.
 
 ## Development checks
 
@@ -174,11 +174,9 @@ make test
 REBUILD_NATIVE_INPUT=0 make test
 ```
 
-`make test` runs `t/rebuild/*.t`, the new contract's suite. The old
-`t/*.t` suite has been removed from this feature branch; the complete old
-suite and its pre-rebuild implementation remain on untouched main.
-The untouched baseline passed 57 files / 1,489 tests before reconstruction.
+`make test` runs `t/rebuild/*.t`, the new API contract's suite. The prior
+implementation and its tests are preserved in the 0.003 release.
 
 CI covers Perl 5.36, 5.38, 5.40, 5.42, 5.44, latest and latest threaded.
-The status document records verified results. Publication and version changes
-are separate maintainer decisions.
+The release notes describe the tested scope. GitHub and CPAN publication
+are separate maintainer actions.
