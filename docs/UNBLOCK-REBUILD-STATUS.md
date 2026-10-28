@@ -1,5 +1,53 @@
 # Reconstruction implementation checkpoint
 
+## Finalization scope and measured protocol coverage (2026-10-27)
+
+The maintainer has ended open-ended HTTP optimization as a release gate.
+The reconstructed HTTP1 server's lower throughput versus the original is
+measured and accepted as a documented engineering trade-off. This does
+not waive correctness, response lifecycle, bounded buffering, backpressure
+or event-loop responsiveness. No new Unblock public API or native ABI changes
+are authorized for marginal optimizations. See handoff.md for the bounded
+remaining release-audit checklist.
+
+Published-dependency reconstruction tests have passed all seven supported
+Perl CI jobs (https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40615275062),
+with full optional HTTP2/HTTP3/QUIC/WebSocket exercises, packaged disttest,
+and native/portable HTTP1. Independent strict h2spec parity passed 147/147
+in four configurations (40264404647). These are correctness results.
+
+Actual performance evidence is broader than HTTP1:
+- Unblock::HTTP2 has native/portable transport and fastpath microbenchmarks;
+  historical repair control measured about 16k in-memory exchanges/second
+  with differences -0.16% portable, -2.29% native before the final update.
+  This is not a current network-throughput baseline.
+- Unblock::HTTP3 performs real TLS/QUIC loopback benchmarks and the upper
+  Unblock::HTTP project ran two complete, 20-scenario, 7-paired-round
+  direct-versus-unified real-QUIC Client sweeps (39269889496). At 16/32
+  inflight, small 1-KiB requests often showed similar wall times,
+  whereas some 4/16-KiB scenarios were ~4-8% slower through the facade.
+  Shared-runner outcomes vary; no additional sweep is required.
+- Unblock::WebSocket benchmarked native/Perl frame paths with and without
+  permessage-deflate. Linux::Event::WebSocket separately benchmarked real
+  app traffic at 20, 100, 500 and 1000 concurrent connections and
+  request-window depths 1, 4, and 16. The root reconstruction verifies
+  WebSocket handshake/handoff and multiplex behavior across H1/H2/H3.
+- Net::QUIC retains an independent protocol-engine benchmark tool and
+  real, HTTP-independent multi-stream/flow-credit tests. Do not claim
+  a standalone end-to-end performance figure without the archived run.
+- There is no matched standalone-vs-reconstructed real socket throughput
+  baseline for each of H2/H3/WebSocket/QUIC. Neither fake such a metric
+  nor make collecting it a new automatic release prerequisite.
+
+An API-neutral Unblock::HTTP1 feature branch with roughly 8-16% higher
+same-runner HTTP1 socket throughput is optional and not on main.
+The separate completion-only callback public-API experiment remains
+unapproved and must not be merged.
+
+The remaining gate is one focused release audit of source, docs, optional
+dependency metadata, final CI and distribution packaging. Main, releases,
+version numbers and upstream distributions require maintainer approval.
+
 ## Profiling checkpoint published and verified (2026-10-26)
 
 Published source: 05be1b2bc09a7848956489e772d5929273ee7581.
