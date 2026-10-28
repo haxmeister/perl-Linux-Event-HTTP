@@ -48,7 +48,7 @@ jobs:
       - name: Confirm native internal candidate and unchanged public Unblock facade
         run: |
           set -euo pipefail
-          export PERL5LIB="$PWD/$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          export PERL5LIB="$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
           perl -MUnblock::HTTP::Server -MUnblock::HTTP1::Server -e '
             for my $module (qw(Unblock/HTTP1/Server.pm)) {
               print "$module: $INC{$module}\n";
@@ -59,14 +59,14 @@ jobs:
       - name: Validate candidate HTTP1 against Linux Event reconstruction
         run: |
           set -euo pipefail
-          export PERL5LIB="$PWD/$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          export PERL5LIB="$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
           make test
           REBUILD_NATIVE_INPUT=0 make test
 
       - name: Independent native and portable engine CPU controls
         run: |
           set -euo pipefail
-          trial_lib="$PWD/$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          trial_lib="$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
           for input in native portable; do
             for stack in released trial trial released; do
               echo "STAGE B ENGINE INPUT $input STACK $stack"
@@ -83,7 +83,7 @@ jobs:
       - name: Paired socket throughput published versus internal hotpath
         run: |
           set -euo pipefail
-          trial_lib="$PWD/$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
+          trial_lib="$PWD/.ci-deps/http1-trial/blib/lib:$PWD/.ci-deps/http1-trial/blib/arch"
           for stack in released trial trial released; do
             echo "STAGE B SOCKET STACK $stack"
             if [ "$stack" = released ]; then
