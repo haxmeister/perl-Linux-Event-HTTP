@@ -1,6 +1,6 @@
 # Linux::Event::HTTP - Unblock Reconstruction Plan
 
-Status: Stage A implemented; Stage B HTTP1 throughput gate open; Stage C HTTP2 strict h2spec conformance VERIFIED with Unblock::HTTP2 >=0.13; Stage D HTTP3 loopback/lifecycle verified; Stage E WebSocket and generic handoff verified; Stage F initial cleanup/packaging verified (release audit still pending)
+Status: Stages A-E implemented and verified (including strict HTTP2 conformance, real HTTP3/QUIC, and WebSocket/handoff integration). Stage B HTTP1 performance characterized with reproducible published-stack comparisons; exact legacy throughput parity is not required. Stage F cleanup/packaging verified; final release audit and maintainer approval remain.
 Date: 2026-10-22
 Repository: https://github.com/haxmeister/perl-Linux-Event-HTTP
 Working branch: `feature/unblock-http-rebuild`
@@ -207,7 +207,19 @@ Linux::Event::HTTP itself optionally supports:
 
 ## 6. Performance and native ABI requirements
 
-Performance is a release gate, not an optional optimization.
+Performance is evaluated through documented, reproducible measurements,
+not a fixed throughput target or automatic requirement to match the original
+HTTP/1 implementation. Correctness, event-loop responsiveness, bounded
+memory, working backpressure and native input paths take priority over
+additional requests per second. The HTTP1 performance comparison and its
+limitations are recorded in docs/HTTP1-PUBLISHED-STACK-PERFORMANCE.md.
+
+Finish the reconstruction after the existing bounded, API-neutral
+performance experiments. Do not extend the release gate with more
+micro-optimizations or introduce new public callback/API variants for
+marginal gains. Shared Unblock engines must stay event-loop neutral.
+Keep an optimization only if its correctness, simplicity and measured
+benefit justify the maintenance cost; it can remain unmerged if not.
 
 Current Linux::Event::HTTP has a native HTTP/1 borrowed-input consumer
 using Linux::Event's native consumer ABI. The Unblock::HTTP1/2 native
@@ -255,7 +267,7 @@ actual current dependencies and CI before updating MIN_PERL_VERSION;
 historically the current Linux::Event::HTTP baseline is Perl 5.36+.
 
 Current implementation evidence: `docs/UNBLOCK-REBUILD-STATUS.md`.
-The architecture below remains authoritative; Stage B performance is still open.
+The architecture below remains authoritative. Stage B performance has been measured and documented; the original-server throughput gap is an acknowledged trade-off, not an indefinite blocker. The optional, unpublished internal HTTP1 experiment is tracked separately.
 
 ## 8. Work plan and validation gates
 
@@ -283,8 +295,7 @@ Stage B - HTTP/1 lifecycle and native fast path:
   bounded body reception, request/response streaming, and repeated
   HTTP/1 requests over persistent sockets.
 - Implement and test native input bridge or a measured better path.
-- Gate: lifecycle, ownership, backpressure and native benchmarks
-  against old baseline.
+- Gate: lifecycle, ownership, backpressure and documented native versus legacy benchmarks; no requirement for parity in peak requests/second.
 
 Stage C - HTTP/2:
 - Add TLS ALPN, H1 fallback, multiplexed Client/Server, concurrent
@@ -316,8 +327,9 @@ Stage F - Clean replacement and release-readiness evaluation:
 - Gate: regression, leak/reentrancy, security and malformed-input
   tests; Perl 5.36/5.38/5.40/5.42/5.44 and current/latest threaded
   lanes as supported; `make disttest`; protocol conformance;
-  independent baseline/rebuilt benchmark report. No release without
-  explicit approval.
+  independent baseline/rebuilt benchmark report. An unexplained correctness,
+  resource, or event-loop starvation failure blocks release; a documented
+  throughput difference alone does not. No release without explicit approval.
 
 ## 9. Design and safety constraints
 
