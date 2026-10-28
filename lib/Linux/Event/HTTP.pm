@@ -3,7 +3,7 @@ use v5.36;
 use strict;
 use warnings;
 
-our $VERSION = '0.003';
+our $VERSION = '0.004';
 
 1;
 
@@ -43,8 +43,7 @@ The native HTTP/1 input bridge is implemented. Measured HTTP/1 throughput
 differs from the former implementation; this is a documented trade-off,
 not a change in protocol capability.
 
-See L<Linux::Event::HTTP::Server>, L<Linux::Event::HTTP::Client> and the
-repository's F<docs/UNBLOCK-REBUILD-STATUS.md> for current implementation and
-verification. No web framework or user-agent policy is provided.
+See L<Linux::Event::HTTP::Server> and L<Linux::Event::HTTP::Client>
+for the application API. No web framework or user-agent policy is provided.
 
 =cut
