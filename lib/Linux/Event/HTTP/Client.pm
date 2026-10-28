@@ -7,7 +7,7 @@ use Linux::Event::Kernel::Timer;
 use Carp qw(croak);
 use Scalar::Util qw(weaken refaddr);
 
-our $VERSION = '0.003';
+our $VERSION = '0.004';
 
 sub new ($class, %option) {
     my $loop = delete $option{loop};
