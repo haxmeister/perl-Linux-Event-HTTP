@@ -12,7 +12,7 @@ GOAWAY, flow control, concurrent streams and stream cancellation.
 protocol selection and lifecycle. The application receives real Unblock
 Transactions and Uniform Request/Response messages. The old
 `Linux::Event::HTTP::_HTTP2` executors and custom message wrappers have
-been deleted from this branch.
+been removed in version 0.004.
 
 Linux::Event::HTTP owns accepted Linux::Event TCP/TLS streams and client
 connections. Its `_Transport` attaches the selected Unblock connection,
@@ -41,5 +41,5 @@ The current runtime and optional-dependency minimum is
 `Unblock::HTTP2 >= 0.13`. Earlier results with 0.12 are historical,
 not current conformance claims.
 
-Refer to `docs/UNBLOCK-REBUILD-PLAN.md` and
-`docs/UNBLOCK-REBUILD-STATUS.md` for authoritative gates and evidence.
+See `docs/ARCHITECTURE.md` for ownership boundaries and
+`docs/RELEASE-0.004.md` for the release scope.
