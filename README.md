@@ -155,6 +155,13 @@ The superseded private HTTP parsers, executors and public Request/Response
 wrappers have been removed. The earlier implementation remains available
 from the 0.003 release.
 
+**Compatibility note:** the separate `Linux::Event::WebSocket` 0.002
+distribution uses the removed HTTP API and is not compatible with this
+release. Use the WebSocket facilities integrated through Unblock::HTTP for
+new applications. Existing `Linux::Event::WebSocket` applications should
+continue using Linux::Event::HTTP 0.003 until that separate distribution
+is updated.
+
 In a shared-client, single-execution-slot HTTP/1.1 comparison using
 Benchmark::Web, this rebuild exceeded Mojolicious throughput but trailed
 Feersum, Hyperman and the original Linux::Event::HTTP significantly.
