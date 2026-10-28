@@ -3,7 +3,7 @@ name: HTTP2 standalone versus LinuxEvent h2spec parity
 on:
   workflow_dispatch:
   push:
-    branches: [feature/unblock-http-rebuild]
+    branches: [main, feature/unblock-http-rebuild]
     paths:
       - 'Makefile.PL'
       - 'lib/Linux/Event/HTTP/**'
