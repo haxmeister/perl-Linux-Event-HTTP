@@ -25,6 +25,9 @@ Revision history for Linux-Event-HTTP
       document its additional canonical object/lifecycle cost, and
       retain the proven event-loop-neutral design without adding public
       API shortcuts or extra upstream release requirements.
+    - Note that the separate Linux::Event::WebSocket 0.002 distribution
+      depends on removed HTTP APIs and requires its own compatibility
+      update; the new built-in Unblock-based WebSocket path is supported.
 
 0.003  2026-09-26
 
