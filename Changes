@@ -32,8 +32,11 @@ UNRELEASED - feature/unblock-http-rebuild (NOT FOR CPAN)
       Validate CPAN distributions in CI instead of development engines.
     - Add isolated server/engine CPU profiles and record matched published-stack
       throughput; preserve canonical response behavior and upstream ownership.
-    - HTTP/1 throughput remains an open gate; this feature branch is
-      not yet a release candidate.
+    - Record published-stack HTTP/1 performance comparisons and independent
+      native/portable engine measurements. The documented legacy throughput
+      gap is accepted as a trade-off, not a standing requirement to rework
+      upstream public interfaces or postpone release indefinitely.
+      The final release audit and explicit maintainer approval are pending.
 
 
 0.003  2026-09-26
