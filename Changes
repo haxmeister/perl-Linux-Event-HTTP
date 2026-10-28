@@ -1,43 +1,30 @@
 Revision history for Linux-Event-HTTP
 
-UNRELEASED - feature/unblock-http-rebuild (NOT FOR CPAN)
+0.004  2026-10-27
 
-    - Reconstruct Linux::Event::HTTP as native Linux transport integration
-      for Unblock::HTTP, exposing Unblock transactions and Uniform messages.
-    - Support HTTP/1, optional HTTP/2 (TLS ALPN), optional HTTP/3 (QUIC/TLS),
-      WebSocket transitions and generic Upgrade/Extended CONNECT handoff.
-    - Retain the checked XS borrowed-input ABI adapter for HTTP/1 and HTTP/2.
-    - Remove the previous private parsers, HTTP/2 executors, public wrappers,
-      obsolete tests and benchmark executables. No compatibility API exists.
-    - Remove unused top-level CookieJar, Auth and URI direct prerequisites;
-      protocol-engine dependencies are owned by Unblock and remain required
-      transitively where applicable.
-    - Verify reconstructed distribution packaging with make disttest.
-    - Strict HTTP/2 h2spec conformance passes all 147 cases on the
-      repaired Unblock::HTTP2 0.13 engine, with standalone, LinuxEvent
-      native input, and LinuxEvent Perl input parity; no skips.
-    - Require Unblock::HTTP2 >= 0.13 for optional HTTP/2 so older
-      0.12 protocol errors are not advertised as passing conformance.
-    - Independently compare HTTP/1 throughput with Feersum, Hyperman and
-      Mojolicious through Benchmark::Web's shared client; retain the data
-      and development adapters in Git rather than in CPAN artifacts.
-    - Correct stale HTTP/2 conformance documentation, and exclude 33
-      historical benchmark JSON files plus an internal handoff prompt
-      from the source distribution while preserving them in Git.
-    - Reject an installed Unblock::HTTP1 lacking the required graceful
-      drain API at Server construction, including mixed installations.
-      Add a regression proving rejection occurs before socket binding.
-    - Require published Unblock::HTTP 0.03 and HTTP1 0.13, with optional
-      HTTP2 0.13 and HTTP3 0.14; retain optional QUIC/WebSocket policy.
-      Validate CPAN distributions in CI instead of development engines.
-    - Add isolated server/engine CPU profiles and record matched published-stack
-      throughput; preserve canonical response behavior and upstream ownership.
-    - Record published-stack HTTP/1 performance comparisons and independent
-      native/portable engine measurements. The documented legacy throughput
-      gap is accepted as a trade-off, not a standing requirement to rework
-      upstream public interfaces or postpone release indefinitely.
-      The final release audit and explicit maintainer approval are pending.
-
+    - Rebuild Linux::Event::HTTP as a thin Linux-native integration of
+      Unblock::HTTP. This is an incompatible API replacement; previous
+      Linux::Event::HTTP Request, Response, Transaction, and connection
+      wrappers have been removed, without compatibility aliases.
+    - Use canonical Uniform::HTTP messages and real Unblock transactions.
+      Support HTTP/1 over TCP/TLS, optional HTTP/2 with TLS ALPN and
+      multiplexing, and optional HTTP/3 through Net::QUIC and TLS.
+    - Provide Server and Client APIs for full-body and streaming
+      operations, pooling, cancellation, backpressure, bounded receive,
+      graceful shutdown, and TLS hostname verification.
+    - Support HTTP/1 socket-wide Upgrade/CONNECT, WebSocket transitions,
+      and HTTP/2 and HTTP/3 stream-local Extended CONNECT and WebSocket.
+    - Bridge Linux::Event borrowed native input to the separate HTTP/1
+      and HTTP/2 engine ABIs without duplicating the protocol parsers.
+    - Require published Unblock::HTTP 0.03, Unblock::HTTP1 0.13,
+      Uniform::HTTP 0.06 and Linux::Event 0.117. Keep HTTP/2,
+      HTTP/3/Net::QUIC, and WebSocket engines optional.
+    - Verify strict HTTP/2 h2spec 147/147 parity, real QUIC/TLS
+      loopbacks, WebSocket handoff, cross-Perl tests and disttest.
+    - Measure HTTP/1 throughput against the original implementation,
+      document its additional canonical object/lifecycle cost, and
+      retain the proven event-loop-neutral design without adding public
+      API shortcuts or extra upstream release requirements.
 
 0.003  2026-09-26
 
