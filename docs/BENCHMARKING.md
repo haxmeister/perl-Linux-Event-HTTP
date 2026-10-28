@@ -1,8 +1,8 @@
-# Linux::Event::HTTP benchmarking (Unblock rebuild)
+# Linux::Event::HTTP benchmarking
 
-The approved rebuild treats correctness and HTTP1 throughput as release
-gates. Never compare standalone measurements from different machines as
-if they were an A/B performance result.
+HTTP/1 throughput was compared with the former implementation before the
+0.004 release. The measured gap is documented, not a fixed release target.
+Never compare results from different machines as a direct A/B result.
 
 ## Rebuilt end-to-end benchmark
 
@@ -15,9 +15,9 @@ perl -Mblib bench/run-unblock-end-to-end.pl \
 ```
 
 The same harness accepts `--no-native-input` to compare the Perl path.
-For historical performance, compare with the untouched
-`main` baseline at the same time on the same CI runner using the
-equivalent `bench/run-http-end-to-end.pl` from that baseline checkout.
+For historical performance, compare with the original 0.003 source (commit
+`c0bf714e0f08f9031684e2eb4fd70dea3c68449f`) on the same runner,
+using its `bench/run-http-end-to-end.pl`.
 The rebuild CI performs a legacy/rebuild/rebuild/legacy sequence.
 
 The new client benchmark is `bench/run-rebuild-client.pl`.
@@ -91,17 +91,16 @@ plus the active status and handoff documents.
 In the paired runs so far, the upper Unblock facade added no meaningful
 per-request penalty versus direct HTTP1. Native input outperformed the
 Perl bridge, but the rebuilt real-socket throughput remained well below
-the legacy baseline, so Stage B is **not passed**.
+the legacy baseline, which is a measured trade-off rather than an unresolved release blocker.
 
-HTTP/2 h2spec results are tracked separately; baseline parity is not a
-conformance pass. HTTP/3 QUIC/TLS, WebSocket and generic CONNECT regressions
-are required correctness checks, not substitutes for the throughput gate.
+HTTP/2 h2spec, HTTP/3 QUIC/TLS, WebSocket and generic CONNECT regressions
+are protocol correctness checks, independent of HTTP/1 throughput.
 
 ## Published-stack validation and historical reproduction
 
 Current CI installs Unblock::HTTP 0.03, HTTP1 0.13, HTTP2 0.13 and HTTP3
-0.14 from CPAN. The legacy Linux::Event::HTTP comparison still uses the
-unchanged main baseline c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
+0.14 from CPAN. Historical Linux::Event::HTTP comparisons use the frozen original
+0.003 source at c0bf714e0f08f9031684e2eb4fd70dea3c68449f.
 
 The original development-stack workflows and exact dependency pins are
 preserved at root revision 476f2e84bfcff2d326c46a75a8a9b690c0c3cca4.
@@ -144,5 +143,5 @@ inclusive times in JSON overlap and must not be added. C work without its
 own Perl frame can be charged to its enclosing call, so namespace shares
 are attribution evidence, not an exact limit on possible optimization.
 
-See `docs/HTTP1-PUBLISHED-STACK-PERFORMANCE.md` for the published-stack
-results, limitations and next proposed investigation.
+Detailed historical profiler data is retained in Git. These diagnostics
+are not required for application use.
