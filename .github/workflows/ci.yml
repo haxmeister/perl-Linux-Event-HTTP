@@ -1,8 +1,8 @@
-name: Unblock reconstruction
+name: Linux::Event::HTTP CI
 
 on:
   push:
-    branches: [feature/unblock-http-rebuild]
+    branches: [main, feature/unblock-http-rebuild]
   pull_request:
   workflow_dispatch:
 
