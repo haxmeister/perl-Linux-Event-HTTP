@@ -1,5 +1,71 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-26
 
+## RELEASE-PREPARED 0.004 ON MAIN - 2026-10-27
+
+Maintainer explicitly authorized updating main and preparing the rebuilt
+Linux::Event::HTTP for release. Main was fast-forwarded (no force push)
+from the former 0.003 source baseline
+c0bf714e0f08f9031684e2eb4fd70dea3c68449f
+to the rebuilt 0.004 source
+ee962658dc2c2129d873f9805b790c56a6a6a89e.
+This is an intentional breaking public API replacement. **Do not**
+merge previous completion-only callback experiments or pull in
+unreleased Unblock/Uniform optimization branches.
+
+All three public modules now declare 0.004. Makefile.PL derives its
+version and all indexed provides from HTTP.pm. The child XSBridge
+Makefile also derives that same version. Changes, README, Server/Client
+POD, docs/ARCHITECTURE.md, docs/BENCHMARKING.md and
+docs/RELEASE-0.004.md describe the shipping API and limits.
+The public MANIFEST includes the runtime Perl and XS sources,
+both native ABI headers, all rebuilt tests and public docs;
+MANIFEST.SKIP excludes CI, historic benchmarks, internal plans,
+handoffs and protocol-defect investigation records. The final
+feature-run build and distribution tests passed; regular CI tests
+all supported Perl versions and optional engines. Stage B
+cost diagnostics are manual-only, not ongoing performance gates.
+
+On the final feature source before main merge:
+- Cross-Perl CI: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40620197555
+  all 7 jobs PASS, full native/portable and optional protocols, disttest.
+- h2spec parity: https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40620197645
+  PASS, standalone and rebuilt HTTP2 native and Perl input.
+- After main fast-forward, verification:
+  https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40620703951
+  and https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40620703901
+  must be checked for final results before claiming fully green main.
+  The main-only changes since validated feature version are
+  release-note documentation and manualizing Stage B diagnostics,
+  not protocol code.
+
+DEPENDENCY RELEASE AUDIT:
+Unblock::HTTP1 main==v0.13, HTTP2 main==v0.13,
+HTTP3 main==v0.14, Unblock::HTTP main==v0.03,
+Unblock::WebSocket main==v0.02, Net::QUIC main==v0.06,
+Uniform::HTTP main==v0.06. All these are published on
+GitHub and CPAN; **no additional upstream release** is required.
+Linux::Event core v0.117 tag has only documentation/handoff
+commits afterward; no core release needed.
+
+**Important reverse dependency:** separately published
+Linux::Event::WebSocket 0.002 still uses the removed
+Linux::Event::HTTP::Request and connection_class APIs and therefore
+cannot run with Linux::Event::HTTP 0.004. Its 0.002 sources have
+already appeared on CPAN; GitHub latest Release record remains
+v0.001. It requires a separate compatibility decision/update if
+maintaining that legacy WebSocket distribution. The new
+Linux::Event::HTTP integrates Unblock::WebSocket and needs no
+legacy package. README, Changes and RELEASE notes explicitly
+warn about incompatibility. No other repository was modified.
+
+The maintainer has NOT authorized tagging, GitHub release creation,
+CPAN upload or further upstream edits by this task. Main is pushed
+and release preparation is completed, subject to final CI
+confirmation. Return to Linux::Event core rather than reopen
+performance investigations; only fix concrete bugs.
+
+---
+
 ## FINALIZATION DECISION - 2026-10-27
 
 Maintainer wants to END the Linux::Event::HTTP rebuild rather than keep
