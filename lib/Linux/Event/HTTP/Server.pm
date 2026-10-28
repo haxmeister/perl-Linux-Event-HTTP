@@ -8,7 +8,7 @@ use Linux::Event::Kernel::Timer;
 use Linux::Event::HTTP::_Config;
 use Linux::Event::HTTP::_Stream;
 
-our $VERSION = '0.003';
+our $VERSION = '0.004';
 
 sub new ($class, %option) {
     my $loop = delete $option{loop};
