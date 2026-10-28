@@ -1,5 +1,78 @@
 # ACTIVE REBUILD HANDOFF - 2026-10-26
 
+## API-neutral HTTP1 native lifecycle rounds - 2026-10-27
+
+User explicitly authorized a FEW feature-branch rounds after comparing
+original Linux::Event::HTTP to the standalone engine, but objected to
+the prior unapproved public callback API change. Therefore we created
+fresh independent Unblock::HTTP1 branch **feature/http1-internal-hotpath**
+based on released main 16acac763ad2f158c4c0ac91f2df3df5e6b72284.
+Previous `feature/completion-only-callback` remains isolated and was NOT
+used here. No public API, callbacks/options, native ABI, library
+dependencies, main, version bumps, tags or releases have changed.
+
+Three internal engine optimization rounds:
+1. Native complete response uses the existing fully-validated native
+   serializer and a shared private hash-shaped completed framing
+   descriptor instead of allocating generic 10-field plan per request.
+   First scalar-marker attempt failed t/56-output-ownership.t; fixed
+   at a3811a77d8b464fe140092b0c43169239f42e617 to preserve
+   the internal send_plan hash and accepted-byte ownership.
+2. Native XS response head for an already-validated headerless 200
+   is formatted in one allocation rather than repeated appends;
+   all fallback and validation rules remain untouched.
+   Source f1dab390352c61626886ec8b9caf518235340fbf.
+3. Server::_drive passes no redundant default option pairs to the
+   existing Transaction->_new. Transaction remains eagerly created
+   as required by the current API, without adding new APIs.
+   Source 33a237cde122a3a7c5829faeea1856f3006c3d41.
+
+Unblock::HTTP1 candidate cross-platform tests 4/4 PASS
+https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40615199897,
+full engine 41 files/355 tests and disttest PASS
+https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40615199907,
+framework examples PASS
+https://github.com/haxmeister/perl-Unblock-HTTP1/actions/runs/40615199918.
+
+Root feature branch only adds
+.github/workflows/stage-b-internal-hotpath.yml diagnostic workflow,
+pinning candidate source **33a237cd** and released Unblock::HTTP/
+Uniform::HTTP facade. No root production source modified.
+Root native/portable full integration tests 22 files/53 each PASS
+in https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40615275252.
+Independent engine CPU at same-runner Round3:
+native released 26.800/27.113 vs trial 25.257/25.660 us/req;
+portable released 33.872/33.165 vs trial 31.276/30.679.
+Real socket GET32 (100 persistent conns, 12k measured+1k warmup,
+two repeats each, released/trial/trial/released):
+- released throughput medians 21,783.4 and 23,115.7 req/s;
+- candidate throughput medians 24,916.5 and 25,388.0 req/s;
+- released CPU 46.654/44.146 us/req;
+- candidate CPU 41.101/40.182 us/req.
+That shows ~8-16% higher throughput in paired observations,
+~9-14% lower server CPU, yet it DOES NOT recover original-server
+~55-63k req/s in earlier local benchmarking. CPU and throughput
+across different CI runners must not be compared as direct deltas.
+
+Second-round earlier socket A/B (separate runner)
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40615109107
+PASS, published 22,944.9/23,996.5 vs trial
+25,126.2/24,819.1 req/s; 41 and 53? Exact root candidate gate
+is 22 test files/53 for BOTH native and Perl input.
+Published source 7-job CI on new root workflow:
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40615109136
+PASS. Latest
+https://github.com/haxmeister/perl-Linux-Event-HTTP/actions/runs/40615275062
+verify 7/7 before claiming final.
+
+Gates and open questions: no general ABI/API shifts, private shared
+final-plan descriptor needs careful invariant review before release,
+and benchmark evidence must be assessed vs original cost and correct
+client/server response semantics. Unblock remains independently usable,
+Uniform pure Perl, no Linux::Event-specific tuning. Stage B OPEN.
+**Do not merge, bump or release without maintainer approval.**
+
+
 ## Stage B completion-only shared callback experiment - 2026-10-26
 
 FINAL COMPLETION-ONLY CROSS-STACK VERIFICATION:
