@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: haxmeister/perl-Unblock-HTTP1
-          ref: f1dab390352c61626886ec8b9caf518235340fbf
+          ref: 33a237cde122a3a7c5829faeea1856f3006c3d41
           path: .ci-deps/http1-trial
 
       - uses: shogo82148/actions-setup-perl@v1
