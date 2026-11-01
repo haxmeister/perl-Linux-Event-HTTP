@@ -386,7 +386,15 @@ The same C<on_request> callback handles all enabled HTTP versions.
 =head1 ERRORS AND SERVER CONTROL
 
 C<on_error> reports HTTP transaction errors. C<on_listener_error>
-reports listener errors. Both are optional constructor callbacks.
+reports problems accepting connections. Both are optional options
+to C<new>:
+
+    on_error => sub ($tx, $error, @details) {
+        warn "HTTP error: $error\n";
+    },
+    on_listener_error => sub ($listener, $error) {
+        warn "Listener error: $error\n";
+    },
 
 C<host> and C<port> return the listening address and port.
 C<connection_count> returns the number of live connections.
