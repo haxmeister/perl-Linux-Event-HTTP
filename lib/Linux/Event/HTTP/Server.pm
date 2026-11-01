@@ -232,12 +232,112 @@ Linux::Event::HTTP::Server - Native Linux listener for Unblock HTTP
 
 =head1 SYNOPSIS
 
+    use v5.36;
+    use Linux::Event::Loop;
+    use Linux::Event::HTTP::Server;
+
+    my $loop = Linux::Event::Loop->new;
+
     my $server = Linux::Event::HTTP::Server->new(
-        loop => $loop, port => 8080,
-        on_request => sub ($tx, $request) {
-            $tx->respond(status => 200, body => "Hello\n");
+        loop => $loop,
+        host => '127.0.0.1',
+        port => 8080,
+        on_request => sub ($tx, $req) {
+            $tx->respond(
+                status => 200,
+                headers => [['content-type', 'text/plain']],
+                body => "Hello from Linux::Event!\n",
+            );
         },
     );
+
+    say "Listening on http://127.0.0.1:8080/";
+    $loop->run;
+
+Run this script, then visit C<http://127.0.0.1:8080/> or use
+C<curl http://127.0.0.1:8080/> from another terminal.
+
+=head1 HANDLING A REQUEST
+
+C<on_request> receives two objects:
+
+=over 4
+
+=item * C<$req> is the incoming L<Uniform::HTTP::Request>.
+
+Read C<$req-E<gt>method>, C<$req-E<gt>target>,
+C<$req-E<gt>header('name')>, and C<$req-E<gt>body>.
+
+=item * C<$tx> is the HTTP transaction.
+
+Call C<$tx-E<gt>respond(status =E<gt> 200, body =E<gt> 'text')>
+to send a response.
+
+=back
+
+To handle more than one path, inspect the request yourself:
+
+    on_request => sub ($tx, $req) {
+        if ($req->method eq 'GET' && $req->target eq '/') {
+            $tx->respond(status => 200, body => "Welcome\n");
+        }
+        elsif ($req->method eq 'POST' && $req->target eq '/echo') {
+            $tx->respond(status => 200, body => $req->body);
+        }
+        else {
+            $tx->respond(status => 404, body => "Not found\n");
+        }
+    },
+
+C<target> includes any query string. This distribution handles HTTP
+transport and messages; it is not a routing web framework.
+
+=head1 SERVER CALLBACKS
+
+C<on_request($tx, $req)> runs after the complete incoming body and
+trailers arrive successfully. For large request bodies, register
+C<on_data> inside C<on_headers>, which runs at request headers:
+
+    on_headers => sub ($tx, $req) {
+        $tx->on_data(sub ($tx, $bytes) {
+            say "Got ", length($bytes), " bytes";
+        });
+    },
+    on_request => sub ($tx, $req) {
+        $tx->respond(status => 200, body => "Received\n");
+    },
+
+Streaming does not also collect the whole request in C<$req-E<gt>body>.
+C<on_request> is not called for an unsuccessful or cancelled request.
+
+To stream an outgoing response:
+
+    $tx->respond(status => 200, stream_body => 1);
+    $tx->write("First part\n");
+    $tx->end("Last part\n");
+
+For slower producers, use C<on_drain> to resume after backpressure.
+A false C<write> return means the bytes were already accepted;
+pause sending without resending them.
+
+=head1 STOPPING A SERVER
+
+C<close> stops accepting new TCP connections. To wait for admitted
+work to finish, use C<shutdown>:
+
+    $server->shutdown(
+        grace => 30,
+        on_complete => sub ($server) { $loop->stop },
+    );
+
+The grace period is in seconds. C<on_complete> may run immediately
+if the server is already idle.
+
+=head1 FURTHER EXAMPLES
+
+See C<docs/GETTING-STARTED.md> in the distribution for full
+client/server programs, headers, HTTPS, streaming, and HTTP/2 and
+HTTP/3 setup.
 
 =head1 DESCRIPTION
 
