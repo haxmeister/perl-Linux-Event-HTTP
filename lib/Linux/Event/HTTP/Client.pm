@@ -7,7 +7,7 @@ use Linux::Event::Kernel::Timer;
 use Carp qw(croak);
 use Scalar::Util qw(weaken refaddr);
 
-our $VERSION = '0.004';
+our $VERSION = '0.005';
 
 sub new ($class, %option) {
     my $loop = delete $option{loop};
@@ -229,6 +229,12 @@ The response is a L<Uniform::HTTP::Response> object. Common methods are:
 
 HTTP 404 and 500 are valid responses, not connection errors. Check
 C<$res-E<gt>status> to decide how to handle them.
+
+Response bodies are not automatically decompressed. If you want to
+request plain content, pass C<headers =E<gt> [['accept-encoding',
+'identity']]> in the request. Servers can still send compressed
+content, so check the C<Content-Encoding> response header and
+decode the body yourself when necessary.
 
 B<By default, C<on_response> runs after the entire response body
 has arrived.> C<$res-E<gt>body> is ready to read at that point.

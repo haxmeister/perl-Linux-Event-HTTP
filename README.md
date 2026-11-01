@@ -104,7 +104,7 @@ HTTP/1.1 is enabled by default. For HTTP/2, install `Unblock::HTTP2` 0.13+ and s
 
 Linux::Event manages sockets, TLS, and timers. [Unblock::HTTP](https://metacpan.org/pod/Unblock::HTTP) manages HTTP transactions and connection pooling; [Uniform::HTTP](https://metacpan.org/pod/Uniform::HTTP) supplies request and response objects. You **do not** need to learn these internals to make ordinary HTTP requests.
 
-For more detail, see [Architecture](docs/ARCHITECTURE.md), [CONNECT handoff](docs/CONNECT.md), [Benchmarking](docs/BENCHMARKING.md), and the [0.004 release notes](docs/RELEASE-0.004.md). Version 0.004 replaced the former public API; see the release notes before migrating older applications.
+For more detail, see [Architecture](docs/ARCHITECTURE.md), [CONNECT handoff](docs/CONNECT.md), [Benchmarking](docs/BENCHMARKING.md), and the [0.005 release notes](docs/RELEASE-0.005.md). Version 0.004 replaced the former public API; see the [0.004 release notes](docs/RELEASE-0.004.md) before migrating older applications.
 
 ## Development
 

@@ -56,3 +56,4 @@ xsbridge/stream_consumer_abi.h
 MANIFEST.SKIP
 tools/http1-profile-summary.pl
 docs/RELEASE-0.004.md
+docs/RELEASE-0.005.md
