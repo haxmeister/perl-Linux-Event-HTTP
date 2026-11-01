@@ -8,15 +8,15 @@ This module handles the HTTP connection for you. You provide callbacks to receiv
 
 ## Install
 
-\`\`\`sh
+```sh
 cpanm Linux::Event::HTTP
-\`\`\`
+```
 
 ## Your first server
 
-Save as \`server.pl\`:
+Save as `server.pl`:
 
-\`\`\`perl
+```perl
 #!/usr/bin/env perl
 use v5.36;
 use Linux::Event::Loop;
@@ -40,21 +40,21 @@ my $server = Linux::Event::HTTP::Server->new(
 
 say "Listening on http://127.0.0.1:8080/";
 $loop->run;
-\`\`\`
+```
 
-Start it with \`perl server.pl\`. In another terminal, run:
+Start it with `perl server.pl`. In another terminal, run:
 
-\`\`\`sh
+```sh
 curl http://127.0.0.1:8080/
-\`\`\`
+```
 
-The \`on_request\` callback runs when the entire request has arrived. \`$req\` is the incoming request; \`$tx\` is the transaction used to reply. The server keeps running until you stop it.
+The `on_request` callback runs when the entire request has arrived. `$req` is the incoming request; `$tx` is the transaction used to reply. The server keeps running until you stop it.
 
 ## Your first client
 
-Save as \`client.pl\`:
+Save as `client.pl`:
 
-\`\`\`perl
+```perl
 #!/usr/bin/env perl
 use v5.36;
 use Linux::Event::Loop;
@@ -80,11 +80,11 @@ $client->get(
 );
 
 $loop->run;
-\`\`\`
+```
 
-Run \`perl client.pl\`. The client waits asynchronously for the server. By default, **\`on_response\` runs after the whole response body has arrived**. \`on_error\` handles connection and protocol failures. \`on_finish\` runs at the end of either outcome, so it is a convenient place to stop a one-request program.
+Run `perl client.pl`. The client waits asynchronously for the server. By default, **`on_response` runs after the whole response body has arrived**. `on_error` handles connection and protocol failures. `on_finish` runs at the end of either outcome, so it is a convenient place to stop a one-request program.
 
-An HTTP response like 404 or 500 is still an HTTP response; inspect \`$res->status\`. It is not necessarily a connection error.
+An HTTP response like 404 or 500 is still an HTTP response; inspect `$res->status`. It is not necessarily a connection error.
 
 ## Next steps
 
@@ -100,7 +100,7 @@ The public interfaces are [Client](https://metacpan.org/pod/Linux::Event::HTTP::
 
 ## Protocols and advanced features
 
-HTTP/1.1 is enabled by default. For HTTP/2, install \`Unblock::HTTP2\` 0.13+ and set \`http2 => 1\`; servers also need TLS. For HTTP/3, install \`Unblock::HTTP3\` 0.14+ and \`Net::QUIC\` 0.06+, then set \`http3 => 1\` and configure TLS. HTTP/3 servers require a concrete listener host and run alongside a TCP listener. WebSocket and CONNECT handoff are also available.
+HTTP/1.1 is enabled by default. For HTTP/2, install `Unblock::HTTP2` 0.13+ and set `http2 => 1`; servers also need TLS. For HTTP/3, install `Unblock::HTTP3` 0.14+ and `Net::QUIC` 0.06+, then set `http3 => 1` and configure TLS. HTTP/3 servers require a concrete listener host and run alongside a TCP listener. WebSocket and CONNECT handoff are also available.
 
 Linux::Event manages sockets, TLS, and timers. [Unblock::HTTP](https://metacpan.org/pod/Unblock::HTTP) manages HTTP transactions and connection pooling; [Uniform::HTTP](https://metacpan.org/pod/Uniform::HTTP) supplies request and response objects. You **do not** need to learn these internals to make ordinary HTTP requests.
 
@@ -108,8 +108,8 @@ For more detail, see [Architecture](docs/ARCHITECTURE.md), [CONNECT handoff](doc
 
 ## Development
 
-\`\`\`sh
+```sh
 perl Makefile.PL
 make
 make test
-\`\`\`
+```
