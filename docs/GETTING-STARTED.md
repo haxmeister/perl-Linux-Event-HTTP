@@ -68,7 +68,7 @@ $client->get(
 );
 ```
 
-Without streaming, response buffering is bounded (1 MiB by default). Use streaming when you expect large bodies.
+Without streaming, response buffering is bounded (1 MiB by default). If the body crosses that limit, the request fails and `on_error` runs; `on_response` will not receive a partial body. **If you don't know how large the response will be, use `on_data` from the beginning.** It works with small responses too. The Client cannot automatically switch to streaming after reaching the buffer limit because there would be nowhere to deliver the remaining bytes without an `on_data` callback. The `Content-Length` header is not always available or a reliable size prediction.
 
 ### Cancel a request
 
