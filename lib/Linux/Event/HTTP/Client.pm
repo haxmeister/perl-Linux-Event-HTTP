@@ -155,11 +155,97 @@ Linux::Event::HTTP::Client - Unblock HTTP client using Linux::Event transports
 
 =head1 SYNOPSIS
 
+    use v5.36;
+    use Linux::Event::Loop;
+    use Linux::Event::HTTP::Client;
+
+    my $loop = Linux::Event::Loop->new;
     my $client = Linux::Event::HTTP::Client->new(loop => $loop);
-    my $op = $client->get('http://localhost:8080/',
+
+    $client->get(
+        'https://example.com/',
         timeout => 15,
-        on_response => sub ($tx, $response) { say $response->body },
+        on_response => sub ($tx, $res) {
+            say "HTTP ", $res->status;
+            say $res->body;
+        },
+        on_error => sub ($object, $error, @details) {
+            warn "Request failed: $error\n";
+        },
+        on_finish => sub { $loop->stop },
     );
+
+    $loop->run;
+
+=head1 MAKING REQUESTS
+
+Create a Client once and reuse it for multiple requests. HTTP/1.1
+works by default. Each C<get>, C<post>, C<put>, C<head>, and C<delete>
+takes a URL followed by named options.
+
+For example, to send a POST with a body and a request header:
+
+    $client->post(
+        'https://example.com/messages',
+        headers => [['content-type', 'text/plain']],
+        body => "Hello\n",
+        on_response => sub ($tx, $res) {
+            say $res->status;
+            say $res->header('content-type') // 'unknown';
+            say $res->body;
+        },
+    );
+
+Use C<request(method =E<gt> 'PATCH', url =E<gt> $url, ...)>
+for another method. Headers use an array reference of name/value
+pairs. The response is a L<Uniform::HTTP::Response>; use C<status>,
+C<body>, and C<header('name')> to read it.
+
+A 404 or 500 is a valid HTTP response, not necessarily a connection
+failure. Inspect the response's C<status> to decide what it means.
+
+=head1 CLIENT CALLBACKS
+
+By default, C<on_response($tx, $res)> runs B<after the entire response>
+has arrived. A response body of up to 1 MiB is buffered by default.
+
+To stream the body, add C<on_data>. This changes the callback timing:
+
+    $client->get(
+        'https://example.com/file',
+        on_response => sub ($tx, $res) {
+            say $res->status;   # Headers have arrived
+        },
+        on_data => sub ($tx, $bytes) {
+            print $bytes;       # A body chunk
+        },
+        on_end => sub ($tx) {
+            say "Done";
+        },
+        on_error => sub ($object, $error, @details) {
+            warn "$error\n";
+        },
+        on_finish => sub { $loop->stop },
+    );
+
+With C<on_data>, C<on_response> runs B<at headers>, C<on_data> runs
+for each chunk, and C<on_end> runs after successful body completion.
+
+C<on_error> handles request failures such as timeouts, certificate
+verification failure, or an interrupted connection. C<on_finish> runs
+once when the operation reaches a terminal state, even after a failure
+or cancellation. Use C<on_finish> to stop a one-request event loop,
+not C<on_response>, so failures do not leave the program running.
+
+Each request returns an operation handle. Call C<cancel> if you no
+longer need the request. The operation also has C<state>, C<error>,
+C<is_terminal>, and C<transaction>. Its transaction may be unavailable
+while the request is still queued.
+
+=head1 FURTHER EXAMPLES
+
+See C<docs/GETTING-STARTED.md> in this distribution for a complete
+server/client quickstart, HTTPS, streaming, and shutdown.
 
 =head1 DESCRIPTION
 
