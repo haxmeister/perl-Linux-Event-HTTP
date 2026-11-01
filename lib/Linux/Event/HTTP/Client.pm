@@ -285,6 +285,15 @@ body completion.
 =back
 
 Without streaming, responses are buffered up to 1 MiB by default.
+If the body exceeds that limit, the request fails and C<on_error>
+runs; C<on_response> does not receive a partial buffered body.
+
+You often cannot know the body size in advance. If a response might
+be larger than the limit, or its size is unknown, use C<on_data>
+from the start. This works for small responses too. The Client does
+not switch from buffered mode to streaming automatically. A
+C<Content-Length> header is not always available, and may not
+predict the amount of body data delivered.
 
 =head1 STREAMING AN UPLOAD
 
