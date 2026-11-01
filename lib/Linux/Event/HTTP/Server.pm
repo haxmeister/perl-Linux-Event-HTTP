@@ -228,7 +228,7 @@ __END__
 
 =head1 NAME
 
-Linux::Event::HTTP::Server - Native Linux listener for Unblock HTTP
+Linux::Event::HTTP::Server - Serve HTTP requests with Linux::Event
 
 =head1 SYNOPSIS
 
@@ -242,11 +242,12 @@ Linux::Event::HTTP::Server - Native Linux listener for Unblock HTTP
         loop => $loop,
         host => '127.0.0.1',
         port => 8080,
+
         on_request => sub ($tx, $req) {
             $tx->respond(
-                status => 200,
+                status  => 200,
                 headers => [['content-type', 'text/plain']],
-                body => "Hello from Linux::Event!\n",
+                body    => "Hello from Linux::Event!\n",
             );
         },
     );
@@ -254,28 +255,42 @@ Linux::Event::HTTP::Server - Native Linux listener for Unblock HTTP
     say "Listening on http://127.0.0.1:8080/";
     $loop->run;
 
-Run this script, then visit C<http://127.0.0.1:8080/> or use
-C<curl http://127.0.0.1:8080/> from another terminal.
+Save this as C<server.pl> and run C<perl server.pl>. In another
+terminal, try:
 
-=head1 HANDLING A REQUEST
+    curl http://127.0.0.1:8080/
 
-C<on_request> receives two objects:
+The server keeps running until you stop it.
+
+=head1 DESCRIPTION
+
+C<Linux::Event::HTTP::Server> listens for HTTP requests and calls your
+code to handle them. You do not need to read from sockets or parse HTTP
+yourself. HTTP/1.1 works by default; HTTP/2 and HTTP/3 are optional.
+
+=head1 HANDLING REQUESTS
+
+C<on_request> runs when a complete request arrives. It receives:
 
 =over 4
 
-=item * C<$req> is the incoming L<Uniform::HTTP::Request>.
+=item * C<$req> - the request, with its method, URL target, headers, and body.
 
-Read C<$req-E<gt>method>, C<$req-E<gt>target>,
-C<$req-E<gt>header('name')>, and C<$req-E<gt>body>.
-
-=item * C<$tx> is the HTTP transaction.
-
-Call C<$tx-E<gt>respond(status =E<gt> 200, body =E<gt> 'text')>
-to send a response.
+=item * C<$tx> - the transaction you use to send a response.
 
 =back
 
-To handle more than one path, inspect the request yourself:
+Read the request with:
+
+    $req->method;                  # GET, POST, ...
+    $req->target;                  # /items?color=blue
+    $req->header('content-type');  # A request header
+    $req->body;                    # Complete request body
+
+C<target> includes the query string. This module does not provide
+a router; you can inspect the method and target yourself.
+
+For example, replace C<on_request> in the first example with:
 
     on_request => sub ($tx, $req) {
         if ($req->method eq 'GET' && $req->target eq '/') {
@@ -289,124 +304,125 @@ To handle more than one path, inspect the request yourself:
         }
     },
 
-C<target> includes any query string. This distribution handles HTTP
-transport and messages; it is not a routing web framework.
+Use C<$tx-E<gt>respond> to send the status, headers, and body.
+Headers are an array reference of name/value pairs:
 
-=head1 SERVER CALLBACKS
+    $tx->respond(
+        status  => 200,
+        headers => [['content-type', 'text/html; charset=utf-8']],
+        body    => '<h1>Hello</h1>',
+    );
 
-C<on_request($tx, $req)> runs after the complete incoming body and
-trailers arrive successfully. For large request bodies, register
-C<on_data> inside C<on_headers>, which runs at request headers:
+=head1 RECEIVING LARGE REQUESTS
+
+By default, the server collects each request body before calling
+C<on_request>. The body has a 1 MiB limit by default. A larger
+non-streamed body fails rather than using unlimited memory.
+
+If an upload might be large, receive it a chunk at a time. Supply
+C<on_headers> alongside C<on_request> in the server constructor:
 
     on_headers => sub ($tx, $req) {
         $tx->on_data(sub ($tx, $bytes) {
-            say "Got ", length($bytes), " bytes";
+            say "Received ", length($bytes), " bytes";
         });
     },
+
     on_request => sub ($tx, $req) {
-        $tx->respond(status => 200, body => "Received\n");
+        $tx->respond(status => 200, body => "Upload complete\n");
     },
 
-Streaming does not also collect the whole request in C<$req-E<gt>body>.
-C<on_request> is not called for an unsuccessful or cancelled request.
+C<on_headers> runs before body data arrives. Registering C<on_data>
+there tells the server to stream the body instead of collecting it
+in C<$req-E<gt>body>. C<on_request> still runs after the upload
+finishes successfully; it does not run if the request fails.
 
-To stream an outgoing response:
+To change the HTTP/1 buffered body limit, pass
+C<http1 =E<gt> { max_buffered_body_bytes =E<gt> $bytes }>
+to C<new>.
+
+=head1 SENDING LARGE RESPONSES
+
+For a response made in pieces, start with C<stream_body =E<gt> 1>,
+then send data with C<write> and finish with C<end>:
 
     $tx->respond(status => 200, stream_body => 1);
     $tx->write("First part\n");
     $tx->end("Last part\n");
 
-For slower producers, use C<on_drain> to resume after backpressure.
-A false C<write> return means the bytes were already accepted;
-pause sending without resending them.
+If a producer sends lots of data, use C<on_drain> to resume when the
+connection has room again. A false result from C<write> means
+the bytes were B<accepted>, but you must pause before writing more.
+Do not resend that chunk.
 
-=head1 STOPPING A SERVER
+=head1 HTTPS AND HTTP VERSIONS
 
-C<close> stops accepting new TCP connections. To wait for admitted
-work to finish, use C<shutdown>:
+To serve HTTPS, give the server a certificate and private key:
+
+    my $server = Linux::Event::HTTP::Server->new(
+        loop => $loop,
+        host => '127.0.0.1',
+        port => 8443,
+        tls => {
+            cert_file => 'cert.pem',
+            key_file  => 'key.pem',
+        },
+        on_request => sub ($tx, $req) {
+            $tx->respond(status => 200, body => "Secure\n");
+        },
+    );
+
+HTTP/1.1 is enabled by default. To also serve HTTP/2, install
+L<Unblock::HTTP2> 0.13 or newer and set C<http2 =E<gt> 1>.
+HTTP/2 servers require TLS.
+
+To also serve HTTP/3, install L<Unblock::HTTP3> 0.14 or newer
+and L<Net::QUIC> 0.06 or newer, then set C<http3 =E<gt> 1>.
+HTTP/3 needs TLS, a specific C<host> address (not a wildcard),
+and a TCP listener alongside its UDP listener.
+
+The same C<on_request> callback handles all enabled HTTP versions.
+
+=head1 ERRORS AND SERVER CONTROL
+
+C<on_error> reports HTTP transaction errors. C<on_listener_error>
+reports listener errors. Both are optional constructor callbacks.
+
+C<host> and C<port> return the listening address and port.
+C<connection_count> returns the number of live connections.
+C<pause> and C<resume> control acceptance of new connections.
+
+C<close> stops accepting new connections but does not immediately
+discard work already in progress. To shut down gracefully:
 
     $server->shutdown(
         grace => 30,
-        on_complete => sub ($server) { $loop->stop },
+        on_complete => sub ($server) {
+            $loop->stop;
+        },
     );
 
-The grace period is in seconds. C<on_complete> may run immediately
-if the server is already idle.
+C<grace> is in seconds. The server finishes admitted work when
+possible and closes remaining connections at the deadline.
+C<on_complete> runs when shutdown is done; it may run immediately
+if the server is idle.
 
-=head1 FURTHER EXAMPLES
+=head1 WEBSOCKETS AND CONNECT
 
-See C<docs/GETTING-STARTED.md> in the distribution for full
-client/server programs, headers, HTTPS, streaming, and HTTP/2 and
-HTTP/3 setup.
+WebSockets are optional. Enable them for an HTTP version, such as
+C<http1 =E<gt> { websocket =E<gt> 1 }>, and provide
+C<on_websocket>. See L<Unblock::HTTP::Server> for the WebSocket
+callback options.
 
-=head1 DESCRIPTION
+For custom protocol upgrades and CONNECT tunnels, see
+C<docs/CONNECT.md> in the distribution. Neither feature is needed
+for ordinary HTTP servers.
 
-HTTP/1 is enabled by default. Callbacks receive real Unblock transactions
-and Uniform messages. C<on_headers> runs before the body; C<on_request> runs
-once after successful body completion. Set C<$tx-E<gt>on_data(...)> during
-C<on_headers> to stream a request. Otherwise Unblock buffers up to 1 MiB;
-configure C<http1 =E<gt> { max_buffered_body_bytes =E<gt> ... }> to change it.
+=head1 SEE ALSO
 
-C<tls> and C<tuning> configure the Linux::Event listener's accepted streams.
-HTTP owns TLS ALPN selection; do not specify C<tls =E<gt> { alpn =E<gt> ... }>.
-C<native_input =E<gt> 0> selects the Perl input path for diagnostics.
-C<on_listener_error> receives listener failures; C<on_error> is the HTTP
-engine error callback. Unknown options are rejected.
+L<Linux::Event::HTTP::Client>, L<Linux::Event::Loop>,
+L<Uniform::HTTP::Request>.
 
-C<loop>, C<listener>, C<host>, C<port>, C<pause>, C<resume>, C<close> and
-C<connection_count> expose listener controls and live connection count.
-C<close> stops accepting connections; existing connections continue.
-
-C<shutdown(grace =E<gt> 30, on_complete =E<gt> sub ($server) { ... })>
-stops listening, drains admitted HTTP/1 requests, and closes remaining owned
-connections when the grace period expires. TLS handshakes without admitted
-requests close immediately. Completion runs once after owned connections
-and their transactions have finished; it can run synchronously if idle.
-Repeated shutdown calls have no effect. C<grace> is non-negative seconds.
-C<on_handoff> enables generic HTTP1 101 Upgrade and successful CONNECT
-handoff for non-WebSocket protocols. It runs after HTTP accepts the
-switch response into the existing write queue and receives
-C<($tx, $request, $response, $transport)>. Return a successor protocol
-object implementing C<input>, C<input_eof>, C<transport_error>
-and C<resume_output>. The Linux::Event stream transitions in place;
-any same-read native input tail is preserved without duplication.
-The successor owns the socket after handoff. WebSocket handshakes take
-precedence when both callbacks are enabled. For HTTP2/HTTP3, C<on_handoff($tx, $request, $bridge)> returns a
-stream-local consumer for a CONNECT request (not a whole socket).
-The Server responds with status 200, forwards DATA and EOF to the
-consumer, and preserves ordinary sibling streams. Return undef to
-reject with 403. Configure C<http2 =E<gt>
-{ enable_connect_protocol =E<gt> 1 }> or C<http3 =E<gt>
-{ enable_extended_connect =E<gt> 1 }> for Extended CONNECT; no
-WebSocket advertisement is required. The bridge accepts
-C<unblock_send>, C<unblock_finish>, and C<unblock_abort>, with
-deferred bounded output. It invokes C<resume_output> for flow
-control. Generic handoff never replaces the multiplexed transport.
-
-C<http2 =E<gt> 1> enables optional Unblock::HTTP2 (at least 0.13). Server
-HTTP/2 requires TLS and uses ALPN, with HTTP/1 fallback unless C<http1 =E<gt> 0>.
-A hashref supplies HTTP/2 engine tuning. Shutdown sends GOAWAY and drains
-admitted streams. Cleartext HTTP/2 remains unimplemented.
-HTTP/2 C<on_error> may include a third protocol error-code argument.
-Optional C<http3 =E<gt> 1> uses Unblock::HTTP3 0.14 and Net::QUIC 0.06 on UDP
-alongside the TCP listener at the same concrete host and port. Its
-credentials are taken from C<tls =E<gt> { cert_file, key_file }>.
-C<quic =E<gt> { ... }> configures Net::QUIC server transport policy.
-Wildcard-bound HTTP3 and H3-only listeners are not yet supported.
-C<close> stops H3 admission by sending GOAWAY to attached sessions;
-C<shutdown> also waits for draining sessions until the grace deadline.
-Forced expiry releases the UDP socket and timer. The supported concrete-address
-HTTP3 lifecycle passed the Stage D QUIC loopback and cleanup tests.
-
-Opt-in C<http1 =E<gt> { websocket =E<gt> 1 }> with C<on_websocket>
-uses Unblock's HTTP1 handshake and transitions the same Linux::Event
-socket to WebSocket without losing same-read bytes. Native and Perl
-input paths are tested. C<http2 =E<gt> { websocket =E<gt> 1 }> and
-C<http3 =E<gt> { websocket =E<gt> 1 }> enable Extended CONNECT on
-individual multiplexed streams. The H2 path passes real TLS loopback.
-H2 and H3 WebSocket Extended CONNECT are verified by real TLS and QUIC
-loopback with independent ordinary HTTP streams. Unblock::HTTP3 0.14
-includes the completion-order fix for WebSocket Close and stream FIN.
-WebSocket remains an optional dependency, loaded only when enabled.
+The distribution's C<docs/GETTING-STARTED.md> has more examples.
 
 =cut
