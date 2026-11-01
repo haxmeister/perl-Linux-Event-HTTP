@@ -167,7 +167,7 @@ Linux::Event::HTTP::Client - Make HTTP requests with Linux::Event
         timeout => 15,
 
         on_response => sub ($tx, $res) {
-            say "Status: ", $res->status;
+            say "HTTP ", $res->status;
             say $res->body;
         },
 
@@ -182,23 +182,32 @@ Linux::Event::HTTP::Client - Make HTTP requests with Linux::Event
 
 =head1 DESCRIPTION
 
-This module makes HTTP requests without blocking the Linux::Event loop.
-It handles connections, TLS, and HTTP messages for you.
+C<Linux::Event::HTTP::Client> makes HTTP requests without blocking the
+event loop. Create one Client and reuse it for many requests. The Client
+manages connections, HTTPS, and HTTP messages for you.
 
-Create one Client and reuse it for as many requests as you need.
 HTTP/1.1 works by default. HTTP/2 and HTTP/3 are optional.
 
 =head1 MAKING REQUESTS
 
-=head2 GET, POST, and other methods
+Call C<get>, C<post>, C<put>, C<head>, or C<delete> with a URL
+followed by options. Each call returns immediately; the request is
+handled while the loop runs.
 
-    $client->get($url, %options);
-    $client->post($url, %options);
-    $client->put($url, %options);
-    $client->head($url, %options);
-    $client->delete($url, %options);
+To send a POST with a body and headers:
 
-For any other HTTP method:
+    $client->post(
+        'https://example.com/messages',
+        headers => [['content-type', 'text/plain']],
+        body => "Hello\n",
+        on_response => sub ($tx, $res) {
+            say $res->status;
+            say $res->body;
+        },
+    );
+
+Headers are an array reference of name/value pairs. For other HTTP
+methods, use C<request>:
 
     $client->request(
         method => 'PATCH',
@@ -209,241 +218,159 @@ For any other HTTP method:
         },
     );
 
-These calls return immediately. The request proceeds while the event
-loop runs. You can start several requests before calling C<$loop-E<gt>run>.
+=head1 RESPONSES AND CALLBACKS
 
-=head2 Sending a body and headers
+C<on_response> receives a transaction C<$tx> and a response C<$res>.
+The response is a L<Uniform::HTTP::Response> object. Common methods are:
 
-    $client->post(
-        'https://example.com/messages',
-        headers => [
-            ['content-type', 'text/plain'],
-            ['accept', 'text/plain'],
-        ],
-        body => "Hello\n",
-        timeout => 15,
-        on_response => sub ($tx, $res) {
-            say $res->status;
-            say $res->body;
-        },
-    );
+    $res->status;                  # HTTP status code
+    $res->body;                    # Response body
+    $res->header('content-type');  # A header value
 
-Headers are an array reference of name/value pairs. You can supply
-the same header name more than once.
+HTTP 404 and 500 are valid responses, not connection errors. Check
+C<$res-E<gt>status> to decide how to handle them.
 
-=head2 Reading a response
+B<By default, C<on_response> runs after the entire response body
+has arrived.> C<$res-E<gt>body> is ready to read at that point.
 
-C<on_response> receives an HTTP transaction (C<$tx>) and a response
-(C<$res>). Most applications only need the response:
+=over 4
 
-    $res->status;                   # 200, 404, 500, ...
-    $res->body;                     # Response body
-    $res->header('content-type');   # One header value
-    $res->header_values('set-cookie'); # Array reference of values
+=item * C<on_response($tx, $res)> - receives the response.
 
-Header names are case-insensitive. The response is a
-L<Uniform::HTTP::Response> object.
+=item * C<on_error($object, $error, @details)> - reports failures,
+such as connection errors or timeouts.
 
-B<HTTP error status codes are still responses.> A server returning
-404 or 500 normally triggers C<on_response>, not C<on_error>.
-Check C<$res-E<gt>status> when it matters.
+=item * C<on_finish> - runs once when the operation ends, including
+after success, failure, or cancellation.
 
-=head1 CALLBACKS
+=back
 
-=head2 Normal requests: the full response
+For a single-request program, stop the loop in C<on_finish>, not in
+C<on_response>. That way the program also stops if the request fails.
+An HTTP request's C<timeout> is in seconds and includes connection
+waiting time.
 
-For an ordinary request, C<on_response($tx, $res)> runs B<after the
-whole response body has been received>. You can read C<$res-E<gt>body>
-right away.
+=head1 STREAMING A RESPONSE
 
-=head2 Streaming: receive chunks as they arrive
-
-To process a large response without collecting it in memory, add
-C<on_data>:
+For a large body, add C<on_data> to process chunks as they arrive:
 
     $client->get(
         'https://example.com/large-file',
-        timeout => 30,
-
         on_response => sub ($tx, $res) {
-            say "Status: ", $res->status;
+            say "HTTP ", $res->status;
         },
-
         on_data => sub ($tx, $bytes) {
             print $bytes;
         },
-
         on_end => sub ($tx) {
             say "\nBody complete";
         },
-
         on_error => sub ($object, $error, @details) {
             warn "Request failed: $error\n";
         },
-
         on_finish => sub { $loop->stop },
     );
 
-B<Adding C<on_data> changes when C<on_response> runs.>
+B<Adding C<on_data> changes the timing:>
 
 =over 4
 
 =item * Without C<on_data>, C<on_response> runs after the full body.
 
-=item * With C<on_data>, C<on_response> runs when headers arrive.
+=item * With C<on_data>, C<on_response> runs as soon as headers arrive.
 
-=item * C<on_data($tx, $bytes)> runs for each incoming body chunk.
-
-=item * C<on_end($tx)> runs when a streamed body completes successfully.
+=item * C<on_data> receives body chunks; C<on_end> signals successful
+body completion.
 
 =back
 
-By default, non-streamed responses are limited to 1 MiB. Streaming
-is the usual choice for large downloads.
+Without streaming, responses are buffered up to 1 MiB by default.
 
-=head2 Errors and completion
+=head1 STREAMING AN UPLOAD
 
-C<on_error($object, $error, @details)> reports failures such as
-connection errors, TLS verification failures, or a timeout.
-
-C<on_finish> runs when the operation ends, whether it succeeded,
-failed, or was cancelled. In a one-request script, use
-C<on_finish =E<gt> sub { $loop-E<gt>stop }> so the program also
-stops after an error. For an application making ongoing requests,
-normally leave the loop running.
-
-C<timeout =E<gt> 15> sets a 15-second deadline for the request,
-including time spent waiting for a connection.
-
-=head1 UPLOADING A LARGE BODY
-
-For a body you want to produce in pieces, use C<stream_body> and
-C<on_transaction>. This callback runs when the request is ready
-to start sending:
+Set C<stream_body =E<gt> 1> and send pieces through the transaction
+provided to C<on_transaction>:
 
     $client->post(
         'https://example.com/upload',
         stream_body => 1,
-
         on_transaction => sub ($tx) {
             $tx->write("First part\n");
             $tx->end("Last part\n");
         },
-
         on_response => sub ($tx, $res) {
             say $res->status;
         },
     );
 
-Use the transaction passed into C<on_transaction>; it may run
-before the call returning the operation handle has finished.
-For a producer that sends many chunks, respect C<write>'s
-backpressure result and resume with C<on_drain>. A false C<write>
-return means the chunk was accepted: do not send it again.
+C<on_transaction> may run before the request call returns. Use its
+C<$tx> argument, not a variable holding the returned operation.
+For large producers, respect backpressure and resume sending through
+C<on_drain>. A false return from C<write> means the bytes were accepted;
+do not send them twice.
 
-=head1 REQUEST CONTROL
+=head1 CANCELLING AND SHUTTING DOWN
 
 Each request returns an operation handle:
 
-    my $op = $client->get(
-        'https://example.com/',
-        on_response => sub ($tx, $res) {
-            say $res->status;
-        },
+    my $op = $client->get('https://example.com/',
+        on_response => sub ($tx, $res) { say $res->status },
     );
 
-    $op->cancel;        # Stop the request if no longer needed
-    $op->state;         # Current lifecycle state
-    $op->error;         # Error, if one occurred
-    $op->is_terminal;   # True after it has ended
+    $op->cancel;        # Cancel when no longer needed
+    $op->state;         # Current state
+    $op->error;         # Error, if any
+    $op->is_terminal;   # Whether it has ended
     $op->transaction;   # Available once the request starts
 
-The transaction may be undefined while a request is queued.
+Call C<$client-E<gt>shutdown> to cancel queued work, let active
+requests finish, and retire pooled connections. C<pool_stats> and
+C<pending_count> report connection and queue information.
 
-=head1 CLIENT OPTIONS
+=head1 HTTPS AND HTTP VERSIONS
 
-Pass these to C<new>:
+HTTPS checks certificates and hostnames by default. To trust a
+private certificate authority:
 
-=over 4
+    my $client = Linux::Event::HTTP::Client->new(
+        loop => $loop,
+        tls => { ca_file => 'ca.pem' },
+    );
 
-=item * C<loop =E<gt> $loop>
+HTTP/1.1 is enabled by default. To enable HTTP/2, install
+L<Unblock::HTTP2> 0.13 or later and pass C<http2 =E<gt> 1> to
+C<new>. For HTTP/3, install L<Unblock::HTTP3> 0.14 or later and
+L<Net::QUIC> 0.06 or later, then pass C<http3 =E<gt> 1>.
+HTTP/3 uses HTTPS and supports a private CA through
+C<quic =E<gt> { ca_file =E<gt> 'ca.pem' }>.
 
-Required. The L<Linux::Event::Loop> to use.
+To require a specific HTTP version on a request, set
+C<http_version =E<gt> '1.1'>, C<'2'>, or C<'3'>. If the
+required version is unavailable, the request fails instead of
+falling back.
 
-=item * C<tls =E<gt> { ca_file =E<gt> $path }>
+=head1 MORE OPTIONS
 
-Trust a private certificate authority when connecting with HTTPS.
-Certificates and hostnames are checked by default.
-
-=item * C<http2 =E<gt> 1> or C<http3 =E<gt> 1>
-
-Enable optional HTTP versions. See L</HTTP VERSIONS>.
-
-=item * C<max_connections_per_origin =E<gt> 4>
-
-Limit simultaneous connections to one destination. The default is 4.
-
-=item * C<max_pending_requests =E<gt> 128>
-
-Limit requests waiting to be sent. The default is 128.
-
-=item * C<idle_timeout =E<gt> $seconds>
-
-Optional timeout for unused pooled connections.
-
-=back
-
-C<pool_stats> returns connection-pool counts, and C<pending_count>
-returns the number of requests waiting in the Client. Call
-C<$client-E<gt>shutdown> to stop accepting new work, cancel queued
-requests, and allow active requests to finish.
+C<new> requires C<loop =E<gt> $loop>. Other options include
+C<max_connections_per_origin> (default 4),
+C<max_pending_requests> (default 128), and C<idle_timeout>
+(in seconds, disabled by default).
 
 The Client does not automatically follow redirects or manage
 cookies or authentication retries.
 
-=head1 HTTP VERSIONS
-
-HTTP/1.1 is enabled by default and supports both HTTP and HTTPS.
-
-For HTTP/2, install L<Unblock::HTTP2> 0.13 or newer and create
-the Client with C<http2 =E<gt> 1>. HTTPS negotiates HTTP/2 using
-TLS; HTTP/1.1 can remain available as a fallback.
-
-For HTTP/3, install L<Unblock::HTTP3> 0.14 or newer and
-L<Net::QUIC> 0.06 or newer, then set C<http3 =E<gt> 1>.
-HTTP/3 uses HTTPS. C<quic =E<gt> { ca_file =E<gt> $path }>
-configures a private CA for QUIC.
-
-To require a particular version on one request:
-
-    $client->get(
-        'https://example.com/',
-        http_version => '2',  # Or '1.1' or '3'
-        on_response => sub ($tx, $res) {
-            say $res->status;
-        },
-    );
-
-If the required version cannot be used, the request fails rather
-than silently falling back.
-
-=head1 WEBSOCKETS AND CONNECT
-
-The Client also supports WebSocket connections through
-C<connect_websocket>. Enable the chosen HTTP version's
-WebSocket feature, for example C<http1 =E<gt> { websocket =E<gt> 1 }>.
-See L<Unblock::HTTP::Client> for WebSocket callback options.
-
-Advanced protocol handoff through C<request(on_handoff =E<gt> ...)>
-is described in C<docs/CONNECT.md> in the distribution. HTTP/1
-handoff transfers the socket; HTTP/2 and HTTP/3 handoff transfers
-an individual stream. These are not needed for normal HTTP requests.
+Optional WebSocket support uses C<connect_websocket> with a
+protocol option such as C<http1 =E<gt> { websocket =E<gt> 1 }>.
+See L<Unblock::HTTP::Client> for the full WebSocket API.
+For custom Upgrade and CONNECT handoff, see C<docs/CONNECT.md>
+in the distribution.
 
 =head1 SEE ALSO
 
 L<Linux::Event::HTTP::Server>, L<Linux::Event::Loop>,
-L<Uniform::HTTP::Response>, L<Unblock::HTTP::Client>.
+L<Unblock::HTTP::Client>, L<Uniform::HTTP::Response>.
 
-The distribution's C<docs/GETTING-STARTED.md> has more examples.
+The distribution's C<docs/GETTING-STARTED.md> contains more
+complete examples.
 
 =cut
